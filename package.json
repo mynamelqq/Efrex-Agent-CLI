@@ -1,0 +1,53 @@
+{
+	"name": "ChatUI-Cli",
+	"description": "a terminal agent developed by YaQi Li(Efrewew)",
+	"version": "0.0.1",
+	"license": "UNLICENSED",
+	"type": "module",
+	"bin": {
+		"ChatUI-Cli": "index.tsx",
+		"chatUI": "index.tsx",
+		"efrex": "index.tsx"
+	},
+	"author": {
+		"name": "Yaqi Li",
+		"email": "Efrewew88855@outlook.com",
+		"url": "github.com/mynamelqq"
+	},
+	"keywords": [
+		"ChatUI-Cli",
+		"Yaqi Li"
+	],
+	"files": [
+		"index.js",
+		"utils"
+	],
+	"scripts": {
+		"format": "prettier --write \"./**/*.{js,json}\"",
+		"dev": "tsx index.tsx",
+		"build": "tsup index.tsx --format esm --out-dir dist --clean"
+	},
+	"dependencies": {
+		"@inkjs/ui": "^2.0.0",
+		"chalk": "^5.6.2",
+		"cli-alerts": "^2.0.0",
+		"cli-handle-error": "^4.4.1",
+		"cli-handle-unhandled": "^1.1.2",
+		"cli-meow-help": "^4.0.0",
+		"cli-welcome": "^3.0.1",
+		"get-package-json-file": "^2.0.0",
+		"ink": "^7.0.1",
+		"ink-select-input": "^6.2.0",
+		"ink-text-input": "^6.0.0",
+		"meow": "^14.1.0",
+		"openai": "^6.34.0",
+		"react": "^19.2.5"
+	},
+	"devDependencies": {
+		"@types/react": "^19.2.14",
+		"prettier": "^3.8.3",
+		"tsup": "^8.5.1",
+		"tsx": "^4.21.0",
+		"typescript": "^6.0.3"
+	}
+}
