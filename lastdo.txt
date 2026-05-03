@@ -1,0 +1,34 @@
+4.23
+使用abortController实现ctrl+c对对话的终端,实现流式输出，建立推理输出的前端显示
+
+
+4.24
+今天完成了粘贴长文本输入框自动简化输入，使用Claude curosr.tsx的方案解决了输入框不可控的问题，完善了历史保存与导入
+增加了轻量级markdown解析重点色等 优化了界面不用前缀文字区分用户与助手消息，用明显的样式区分。给/model增加了命令解析功能，通过给界面绑定Key做到强制重新渲染
+
+4.30
+准备开始做agent,,第一步先开发工具，我选择了较为简单但重要的GlobTool，先给个最小能执行版本的Tool.ts定义，包含了ToolUseContext
+
+5.1
+今天完善了Glob工具，并阅读了相关代码，本质是发布npm包时包含了文件，然后搜索文件夹下的rg.exe，childprocess 的spwan函数执行命令
+
+5.2
+今天使用queryDemo.ts测试了Glob工具，成功了，后面工具开发也省力流程大概能跑通
+增加了shell.ts和abortController作为整个会话的异步取消控制
+增加prompt.ts准备放入claude同款提示词
+增加了thmeme.ts定义了Claude中用到的颜色
+准备再加入Grep工具和FileReader工具
+
+5.3
+完成了对grep工具的运行测试，和实际测试
+加入了BashTool,WebFetch工具的代码还未会修改
+增加了AppState，store.ts。
+
+已在 src/tools/BashTool/BashTools.tsx 删除后台执行路径，默认只在前台同步执行。
+
+  改动包括：
+
+  - 删除 run_in_background 输入参数。
+  - 删除输出里的 backgroundTaskId、backgroundedByUser、assistantAutoBackgrounded。
+  - 删除显式后台执行、超时自动后台、assistant 自动后台、Ctrl+B 背景提示/注册逻辑。
+  - runShellCommand 现在只启动命令、前台等待、期间上报 progress，完成后返回真实结果。
