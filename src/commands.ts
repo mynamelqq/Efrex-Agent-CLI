@@ -30,8 +30,8 @@ export async function handleModelCommand(args: string): Promise<CommandResult> {
 
   try {
     await updateSetting('ANTHROPIC_MODEL', modelName);
-    // Clear the settings loaded flag so that openai.ts will reload
-    const { resetSettings } = await import('./openai.js');
+    // Clear the settings loaded flag so that queryDemo.ts will reload.
+    const { resetSettings } = await import('./queryDemo.js');
     resetSettings();
     return {
       success: true,

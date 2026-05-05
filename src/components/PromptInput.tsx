@@ -6,6 +6,7 @@ import useTextInput from '../hooks/useTextInput.js';
 type Props = {
   value: string;
   width: number;
+  maxVisibleLines?: number;
   cursorSyncKey?: number;
   isActive?: boolean;
   suspendSubmit?: boolean;
@@ -21,6 +22,7 @@ type Props = {
 export default function PromptInput({
   value,
   width,
+  maxVisibleLines,
   cursorSyncKey = 0,
   isActive = true,
   suspendSubmit = false,
@@ -58,6 +60,7 @@ export default function PromptInput({
 
   const lines = cursor.render({
     width,
+    maxVisibleLines,
     invert: text => chalk.inverse(text),
   });
 

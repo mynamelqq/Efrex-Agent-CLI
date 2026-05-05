@@ -43,3 +43,10 @@ export function isAbortError(e: unknown): boolean {
 export function toError(e: unknown): Error {
   return e instanceof Error ? e : new Error(String(e))
 }
+/**
+ * Extract a string message from an unknown error-like value.
+ * Use when you only need the message (e.g., for logging or display).
+ */
+export function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}

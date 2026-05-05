@@ -1,5 +1,6 @@
 import { DeepImmutable } from '../types/utils'
 import { Store } from './store'
+import { EffortValue } from '../utils/effort'
 export type FooterItem =
   | 'tasks'
   | 'tmux'
@@ -21,7 +22,19 @@ export type AppState = DeepImmutable<{
         summary?: string
         }>
     },
+    // Effort value
+    effortValue?: EffortValue,
 
 }>
 
 export type AppStateStore = Store<AppState>
+export function getDefaultAppState(): AppState {
+   return {
+    mainLoopModel: "",
+    inbox: {
+      messages: [],
+    },
+    effortValue: undefined,
+
+   }
+}

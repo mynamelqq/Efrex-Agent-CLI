@@ -1,7 +1,7 @@
 import type { ChildProcess, ExecFileException } from 'child_process'
 import { execFile, spawn } from 'child_process'
 import { existsSync } from 'fs'
-import memoize from 'lodash.memoize'
+import memoize from 'lodash/memoize'
 import { homedir } from 'os'
 import * as path from 'path'
 import { fileURLToPath } from 'url'

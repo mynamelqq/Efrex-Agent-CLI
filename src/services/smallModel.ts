@@ -46,7 +46,7 @@ type Settings = {
 let client: OpenAI | null = null
 let loadedOptions: Required<Pick<SmallModelOptions, 'model' | 'timeoutMs'>> &
   Pick<SmallModelOptions, 'apiKey' | 'baseURL'> = {
-    model: 'gpt-4.1-mini',
+    model: 'kimi-k2.6',
     timeoutMs: 120_000,
   }
 
@@ -88,7 +88,7 @@ async function loadSettings(options: SmallModelOptions): Promise<void> {
       options.model ??
       settings.env?.OPENAI_SMALL_MODEL ??
       settings.env?.ANTHROPIC_MODEL ??
-      'gpt-4.1-mini',
+      'kimi-k2.6',
     timeoutMs:
       options.timeoutMs ??
       (Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 120_000),

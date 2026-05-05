@@ -2,6 +2,8 @@ import {useEffect, useState} from 'react';
 import {useInput} from 'ink';
 import Cursor from '../utils/Cursor.js';
 
+const SGR_MOUSE_INPUT_PATTERN = /(?:\x1B)?\[<\d+;\d+;\d+[mM]/g;
+
 type Props = {
   value: string;
   width: number;
@@ -33,7 +35,7 @@ export default function useTextInput({
 
   useEffect(() => {
     setCursor(new Cursor(value, value.length));
-  }, [cursorSyncKey, value]);
+  }, [cursorSyncKey]);
 
   useEffect(() => {
     setCursor(previous => previous.sync(value, Math.min(previous.offset, value.length)));
@@ -41,7 +43,12 @@ export default function useTextInput({
 
   useInput(
     (input, key) => {
-      if (key.ctrl && input === 'c') {
+      const textInput = stripMouseInput(input);
+      if (textInput.length === 0 && textInput !== input) {
+        return;
+      }
+
+      if (key.ctrl && textInput === 'c') {
         onCtrlC?.();
         return;
       }
@@ -83,17 +90,17 @@ export default function useTextInput({
       }
 
       if (key.ctrl) {
-        if (input === 'p') {
+        if (textInput === 'p') {
           onHistoryPrev?.();
           return;
         }
 
-        if (input === 'n') {
+        if (textInput === 'n') {
           onHistoryNext?.();
           return;
         }
 
-        const nextCursor = handleCtrl(input, cursor, width);
+        const nextCursor = handleCtrl(textInput, cursor, width);
         if (nextCursor !== cursor) {
           setCursor(nextCursor);
           if (nextCursor.text !== cursor.text) {
@@ -116,8 +123,8 @@ export default function useTextInput({
         nextCursor = cursor.backspace();
       } else if (key.delete) {
         nextCursor = cursor.deleteForward();
-      } else if (input) {
-        nextCursor = cursor.insert(input);
+      } else if (textInput) {
+        nextCursor = cursor.insert(textInput);
       }
 
       if (nextCursor === cursor) {
@@ -133,6 +140,10 @@ export default function useTextInput({
   );
 
   return {cursor};
+}
+
+function stripMouseInput(input: string): string {
+  return input.replace(SGR_MOUSE_INPUT_PATTERN, '');
 }
 
 function handleCtrl(input: string, cursor: Cursor, width: number): Cursor {

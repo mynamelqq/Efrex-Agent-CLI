@@ -5,10 +5,9 @@ import { getCwdState, getOriginalCwd } from "../bootstrap/state"
 const cwdOverrideStorage = new AsyncLocalStorage<string>()
 
 /**
- * Run a function with an overridden working directory for the current async context.
- * All calls to pwd()/getCwd() within the function (and its async descendants) will
- * return the overridden cwd instead of the global one. This enables concurrent
- * agents to each see their own working directory without affecting each other.
+在当前异步上下文中，使用重写后的工作目录运行一个函数。
+该函数（及其异步子调用）内部所有对 pwd()/getCwd() 的调用，都将返回重写后的当前工作目录，而非全局工作目录。
+此功能可让并发执行的程序单元各自拥有独立的工作目录，且互不干扰。
  */
 export function runWithCwdOverride<T>(cwd: string, fn: () => T): T {
   return cwdOverrideStorage.run(cwd, fn)

@@ -1,17 +1,17 @@
 import { LRUCache } from 'lru-cache'
 import { normalize } from 'path'
 
-export type FileState = {
+export type FileState = {//Grep的文本作为缓存offsetlimit
   content: string
   timestamp: number
   offset: number | undefined
   limit: number | undefined
-  // True when this entry was populated by auto-injection (e.g. CLAUDE.md) and
-  // the injected content did not match disk (stripped HTML comments, stripped
-  // frontmatter, truncated MEMORY.md). The model has only seen a partial view;
-  // Edit/Write must require an explicit Read first. `content` here holds the
-  // RAW disk bytes (for getChangedFiles diffing), not what the model saw.
-  isPartialView?: boolean
+// 当此条目由**自动注入**生成（例如 CLAUDE.md 文件），
+// 且注入内容与磁盘文件不一致时（已剔除 HTML 注释、剔除前置元数据、截断 MEMORY.md 内容），该值为 true。
+// 模型仅查看了**部分内容**；
+// 执行编辑/写入操作前，必须先要求用户显式执行读取操作。
+// 此处的 `content` 存储的是**磁盘原始字节数据**（用于 getChangedFiles 生成差异对比），而非模型实际看到的内容。
+  isPartialView?: boolean//标记文件内容是否被自动处理过（删减、截断）、模型只看到了不完整内容；
 }
 
 // Default max entries for read file state caches
@@ -75,11 +75,11 @@ export class FileStateCache {
     return this.cache.calculatedSize
   }
 
-  keys(): Generator<string> {
+  keys(): IterableIterator<string> {
     return this.cache.keys()
   }
 
-  entries(): Generator<[string, FileState]> {
+  entries(): IterableIterator<[string, FileState]> {
     return this.cache.entries()
   }
 

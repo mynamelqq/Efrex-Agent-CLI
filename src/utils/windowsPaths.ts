@@ -1,4 +1,4 @@
-import memoize from 'lodash.memoize'
+import memoize from 'lodash/memoize'
 import * as path from 'path'
 import * as pathWin32 from 'path/win32'
 import { getCwd } from './cwd.js'
@@ -160,4 +160,3 @@ export const posixPathToWindowsPath =
     // Already Windows or relative — just flip slashes
     return posixPath.replace(/\//g, '\\')
   }
-

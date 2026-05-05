@@ -1,7 +1,7 @@
 import { readdir, readFile } from 'fs/promises'
 import { release as osRelease } from 'os'
 export type Platform = 'macos' | 'windows' | 'wsl' | 'linux' | 'unknown'
-import memoize from 'lodash.memoize';
+import memoize from 'lodash/memoize';
 export const SUPPORTED_PLATFORMS: Platform[] = ['macos', 'wsl']
 import { readFileSync } from 'fs';
 import { logError } from './logger';

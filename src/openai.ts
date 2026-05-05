@@ -14,7 +14,7 @@ interface Settings {
 }
 
 let client: OpenAI | null = null;
-let model: string = 'gpt-5';
+let model: string = 'kimi-k2.6';
 let settingsLoaded = false;
 
 export function resetSettings(): void {
@@ -29,7 +29,7 @@ async function ensureClient(): Promise<void> {
   const settings: Settings = JSON.parse(content);
   const apiKey = settings.env?.AUTH_TOKEN || process.env.OPENAI_API_KEY;
   const baseURL = settings.env?.ANTHROPIC_BASE_URL;
-  model = settings.env?.ANTHROPIC_MODEL || 'gpt-5';
+  model = settings.env?.ANTHROPIC_MODEL || 'kimi-k2.6';
   const configured = Number(settings.env?.REQUEST_TIMEOUT_MS);
   const timeout = Number.isFinite(configured) && configured > 0 ? configured : 120_000;
   client = new OpenAI({ apiKey, baseURL, maxRetries: 0, timeout });

@@ -1,9 +1,9 @@
 import { z } from 'zod/v4'
 import { Theme } from "./utils/theme";
 import { AppState } from './state/AppStateStore';
-import { FileStateCache } from './utils/fileStateCache';
-import { FileHistoryState } from './utils/fileHistory';
-import { UserMessage,AssistantMessage,AttachmentMessage,SystemMessage } from './types/message';
+import type { FileStateCache } from './utils/fileStateCache';
+import type { FileHistoryState } from './utils/fileHistory';
+import type { UserMessage,AssistantMessage,AttachmentMessage,SystemMessage } from './types/message';
 export type ToolResult<T> =
 {
   type?: string,

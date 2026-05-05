@@ -1,5 +1,5 @@
- let graphemeSegmenter: Intl.Segmenter | undefined
-  let wordSegmenter: Intl.Segmenter | undefined
+let graphemeSegmenter: Intl.Segmenter | undefined
+let wordSegmenter: Intl.Segmenter | undefined
 
   export function getGraphemeSegmenter(): Intl.Segmenter {
     if (!graphemeSegmenter) {

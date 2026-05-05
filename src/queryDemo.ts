@@ -5,8 +5,11 @@ import { homedir } from 'node:os';
 import { captureAPIRequest } from './utils/logger.js';
 import { GlobTool } from './tools/GlobTool/GlobTool.js';
 import { GrepTool } from './tools/GrepTool/GrepTool.js';
+import { FileReadTool } from './tools/FileReadTool/FileReadTool.js';
 import { getCwd } from './utils/cwd.js';
 import { expandPath } from './utils/path.js';
+import type { FileHistoryState } from './utils/fileHistory.js';
+import type { ToolUseContext } from './Tool.js';
 import type {
   ChatCompletionAssistantMessageParam,
   ChatCompletionMessageParam,
@@ -26,9 +29,11 @@ interface Settings {
 }
 
 let client: OpenAI | null = null;
-let model: string = 'gpt-5';
+let model: string = 'kimi-k2.6';
 let settingsLoaded = false;
-const systemPrompt = '当前工作目录是 F:\\ChatUI-Cli\\src。使用工具查找或读取项目文件时，默认以这个目录作为当前路径。';
+const systemPrompt =
+  '当前工作目录是 F:\\ChatUI-Cli。使用工具查找或读取项目文件时，默认以这个目录作为当前路径。' +
+  ' 工具只能通过 OpenAI tool_calls/function calling 调用，不要在普通回复里输出 <functioncalls>、<invoke>、fileread 或任何 XML 工具调用文本。';
 
 const tools: ChatCompletionTool[] = [
   {
@@ -124,7 +129,73 @@ const tools: ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: FileReadTool.name,
+      description: 'Read a local file by absolute path. Supports text files, images, and PDFs. For large text files, use offset and limit.',
+      parameters: {
+        type: 'object',
+        properties: {
+          file_path: {
+            type: 'string',
+            description: 'The absolute path to the file to read.',
+          },
+          offset: {
+            type: 'number',
+            description: 'Optional 1-based line number to start reading from.',
+          },
+          limit: {
+            type: 'number',
+            description: 'Optional number of lines to read.',
+          },
+          pages: {
+            type: 'string',
+            description: 'Optional PDF page range, for example "1-5", "3", or "10-20".',
+          },
+        },
+        required: ['file_path'],
+        additionalProperties: false,
+      },
+    },
+  },
 ];
+
+function createReadFileState() {
+  type CachedFileState = {
+    content: string;
+    timestamp: number;
+    offset: number | undefined;
+    limit: number | undefined;
+    isPartialView?: boolean;
+  };
+  const cache = new Map<string, CachedFileState>();
+  return {
+    get(key: string) {
+      return cache.get(path.normalize(key));
+    },
+    set(key: string, value: CachedFileState) {
+      cache.set(path.normalize(key), value);
+      return this;
+    },
+    has(key: string) {
+      return cache.has(path.normalize(key));
+    },
+    delete(key: string) {
+      return cache.delete(path.normalize(key));
+    },
+    clear() {
+      cache.clear();
+    },
+  };
+}
+
+const readFileState = createReadFileState();
+let fileHistoryState: FileHistoryState = {
+  snapshots: [],
+  trackedFiles: new Set(),
+  snapshotSequence: 0,
+};
 
 export function resetSettings(): void {
   client = null;
@@ -138,7 +209,7 @@ async function ensureClient(): Promise<void> {
   const settings: Settings = JSON.parse(content);
   const apiKey = settings.env?.AUTH_TOKEN || process.env.OPENAI_API_KEY;
   const baseURL = settings.env?.ANTHROPIC_BASE_URL;
-  model = settings.env?.ANTHROPIC_MODEL || 'gpt-5';
+  model = settings.env?.ANTHROPIC_MODEL || 'kimi-k2.6';
   const configured = Number(settings.env?.REQUEST_TIMEOUT_MS);
   const timeout = Number.isFinite(configured) && configured > 0 ? configured : 120_000;
   client = new OpenAI({ apiKey, baseURL, maxRetries: 0, timeout });
@@ -205,22 +276,55 @@ function getToolCommand(toolName: string, args: Record<string, unknown>): string
 
     return command.join(' ');
   }
+  if (toolName === FileReadTool.name) {
+    const filePath = typeof args.file_path === 'string' ? args.file_path : '';
+    const command = ['Read', quoteCommandArg(filePath)];
+    if (typeof args.offset === 'number') command.push('--offset', String(args.offset));
+    if (typeof args.limit === 'number') command.push('--limit', String(args.limit));
+    if (typeof args.pages === 'string') command.push('--pages', quoteCommandArg(args.pages));
+    return command.join(' ');
+  }
   return `${toolName} ${JSON.stringify(args)}`;
 }
 
-function logToolCall(message: string): void {
+export type ToolExecutionMessage = {
+  phase: 'call' | 'done' | 'error'
+  text: string
+}
+
+function logToolCall(
+  message: string,
+  onToolMessage?: (message: ToolExecutionMessage) => void,
+): void {
   console.info(`[tool] ${message}`);
+  const phase = message.startsWith('call ')
+    ? 'call'
+    : message.startsWith('done ')
+      ? 'done'
+      : 'error';
+  onToolMessage?.({ phase, text: message });
 }
 
 async function callTool(
   toolCall: ChatCompletionMessageFunctionToolCall,
   signal: AbortSignal,
+  onToolMessage?: (message: ToolExecutionMessage) => void,
 ): Promise<string> {
   try {
     const rawArgs = parseToolArguments(toolCall.function.arguments);
-    const toolContext = {
-      options: { debug: false, verbose: false },
+    const toolContext: ToolUseContext = {
+      options: {
+        debug: false,
+        verbose: false,
+        mainLoopModel: model,
+        tools: [],
+        isNonInteractiveSession: true,
+      },
       abortController: createToolAbortController(signal),
+      readFileState: readFileState as unknown as ToolUseContext['readFileState'],
+      updateFileHistoryState(updater) {
+        fileHistoryState = updater(fileHistoryState);
+      },
       globLimits: { maxResults: 100 },
     };
 
@@ -228,12 +332,37 @@ async function callTool(
       const args = GlobTool.inputSchema.parse(rawArgs);
       const searchPath = args.path ? expandPath(args.path) : getCwd();
       const cwdInfo = `cwd: ${searchPath}`;
-      logToolCall(`call ${GlobTool.name}: ${getToolCommand(GlobTool.name, args)} (${cwdInfo})`);
+      logToolCall(
+        `call ${GlobTool.name}: ${getToolCommand(GlobTool.name, args)} (${cwdInfo})`,
+        onToolMessage,
+      );
       const result = await GlobTool.call(args, toolContext);
       logToolCall(
         `done ${GlobTool.name}: ${result.data.numFiles} files in ${result.data.durationMs}ms` +
           (result.data.truncated ? ' (truncated)' : ''),
+        onToolMessage,
       );
+      return JSON.stringify(result);
+    }
+
+    if (toolCall.function.name === FileReadTool.name) {
+      const args = FileReadTool.inputSchema.parse(rawArgs);
+      logToolCall(
+        `call ${FileReadTool.name}: ${getToolCommand(FileReadTool.name, args)}`,
+        onToolMessage,
+      );
+      const result = await FileReadTool.call(args, toolContext);
+      const summary =
+        result.data.type === 'text'
+          ? `${result.data.file.numLines} lines`
+          : result.data.type === 'image'
+            ? `${result.data.file.type}, ${result.data.file.originalSize} bytes`
+            : result.data.type === 'pdf'
+              ? `pdf, ${result.data.file.originalSize} bytes`
+              : result.data.type === 'parts'
+                ? `${result.data.file.count} parts`
+                : result.data.type;
+      logToolCall(`done ${FileReadTool.name}: ${summary}`, onToolMessage);
       return JSON.stringify(result);
     }
 
@@ -241,7 +370,10 @@ async function callTool(
       const args = GrepTool.inputSchema.parse(rawArgs);
       const searchPath = args.path ? expandPath(args.path) : getCwd();
       const cwdInfo = `cwd: ${searchPath}`;
-      logToolCall(`call ${GrepTool.name}: ${getToolCommand(GrepTool.name, args)} (${cwdInfo})`);
+      logToolCall(
+        `call ${GrepTool.name}: ${getToolCommand(GrepTool.name, args)} (${cwdInfo})`,
+        onToolMessage,
+      );
       const result = await GrepTool.call(args, toolContext);
       const extra =
         result.data.mode === 'content'
@@ -249,7 +381,10 @@ async function callTool(
           : result.data.mode === 'count'
             ? `, ${result.data.numMatches ?? 0} matches`
             : '';
-      logToolCall(`done ${GrepTool.name}: ${result.data.numFiles} files${extra}`);
+      logToolCall(
+        `done ${GrepTool.name}: ${result.data.numFiles} files${extra}`,
+        onToolMessage,
+      );
       return JSON.stringify(result);
     }
 
@@ -258,7 +393,10 @@ async function callTool(
       error: `Unknown tool: ${toolCall.function.name}`,
     });
   } catch (error: any) {
-    logToolCall(`error ${toolCall.function.name}: ${error?.message || String(error)}`);
+    logToolCall(
+      `error ${toolCall.function.name}: ${error?.message || String(error)}`,
+      onToolMessage,
+    );
     return JSON.stringify({
       type: 'error',
       error: error?.message || String(error),
@@ -283,6 +421,59 @@ function toToolCalls(
         arguments: toolCall.arguments,
       },
     }));
+}
+
+function decodeXmlText(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
+function parseTextToolCalls(text: string): ChatCompletionMessageFunctionToolCall[] {
+  const calls: ChatCompletionMessageFunctionToolCall[] = [];
+  const invokePattern = /<invoke\s+name=["']([^"']+)["'][^>]*>([\s\S]*?)<\/invoke>/gi;
+  const functionPattern = /<function=([a-zA-Z0-9_-]+)[^>]*>([\s\S]*?)<\/function>/gi;
+  let match: RegExpExecArray | null;
+
+  const pushReadCall = (body: string) => {
+    const filePath =
+      /<parameter\s+name=["']?(?:filepath|file_path|path)["']?[^>]*>([\s\S]*?)<\/parameter>/i.exec(body)?.[1]?.trim();
+    if (!filePath) return;
+
+    calls.push({
+      id: `fallback_read_${calls.length}`,
+      type: 'function',
+      function: {
+        name: FileReadTool.name,
+        arguments: JSON.stringify({ file_path: decodeXmlText(filePath) }),
+      },
+    });
+  };
+
+  while ((match = invokePattern.exec(text)) !== null) {
+    const rawName = match[1]?.trim().toLowerCase();
+    const body = match[2] ?? '';
+    if (!rawName) continue;
+
+    if (['fileread', 'file_read', 'read', 'readfile', 'read_file'].includes(rawName)) {
+      pushReadCall(body);
+    }
+  }
+
+  while ((match = functionPattern.exec(text)) !== null) {
+    const rawName = match[1]?.trim().toLowerCase();
+    const body = match[2] ?? '';
+    if (!rawName) continue;
+
+    if (['fileread', 'file_read', 'read', 'readfile', 'read_file'].includes(rawName)) {
+      pushReadCall(body);
+    }
+  }
+
+  return calls;
 }
 
 async function streamCompletion(
@@ -393,26 +584,35 @@ function isRetryableError(error: any): boolean {//判断是否可重试
   );
 }
 
-async function doStreamRequest(input: string,signal:AbortSignal): Promise<string> {
+async function doStreamRequest(
+  input: string,
+  signal: AbortSignal,
+  onToolMessage?: (message: ToolExecutionMessage) => void,
+): Promise<string> {
   const messages: ChatCompletionMessageParam[] = [
     { role: 'system', content: systemPrompt },
     { role: 'user', content: input },
   ];
   const firstResult = await streamCompletion(messages, signal, undefined, undefined, undefined, true);
-  if (firstResult.toolCalls.length === 0) {
+  const toolCalls =
+    firstResult.toolCalls.length > 0
+      ? firstResult.toolCalls
+      : parseTextToolCalls(firstResult.text);
+
+  if (toolCalls.length === 0) {
     return firstResult.text || '没有拿到回复';
   }
 
   messages.push({
     role: 'assistant',
-    content: firstResult.text || null,
-    tool_calls: firstResult.toolCalls,
+    content: firstResult.toolCalls.length > 0 ? firstResult.text || null : null,
+    tool_calls: toolCalls,
   });
-  for (const toolCall of firstResult.toolCalls) {
+  for (const toolCall of toolCalls) {
     messages.push({
       role: 'tool',
       tool_call_id: toolCall.id,
-      content: await callTool(toolCall, signal),
+      content: await callTool(toolCall, signal, onToolMessage),
     });
   }
 
@@ -434,6 +634,7 @@ export async function askOpenAI(
   onChunk?: (text: string) => void,
   onReasoningStart?: () => void,
   onReasoningEnd?: (durationMs: number) => void,
+  onToolMessage?: (message: ToolExecutionMessage) => void,
 ): Promise<AskOpenAIResult> {
   const maxRetries = 5;
   const baseDelay = 500;
@@ -447,13 +648,19 @@ export async function askOpenAI(
     const firstResult = await streamCompletion(
       messages,
       signal,
-      onChunk,
+      undefined,
       onReasoningStart,
       onReasoningEnd,
       true,
     );
 
-    if (firstResult.toolCalls.length === 0) {
+    const toolCalls =
+      firstResult.toolCalls.length > 0
+        ? firstResult.toolCalls
+        : parseTextToolCalls(firstResult.text);
+
+    if (toolCalls.length === 0) {
+      onChunk?.(firstResult.text);
       return {
         text: firstResult.text || '没有拿到回复',
         reasoningText: firstResult.reasoningText,
@@ -464,13 +671,13 @@ export async function askOpenAI(
 
     const assistantMessage: ChatCompletionAssistantMessageParam = {
       role: 'assistant',
-      content: firstResult.text || null,
-      tool_calls: firstResult.toolCalls,
+      content: firstResult.toolCalls.length > 0 ? firstResult.text || null : null,
+      tool_calls: toolCalls,
     };
     messages.push(assistantMessage);
 
-    for (const toolCall of firstResult.toolCalls) {
-      const content = await callTool(toolCall, signal);
+    for (const toolCall of toolCalls) {
+      const content = await callTool(toolCall, signal, onToolMessage);
       messages.push({
         role: 'tool',
         tool_call_id: toolCall.id,
@@ -502,7 +709,7 @@ export async function askOpenAI(
       let attempt = 0;
       while (true) {
         try {
-          const result = await doStreamRequest(input,signal);
+          const result = await doStreamRequest(input, signal, onToolMessage);
           return { text: result, reasoningText: "", reasoningDurationMs: 0 };
         } catch (error: any) {
           if (error?.name === "AbortError") {
