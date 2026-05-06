@@ -5,7 +5,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import {Box, Text} from 'ink';
+import {Box, Text} from '../../ink.js';
 import chalk from 'chalk';
 
 export type ScrollBoxHandle = {

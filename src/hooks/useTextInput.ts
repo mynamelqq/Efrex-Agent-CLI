@@ -1,5 +1,5 @@
 import {useEffect, useState} from 'react';
-import {useInput} from 'ink';
+import {useInput} from '../ink.js';
 import Cursor from '../utils/Cursor.js';
 
 const SGR_MOUSE_INPUT_PATTERN = /(?:\x1B)?\[<\d+;\d+;\d+[mM]/g;
@@ -16,6 +16,7 @@ type Props = {
   onHistoryPrev?: () => void;
   onHistoryNext?: () => void;
   onCtrlC?: () => void;
+  onPasteText?: (text: string) => string;
 };
 
 export default function useTextInput({
@@ -30,6 +31,7 @@ export default function useTextInput({
   onHistoryPrev,
   onHistoryNext,
   onCtrlC,
+  onPasteText,
 }: Props) {
   const [cursor, setCursor] = useState(() => new Cursor(value, value.length));
 
@@ -42,7 +44,7 @@ export default function useTextInput({
   }, [value]);
 
   useInput(
-    (input, key) => {
+    (input, key, event) => {
       const textInput = stripMouseInput(input);
       if (textInput.length === 0 && textInput !== input) {
         return;
@@ -120,11 +122,16 @@ export default function useTextInput({
       } else if (key.rightArrow) {
         nextCursor = cursor.right();
       } else if (key.backspace) {
-        nextCursor = cursor.backspace();
+        nextCursor = cursor.deleteTokenBefore() ?? cursor.backspace();
       } else if (key.delete) {
         nextCursor = cursor.deleteForward();
       } else if (textInput) {
-        nextCursor = cursor.insert(textInput);
+        const normalizedInput = textInput.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        const insertedText =
+          event.keypress.isPasted && onPasteText
+            ? onPasteText(normalizedInput)
+            : normalizedInput;
+        nextCursor = cursor.insert(insertedText);
       }
 
       if (nextCursor === cursor) {
@@ -158,6 +165,8 @@ function handleCtrl(input: string, cursor: Cursor, width: number): Cursor {
       return cursor.endOfLine(width);
     case 'f':
       return cursor.right();
+    case 'h':
+      return cursor.deleteTokenBefore() ?? cursor.backspace();
     case 'k':
       return cursor.killToLineEnd(width);
     case 'u':

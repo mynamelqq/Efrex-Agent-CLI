@@ -1,7 +1,6 @@
 export function formatPastedTextLabel(index: number, text: string): string {
-  const chars = text.length;
-  const lines = text.split(/\r?\n/).length;
-  return lines > 3
-    ? `[Pasted #${index} ${lines} lines]`
-    : `[Pasted #${index} ${chars} characters]`;
+  const lines = (text.match(/\r\n|\r|\n/g) || []).length;
+  return lines > 0
+    ? `[Pasted text #${index} +${lines} lines]`
+    : `[Pasted text #${index}]`;
 }

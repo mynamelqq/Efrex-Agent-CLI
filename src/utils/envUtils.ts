@@ -30,3 +30,20 @@ export function getDefaultVertexRegion(): string {
   return process.env.CLOUD_ML_REGION || 'us-east5'
 }
 
+export function isEnvTruthy(value: string | undefined): boolean {
+  if (value === undefined) {
+    return false
+  }
+
+  return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase())
+}
+
+export function isEnvDefinedFalsy(value: string | undefined): boolean {
+  if (value === undefined) {
+    return false
+  }
+
+  return ['0', 'false', 'no', 'off', ''].includes(value.toLowerCase())
+}
+
+export const getClaudeConfigHomeDir = getEfrexConfigHomeDir

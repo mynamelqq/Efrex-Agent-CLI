@@ -1,3 +1,5 @@
+import {stringWidth} from '../ink/stringWidth.js';
+
 type RenderOptions = {
   cursorChar?: string;
   mask?: string;
@@ -10,6 +12,11 @@ type VisualLine = {
   start: number;
   end: number;
   text: string;
+};
+
+type PositionOptions = {
+  width: number;
+  maxVisibleLines?: number;
 };
 
 const graphemeSegmenter =
@@ -48,6 +55,12 @@ export default class Cursor {
       return this;
     }
 
+    const token = this.findTokenBeforeOrAtCursor();
+    if (token) {
+      const nextText = this.text.slice(0, token.start) + this.text.slice(token.end);//光标左边有特殊token时，一次性删除整个token
+      return new Cursor(nextText, token.start, 0, null);
+    }
+
     const previousOffset = previousGraphemeOffset(this.text, this.offset);
     const nextText = this.text.slice(0, previousOffset) + this.text.slice(this.offset);
     return new Cursor(nextText, previousOffset, 0, null);
@@ -58,17 +71,53 @@ export default class Cursor {
       return this;
     }
 
+    const token = this.imageRefStartingAt(this.offset) ?? specialTokenContaining(this.text, this.offset);
+    if (token) {
+      const nextText = this.text.slice(0, token.start) + this.text.slice(token.end);
+      return new Cursor(nextText, token.start, 0, null);
+    }
+
     const nextOffset = nextGraphemeOffset(this.text, this.offset);
     const nextText = this.text.slice(0, this.offset) + this.text.slice(nextOffset);
     return new Cursor(nextText, this.offset, 0, null);
   }
 
   left(): Cursor {
+    const token = this.imageRefEndingAt(this.offset) ?? specialTokenContaining(this.text, this.offset);
+    if (token) {
+      return new Cursor(this.text, token.start, 0, null);
+    }
+
     return new Cursor(this.text, previousGraphemeOffset(this.text, this.offset), 0, null);
   }
 
   right(): Cursor {
+    const token = this.imageRefStartingAt(this.offset) ?? specialTokenContaining(this.text, this.offset);
+    if (token) {
+      return new Cursor(this.text, token.end, 0, null);
+    }
+
     return new Cursor(this.text, nextGraphemeOffset(this.text, this.offset), 0, null);
+  }
+
+  /**
+   * If an image/paste chip ends at `offset`, return its bounds. Used by left()
+   * and delete operations to hop over chips instead of stepping into them.
+   */
+  imageRefEndingAt(offset: number): {start: number; end: number} | null {
+    return specialTokenEndingAt(this.text, offset);
+  }
+
+  imageRefStartingAt(offset: number): {start: number; end: number} | null {
+    return specialTokenStartingAt(this.text, offset);
+  }
+
+  /**
+   * If offset lands strictly inside an image/paste chip, snap it to the given
+   * boundary. Used by word movement so Ctrl+W / Alt+D never leave a partial chip.
+   */
+  snapOutOfImageRef(offset: number, toward: 'start' | 'end'): number {
+    return snapOutOfSpecialToken(this.text, offset, toward);
   }
 
   startOfLine(width: number): Cursor {
@@ -108,11 +157,11 @@ export default class Cursor {
   }
 
   prevWord(): Cursor {
-    return new Cursor(this.text, previousWordOffset(this.text, this.offset), 0, null);
+    return new Cursor(this.text, this.snapOutOfImageRef(previousWordOffset(this.text, this.offset), 'start'), 0, null);
   }
 
   nextWord(): Cursor {
-    return new Cursor(this.text, nextWordOffset(this.text, this.offset), 0, null);
+    return new Cursor(this.text, this.snapOutOfImageRef(nextWordOffset(this.text, this.offset), 'end'), 0, null);
   }
 
   up(width: number): Cursor {
@@ -121,6 +170,16 @@ export default class Cursor {
 
   down(width: number): Cursor {
     return this.moveVertical(width, 1);
+  }
+
+  deleteTokenBefore(): Cursor | null {
+    const token = this.findTokenBeforeOrAtCursor();
+    if (!token) {
+      return null;
+    }
+
+    const nextText = this.text.slice(0, token.start) + this.text.slice(token.end);
+    return new Cursor(nextText, token.start, 0, null);
   }
 
   render({
@@ -139,8 +198,24 @@ export default class Cursor {
     }
 
     const currentLineIndex = findVisualLineIndex(lines, this.offset);
-    const start = Math.max(0, currentLineIndex - maxVisibleLines + 1);
+    const start = getViewportStartLine(lines, currentLineIndex, maxVisibleLines);
     return rendered.slice(start, start + maxVisibleLines);
+  }
+
+  getPosition({width, maxVisibleLines}: PositionOptions): {line: number; column: number} {
+    const lines = buildVisualLines(this.text, width);
+    const lineIndex = findVisualLineIndex(lines, this.offset);
+    const line = lines[lineIndex] ?? {start: 0, end: 0, text: ''};
+    const localOffset = clamp(this.offset - line.start, 0, line.end - line.start);
+    const viewportStartLine =
+      maxVisibleLines && lines.length > maxVisibleLines
+        ? getViewportStartLine(lines, lineIndex, maxVisibleLines)
+        : 0;
+
+    return {
+      line: Math.max(0, lineIndex - viewportStartLine),
+      column: stringWidth(line.text.slice(0, localOffset)),
+    };
   }
 
   private moveVertical(width: number, direction: -1 | 1): Cursor {
@@ -152,25 +227,65 @@ export default class Cursor {
     }
 
     const currentLine = lines[currentLineIndex]!;
-    const currentColumn = this.preferredColumn ?? this.offset - currentLine.start;
+    const currentColumn =
+      this.preferredColumn ??
+      stringWidth(currentLine.text.slice(0, clamp(this.offset - currentLine.start, 0, currentLine.end - currentLine.start)));
     const targetLine = lines[targetLineIndex]!;
-    const targetOffset = targetLine.start + Math.min(currentColumn, targetLine.end - targetLine.start);
+    const targetOffset = this.snapOutOfImageRef(
+      offsetAtDisplayColumn(targetLine, currentColumn),
+      direction === -1 ? 'start' : 'end',
+    );
     return new Cursor(this.text, targetOffset, 0, currentColumn);
+  }
+
+  private findTokenBeforeOrAtCursor(): {start: number; end: number} | null {
+    const tokenAfter = this.imageRefStartingAt(this.offset);
+    if (tokenAfter) {
+      const end =
+        this.text[tokenAfter.end] === ' ' ? tokenAfter.end + 1 : tokenAfter.end;
+      return {start: tokenAfter.start, end};
+    }
+
+    if (this.offset === 0) {
+      return null;
+    }
+
+    const charAfter = this.text[this.offset];
+    if (charAfter !== undefined && !/\s/.test(charAfter)) {
+      return specialTokenContaining(this.text, this.offset);
+    }
+
+    return this.imageRefEndingAt(this.offset) ?? specialTokenContaining(this.text, this.offset);
   }
 }
 
 function renderLine(line: VisualLine, offset: number, cursorChar: string, invert: (text: string) => string): string {
-  const column = clamp(offset - line.start, 0, line.end - line.start);
   if (line.text.length === 0) {
-    return column === 0 ? invert(cursorChar) : cursorChar;
+    return offset <= line.start ? invert(cursorChar) : cursorChar;
   }
 
   let rendered = '';
-  for (let i = 0; i < line.text.length; i++) {
-    rendered += i === column ? invert(line.text[i]!) : line.text[i]!;
+  let insertedCursor = false;
+  for (const grapheme of iterGraphemes(line.text)) {
+    const start = line.start + grapheme.index;
+    const end = start + grapheme.segment.length;
+
+    if (!insertedCursor && offset >= start && offset < end) {
+      rendered += invert(grapheme.segment);
+      insertedCursor = true;
+      continue;
+    }
+
+    if (!insertedCursor && offset <= start) {
+      rendered += invert(grapheme.segment);
+      insertedCursor = true;
+      continue;
+    }
+
+    rendered += grapheme.segment;
   }
 
-  if (column === line.text.length) {
+  if (!insertedCursor) {
     rendered += invert(cursorChar);
   }
 
@@ -198,26 +313,42 @@ function buildVisualLines(text: string, width: number): VisualLine[] {
   const lines: VisualLine[] = [];
   let offset = 0;
 
-  for (const logicalLine of logicalLines) {
-    const graphemes = splitGraphemes(logicalLine);
-    if (graphemes.length === 0) {
+  for (let lineIndex = 0; lineIndex < logicalLines.length; lineIndex++) {
+    const logicalLine = logicalLines[lineIndex]!;
+    if (logicalLine.length === 0) {
       lines.push({start: offset, end: offset, text: ''});
-      offset += 1;
+      offset += lineIndex < logicalLines.length - 1 ? 1 : 0;
       continue;
     }
 
-    let localOffset = 0;
-    while (localOffset < graphemes.length) {
-      const chunk = graphemes.slice(localOffset, localOffset + safeWidth).join('');
-      lines.push({
-        start: offset + localOffset,
-        end: offset + localOffset + chunk.length,
-        text: chunk,
-      });
-      localOffset += safeWidth;
+    let visualText = '';
+    let visualWidth = 0;
+    let visualStart = 0;
+
+    for (const grapheme of iterGraphemes(logicalLine)) {
+      const graphemeWidth = Math.max(1, stringWidth(grapheme.segment));
+      if (visualText.length > 0 && visualWidth + graphemeWidth > safeWidth) {
+        lines.push({
+          start: offset + visualStart,
+          end: offset + grapheme.index,
+          text: visualText,
+        });
+        visualText = '';
+        visualWidth = 0;
+        visualStart = grapheme.index;
+      }
+
+      visualText += grapheme.segment;
+      visualWidth += graphemeWidth;
     }
 
-    offset += logicalLine.length + 1;
+    lines.push({
+      start: offset + visualStart,
+      end: offset + logicalLine.length,
+      text: visualText,
+    });
+
+    offset += logicalLine.length + (lineIndex < logicalLines.length - 1 ? 1 : 0);
   }
 
   if (text.length === 0) {
@@ -227,12 +358,21 @@ function buildVisualLines(text: string, width: number): VisualLine[] {
   return lines;
 }
 
-function splitGraphemes(text: string): string[] {
+function iterGraphemes(text: string): Array<{segment: string; index: number}> {
   if (!graphemeSegmenter) {
-    return Array.from(text);
+    const segments: Array<{segment: string; index: number}> = [];
+    let index = 0;
+    for (const segment of Array.from(text)) {
+      segments.push({segment, index});
+      index += segment.length;
+    }
+    return segments;
   }
 
-  return Array.from(graphemeSegmenter.segment(text), segment => segment.segment);
+  return Array.from(graphemeSegmenter.segment(text), segment => ({
+    segment: segment.segment,
+    index: segment.index,
+  }));
 }
 
 function previousGraphemeOffset(text: string, offset: number): number {
@@ -312,4 +452,89 @@ function nextWordOffset(text: string, offset: number): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function offsetAtDisplayColumn(line: VisualLine, targetColumn: number): number {
+  if (targetColumn <= 0) {
+    return line.start;
+  }
+
+  let column = 0;
+  for (const grapheme of iterGraphemes(line.text)) {
+    const nextColumn = column + Math.max(1, stringWidth(grapheme.segment));
+    if (nextColumn > targetColumn) {
+      return line.start + grapheme.index;
+    }
+    column = nextColumn;
+  }
+
+  return line.end;
+}
+
+function getViewportStartLine(lines: VisualLine[], currentLineIndex: number, maxVisibleLines: number): number {
+  if (lines.length <= maxVisibleLines) {
+    return 0;
+  }
+
+  const half = Math.floor(maxVisibleLines / 2);
+  let start = Math.max(0, currentLineIndex - half);
+  const end = Math.min(lines.length, start + maxVisibleLines);
+  if (end - start < maxVisibleLines) {
+    start = Math.max(0, end - maxVisibleLines);
+  }
+
+  return start;
+}
+
+const SPECIAL_TOKEN_PATTERN =
+  /\[(?:Pasted text #\d+(?: \+\d+ lines)?|Pasted #\d+ (?:\d+ lines|\d+ characters)|Image #\d+|\.\.\.Truncated text #\d+ \+\d+ lines\.\.\.)\]/g;
+
+function specialTokenEndingAt(text: string, offset: number): {start: number; end: number} | null {
+  for (const token of findSpecialTokens(text)) {
+    if (token.end === offset) {
+      return token;
+    }
+  }
+
+  return null;
+}
+
+function specialTokenStartingAt(text: string, offset: number): {start: number; end: number} | null {
+  for (const token of findSpecialTokens(text)) {
+    if (token.start === offset) {
+      return token;
+    }
+  }
+
+  return null;
+}
+
+function specialTokenContaining(text: string, offset: number): {start: number; end: number} | null {
+  for (const token of findSpecialTokens(text)) {
+    if (offset > token.start && offset < token.end) {
+      return token;
+    }
+  }
+
+  return null;
+}
+
+function snapOutOfSpecialToken(text: string, offset: number, toward: 'start' | 'end'): number {
+  const token = specialTokenContaining(text, offset);
+  if (!token) {
+    return offset;
+  }
+
+  return toward === 'start' ? token.start : token.end;
+}
+
+function findSpecialTokens(text: string): Array<{start: number; end: number}> {
+  const tokens: Array<{start: number; end: number}> = [];
+  SPECIAL_TOKEN_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = SPECIAL_TOKEN_PATTERN.exec(text)) !== null) {
+    tokens.push({start: match.index, end: match.index + match[0].length});
+  }
+
+  return tokens;
 }

@@ -1,5 +1,5 @@
 import React, {type Ref} from 'react';
-import {Box, Text} from 'ink';
+import {Box, Text} from '../ink.js';
 import chalk from 'chalk';
 import {stringWidth} from '../ink/stringWidth.js';
 import ScrollBox, {type ScrollBoxHandle} from '../ink/components/ScrollBox.js';
@@ -89,11 +89,13 @@ export default function MessageViewport({
 
 function renderMessage(message: ViewportMessage, width: number): string[] {
   if (message.role === 'user') {
+    const contentWidth = Math.max(1, width - 2);
     return [
       '',
-      ...wrapPlain(message.text, Math.max(1, width - 2)).map((line, index) =>
-        chalk.bgGray.white(`${index === 0 ? '> ' : '  '}${truncatePlain(line, Math.max(1, width - 2))}`),
-      ),
+      ...wrapPlain(message.text, contentWidth).map((line, index) => {
+        const prefix = index === 0 ? '> ' : '  ';
+        return chalk.inverse(padPlain(`${prefix}${truncatePlain(line, contentWidth)}`, width));
+      }),
     ];
   }
 

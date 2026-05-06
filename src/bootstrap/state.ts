@@ -1,47 +1,48 @@
-const STATE = {
-  cwd: '',
-  originalCwd: '',
-  projectRoot: '',
-  lastAPIRequest: null as Record<string, unknown> | null,
-  lastAPIRequestMessages: null as unknown[] | null,
+let pendingInteractionTime: number | null = null;
+let cwdState: string | null = null;
+const originalCwd = process.cwd();
+let lastAPIRequest: Record<string, unknown> | null = null;
+let lastAPIRequestMessages: unknown[] | null = null;
+
+export function updateLastInteractionTime(immediate = false): void {
+  pendingInteractionTime = Date.now();
+  if (immediate) {
+    flushInteractionTime();
+  }
 }
 
-export function getCwdState():string {
-  return STATE.cwd
+export function flushInteractionTime(): void {
+  pendingInteractionTime = null;
 }
 
-export function setCwdState(cwd:string):void{
-  STATE.cwd = cwd.normalize('NFC')
+export function markScrollActivity(): void {
+  updateLastInteractionTime();
 }
 
-export function getOriginalCwd() {
-  return STATE.originalCwd
+export function getCwdState(): string | null {
+  return cwdState;
 }
 
-export function setOriginalCwd(cwd:string):void {
-  STATE.originalCwd = cwd.normalize('NFC')
+export function setCwdState(cwd: string | null): void {
+  cwdState = cwd;
 }
 
-export function getProjectRoot() :string{
-  return STATE.projectRoot
-}
-
-export function setProjectRoot(cwd:string) :void{
-  STATE.projectRoot = cwd.normalize('NFC')
+export function getOriginalCwd(): string {
+  return originalCwd;
 }
 
 export function getLastAPIRequest(): Record<string, unknown> | null {
-  return STATE.lastAPIRequest
+  return lastAPIRequest;
 }
 
-export function setLastAPIRequest(params: Record<string, unknown> | null): void {
-  STATE.lastAPIRequest = params
+export function setLastAPIRequest(request: Record<string, unknown> | null): void {
+  lastAPIRequest = request;
 }
 
 export function getLastAPIRequestMessages(): unknown[] | null {
-  return STATE.lastAPIRequestMessages
+  return lastAPIRequestMessages;
 }
 
 export function setLastAPIRequestMessages(messages: unknown[] | null): void {
-  STATE.lastAPIRequestMessages = messages
+  lastAPIRequestMessages = messages;
 }

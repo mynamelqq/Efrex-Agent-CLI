@@ -1,7 +1,8 @@
 import React from 'react';
-import {Box, Text} from 'ink';
+import {Box, Text} from '../ink.js';
 import chalk from 'chalk';
 import useTextInput from '../hooks/useTextInput.js';
+import {useDeclaredCursor} from '../ink/hooks/use-declared-cursor.js';
 
 type Props = {
   value: string;
@@ -17,6 +18,7 @@ type Props = {
   onHistoryPrev?: () => void;
   onHistoryNext?: () => void;
   onCtrlC?: () => void;
+  onPasteText?: (text: string) => string;
 };
 
 export default function PromptInput({
@@ -33,6 +35,7 @@ export default function PromptInput({
   onHistoryPrev,
   onHistoryNext,
   onCtrlC,
+  onPasteText,
 }: Props) {
   const {cursor} = useTextInput({
     value,
@@ -46,6 +49,16 @@ export default function PromptInput({
     onHistoryPrev,
     onHistoryNext,
     onCtrlC,
+    onPasteText,
+  });
+  const cursorPosition = cursor.getPosition({
+    width,
+    maxVisibleLines,
+  });
+  const cursorRef = useDeclaredCursor({
+    line: cursorPosition.line,
+    column: cursorPosition.column,
+    active: isActive,
   });
 
   if (value.length === 0) {
@@ -55,7 +68,11 @@ export default function PromptInput({
         : chalk.inverse(' ')
       : chalk.gray(placeholder);
 
-    return <Text>{renderedPlaceholder}</Text>;
+    return (
+      <Box ref={cursorRef}>
+        <Text>{renderedPlaceholder}</Text>
+      </Box>
+    );
   }
 
   const lines = cursor.render({
@@ -65,7 +82,7 @@ export default function PromptInput({
   });
 
   return (
-    <Box flexDirection="column">
+    <Box ref={cursorRef} flexDirection="column">
       {lines.map((line, index) => (
         <Text key={`${index}-${line.length}`}>{line}</Text>
       ))}

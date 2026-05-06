@@ -12,6 +12,7 @@ import type { FileHistoryState } from './utils/fileHistory.js';
 import type { ToolUseContext } from './Tool.js';
 import type {
   ChatCompletionAssistantMessageParam,
+  ChatCompletionContentPart,
   ChatCompletionMessageParam,
   ChatCompletionMessageFunctionToolCall,
   ChatCompletionTool,
@@ -291,6 +292,8 @@ export type ToolExecutionMessage = {
   phase: 'call' | 'done' | 'error'
   text: string
 }
+
+export type UserMessageContent = string | ChatCompletionContentPart[];
 
 function logToolCall(
   message: string,
@@ -585,7 +588,7 @@ function isRetryableError(error: any): boolean {//判断是否可重试
 }
 
 async function doStreamRequest(
-  input: string,
+  input: UserMessageContent,
   signal: AbortSignal,
   onToolMessage?: (message: ToolExecutionMessage) => void,
 ): Promise<string> {
@@ -628,7 +631,7 @@ export interface AskOpenAIResult {
 }
 
 export async function askOpenAI(
-  input: string,
+  input: UserMessageContent,
   signal:AbortSignal,
   onRetry?: (attempt: number, maxRetries: number) => void,
   onChunk?: (text: string) => void,
