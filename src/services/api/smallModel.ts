@@ -1,15 +1,18 @@
 import OpenAI from 'openai'
-import fs from 'node:fs/promises'
-import path from 'node:path'
-import { homedir } from 'node:os'
+import { SystemPrompt,asSystemPrompt} from 'src/prompt'
 import { randomUUID } from 'node:crypto'
 import type {
   ChatCompletionAssistantMessageParam,
   ChatCompletionMessageParam,
 } from 'openai/resources/chat/completions'
-import type { AssistantMessage } from '../types/message'
-
-export type SystemPrompt = readonly string[]
+import type { AssistantMessage } from "../../package/message"
+import {
+  getAnthropicApiKey,
+  getAnthropicBaseURL,
+  getAnthropicModel,
+  getRequestTimeoutMs,
+  getSettingsEnvValue,
+} from 'src/utils/anthropicConfig.js'
 
 export type SmallJSONOutputFormat =
   | { type: 'json_object' }
@@ -32,17 +35,6 @@ export type SmallModelOptions = {
   querySource:string
 }
 
-type Settings = {
-  env?: {
-    AUTH_TOKEN?: string
-    ANTHROPIC_BASE_URL?: string
-    ANTHROPIC_MODEL?: string
-    OPENAI_SMALL_MODEL?: string
-    REQUEST_TIMEOUT_MS?: string
-    [key: string]: string | undefined
-  }
-}
-
 let client: OpenAI | null = null
 let loadedOptions: Required<Pick<SmallModelOptions, 'model' | 'timeoutMs'>> &
   Pick<SmallModelOptions, 'apiKey' | 'baseURL'> = {
@@ -50,9 +42,6 @@ let loadedOptions: Required<Pick<SmallModelOptions, 'model' | 'timeoutMs'>> &
     timeoutMs: 120_000,
   }
 
-export function asSystemPrompt(prompt: readonly string[] | string): SystemPrompt {
-  return typeof prompt === 'string' ? [prompt] : prompt
-}
 
 export function getSmallFastModel(): string {
   return loadedOptions.model
@@ -72,26 +61,15 @@ function createAssistantMessage(content: string): AssistantMessage {
 }
 
 async function loadSettings(options: SmallModelOptions): Promise<void> {
-  let settings: Settings = {}
-  try {
-    const settingsPath = path.join(homedir(), '.efrex', 'setting.json')
-    settings = JSON.parse(await fs.readFile(settingsPath, 'utf-8')) as Settings
-  } catch {
-    settings = {}
-  }
-
-  const configuredTimeout = Number(settings.env?.REQUEST_TIMEOUT_MS)
   loadedOptions = {
-    apiKey: options.apiKey ?? settings.env?.AUTH_TOKEN ?? process.env.OPENAI_API_KEY,
-    baseURL: options.baseURL ?? settings.env?.ANTHROPIC_BASE_URL,
+    apiKey: options.apiKey ?? getAnthropicApiKey(),
+    baseURL: options.baseURL ?? getAnthropicBaseURL(),
     model:
       options.model ??
-      settings.env?.OPENAI_SMALL_MODEL ??
-      settings.env?.ANTHROPIC_MODEL ??
-      'kimi-k2.6',
-    timeoutMs:
-      options.timeoutMs ??
-      (Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 120_000),
+      process.env.OPENAI_SMALL_MODEL ??
+      getSettingsEnvValue('OPENAI_SMALL_MODEL') ??
+      getAnthropicModel(),
+    timeoutMs: options.timeoutMs ?? getRequestTimeoutMs(),
   }
 
   client = new OpenAI({
