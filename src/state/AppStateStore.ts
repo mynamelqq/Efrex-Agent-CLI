@@ -1,5 +1,7 @@
 import { DeepImmutable } from '../types/utils'
 import { Store } from './store'
+import { SettingsJson } from 'src/utils/settings/types'
+import { getInitialSettings } from 'src/utils/settings/settings'
 import { EffortValue } from '../utils/effort'
 export type FooterItem =
   | 'tasks'
@@ -10,7 +12,9 @@ export type FooterItem =
   | 'companion'
 
 export type AppState = DeepImmutable<{
-    mainLoopModel: "",
+    mainLoopModel: string,
+    settings: SettingsJson,
+    advisorModel?: string,
     inbox: {
         messages: Array<{
         id: string
@@ -31,6 +35,7 @@ export type AppStateStore = Store<AppState>
 export function getDefaultAppState(): AppState {
    return {
     mainLoopModel: "",
+    settings: getInitialSettings(),
     inbox: {
       messages: [],
     },

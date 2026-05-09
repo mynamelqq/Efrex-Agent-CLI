@@ -177,5 +177,12 @@ To complete your request, I need to fetch content from the redirected URL. Pleas
       data: output,
     }
   },
+  mapToolResultToToolResultBlockParam({ result }, toolUseID) {
+    return {
+      tool_use_id: toolUseID,
+      type: 'tool_result',
+      content: result,
+    }
+  },
 } satisfies ToolDef<InputSchema, Output>)
 

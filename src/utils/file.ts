@@ -181,3 +181,34 @@ export async function suggestPathUnderCwd(
     return undefined
   }
 }
+/**
+ * Adds cat -n style line numbers to the content.
+ */
+export function addLineNumbers({
+  content,
+  // 1-indexed
+  startLine,
+}: {
+  content: string
+  startLine: number
+}): string {
+  if (!content) {
+    return ''
+  }
+
+  const lines = content.split(/\r?\n/)
+
+  return lines//默认紧凑模式
+    .map((line, index) => `${index + startLine}\t${line}`)
+    .join('\n')
+
+  // return lines
+  //   .map((line, index) => {
+  //     const numStr = String(index + startLine)
+  //     if (numStr.length >= 6) {
+  //       return `${numStr}→${line}`
+  //     }
+  //     return `${numStr.padStart(6, ' ')}→${line}`
+  //   })
+  //   .join('\n')
+}

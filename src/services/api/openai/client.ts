@@ -46,8 +46,14 @@ export function getOpenAIClient(options?: {
   if (testClient) return testClient
   if (cachedClient) return cachedClient
 
-  const apiKey = process.env.OPENAI_API_KEY || ''
-  const baseURL = process.env.OPENAI_BASE_URL
+  const apiKey = process.env.AUTH_TOKEN || ''
+  const baseURL = process.env.ANTHROPIC_BASE_URL
+
+  if (!apiKey.trim()) {
+    throw new Error(
+      'Missing OPENAI_API_KEY. Configure it in the shell environment, user settings env, or the project .env file.',
+    )
+  }
 
   const baseFetch = options?.fetchOverride ?? (globalThis.fetch as typeof fetch)
   const wrappedFetch = wrapFetchForUsage(baseFetch)

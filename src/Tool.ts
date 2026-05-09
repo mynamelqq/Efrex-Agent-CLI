@@ -3,7 +3,10 @@ import { Theme } from "./utils/theme";
 import { AppState } from './state/AppStateStore';
 import type { FileStateCache } from './utils/fileStateCache';
 import type { FileHistoryState } from './utils/fileHistory';
-import type { UserMessage,AssistantMessage,AttachmentMessage,SystemMessage } from './types/message';
+import type { UserMessage,AssistantMessage,AttachmentMessage,SystemMessage } from "src/package/message";
+import { Message } from 'src/package/message';
+import { ToolResultBlockParam } from 'src/package/message';
+import { ThinkingConfig } from './queryEngine';
 export type ToolResult<T> =
 {
   type?: string,
@@ -14,14 +17,20 @@ export type ToolResult<T> =
     | AttachmentMessage
     | SystemMessage
   )[],
-
+  contextModifier?: (context: ToolUseContext) => ToolUseContext
 }
-
+/**
+ * Finds a tool by name or alias from a list of tools.
+ */
+export function findToolByName(tools: Tools, name: string): Tool | undefined {
+  return tools.find(t => toolMatchesName(t, name))
+}
 export type ToolUseContext = {
   options: {
     debug: boolean
     verbose: boolean
     maxBudgetUsd?: number
+    thinkingConfig:ThinkingConfig
     customSystemPrompt?: string
     /** Additional system prompt appended after the main system prompt */
     appendSystemPrompt?: string
@@ -41,8 +50,9 @@ export type ToolUseContext = {
     maxTokens?: number
     maxSizeBytes?: number
   },
-  getAppState?(): AppState
-  setAppState?(f: (prev: AppState) => AppState): void
+  getAppState(): AppState
+  setAppState(f: (prev: AppState) => AppState): void
+  messages: Message[]
 
 }
 // Type for any schema that outputs an object with string keys
@@ -71,7 +81,10 @@ export type Tool<
   userFacingNameBackgroundColor?(
     input: Partial<z.infer<Input>> | undefined,
   ): keyof Theme | undefined,
-
+ mapToolResultToToolResultBlockParam(
+    content: Output,
+    toolUseID: string,
+  ): ToolResultBlockParam
 }
 export type ToolDef<
     Input extends AnyObject=AnyObject,
@@ -85,4 +98,14 @@ export function buildTool<Input extends AnyObject, Output = unknown>(
     return {
       ...def,
     } as Tool<Input, Output>
+}
+
+/**
+ * Checks if a tool matches the given name (primary name or alias).检查工具是否匹配给定的名称（主名称或别名）
+ */
+export function toolMatchesName(
+  tool: { name: string; aliases?: string[] },
+  name: string,
+): boolean {
+  return tool.name === name || (tool.aliases?.includes(name) ?? false)
 }

@@ -227,4 +227,41 @@ export const WebSearchTool = buildTool({
       },
     }
   },
+  mapToolResultToToolResultBlockParam(output, toolUseID) {
+    const { query, results } = output
+    
+    let formattedOutput = `Web search results for query: "${query}"\n\n`
+
+    ;(results ?? []).forEach(result => {
+      if (result == null) {
+        return
+      }
+      if (typeof result === 'string') {
+        formattedOutput += result + '\n\n'
+      } else {
+        if (result.content?.length > 0) {
+          formattedOutput += 'Links:\n'
+          for (const link of result.content) {
+            formattedOutput += `  - [${link.title}](${link.url})`
+            if (link.snippet) {
+              formattedOutput += `: ${link.snippet}`
+            }
+            formattedOutput += '\n'
+          }
+          formattedOutput += '\n'
+        } else {
+          formattedOutput += 'No links found.\n\n'
+        }
+      }
+    })
+
+    formattedOutput +=
+      '\nREMINDER: You MUST include the sources above in your response to the user using markdown hyperlinks.'
+
+    return {
+      tool_use_id: toolUseID,
+      type: 'tool_result',
+      content: formattedOutput.trim(),
+    }
+  },
 } satisfies ToolDef<InputSchema, Output>)

@@ -1,17 +1,10 @@
 import OpenAI from 'openai';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { homedir } from 'node:os';
-interface Settings {
-  env?: {
-    AUTH_TOKEN?: string;
-    ANTHROPIC_BASE_URL?: string;
-    ANTHROPIC_MODEL?: string;
-    REQUEST_TIMEOUT_MS?: string;
-    [key: string]: string | undefined;
-  };
-  effortLevel?: 'low' | 'medium' | 'high';
-}
+import {
+  getAnthropicApiKey,
+  getAnthropicBaseURL,
+  getAnthropicModel,
+  getRequestTimeoutMs,
+} from './utils/anthropicConfig.js';
 
 let client: OpenAI | null = null;
 let model: string = 'kimi-k2.6';
@@ -24,14 +17,10 @@ export function resetSettings(): void {
 
 async function ensureClient(): Promise<void> {
   if (settingsLoaded && client) return;
-  const settingsPath = path.join(homedir(),"/.efrex", 'setting.json');
-  const content = await fs.readFile(settingsPath, 'utf-8');
-  const settings: Settings = JSON.parse(content);
-  const apiKey = settings.env?.AUTH_TOKEN || process.env.OPENAI_API_KEY;
-  const baseURL = settings.env?.ANTHROPIC_BASE_URL;
-  model = settings.env?.ANTHROPIC_MODEL || 'kimi-k2.6';
-  const configured = Number(settings.env?.REQUEST_TIMEOUT_MS);
-  const timeout = Number.isFinite(configured) && configured > 0 ? configured : 120_000;
+  const apiKey = getAnthropicApiKey();
+  const baseURL = getAnthropicBaseURL();
+  model = getAnthropicModel();
+  const timeout = getRequestTimeoutMs();
   client = new OpenAI({ apiKey, baseURL, maxRetries: 0, timeout });
   settingsLoaded = true;
 }

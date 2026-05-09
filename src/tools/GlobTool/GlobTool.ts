@@ -79,4 +79,26 @@ export const GlobTool = buildTool({
         } as Output,
       }
     },
+    mapToolResultToToolResultBlockParam(output, toolUseID) {//内部执行结果转换为 要求的 tool_result block 
+      if (output.filenames.length === 0) {
+        return {
+          tool_use_id: toolUseID,
+          type: 'tool_result',
+          content: 'No files found',
+        }
+      }
+      return {
+        tool_use_id: toolUseID,
+        type: 'tool_result',
+        content: [
+          ...output.filenames,
+          ...(output.truncated
+            ? [
+                '(Results are truncated. Consider using a more specific path or pattern.)',
+              ]
+            : []),
+        ].join('\n'),
+      }
+    },
+
   } satisfies ToolDef<InputSchema, Output>)

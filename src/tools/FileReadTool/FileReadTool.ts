@@ -6,7 +6,10 @@ import {
   readFile as readFileAsync,
   stat
 } from 'fs/promises'
+import { addLineNumbers } from '../../utils/file'
+import { FILE_UNCHANGED_STUB } from './prompt'
 import { posix, win32 } from 'path'
+import { formatFileSize } from 'src/utils/format'
 import { createUserMessage } from '../../utils/messages'
 import { readFileInRange } from '../../utils/readFileInRange'
 // import {readFileBytes} from 'fs/promises'
@@ -480,6 +483,78 @@ export const FileReadTool = buildTool({
         throw new Error(message)
       }
       throw error
+    }
+  },
+  mapToolResultToToolResultBlockParam(data, toolUseID) {
+    switch (data.type) {
+      case 'image': {
+        return {
+          tool_use_id: toolUseID,
+          type: 'tool_result',
+          content: [
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                data: data.file.base64,
+                media_type: data.file.type,
+              },
+            },
+          ],
+        }
+      }
+      case 'notebook':
+        return {
+          tool_use_id: toolUseID,
+          type: 'tool_result',
+          content: `PDF file read: ${data.file.filePath}`,
+        }
+        // return mapNotebookCellsToToolResult(data.file.cells, toolUseID)
+      case 'pdf':
+        // Return PDF metadata only - the actual content is sent as a supplemental DocumentBlockParam
+        return {
+          tool_use_id: toolUseID,
+          type: 'tool_result',
+          content: `PDF file read: ${data.file.filePath} (${formatFileSize(data.file.originalSize)})`,
+        }
+      case 'parts':
+        // Extracted page images are read and sent as image blocks in mapToolResultToAPIMessage
+        return {
+          tool_use_id: toolUseID,
+          type: 'tool_result',
+          content: `PDF pages extracted: ${data.file.count} page(s) from ${data.file.filePath} (${formatFileSize(data.file.originalSize)})`,
+        }
+      case 'file_unchanged':
+        return {
+          tool_use_id: toolUseID,
+          type: 'tool_result',
+          content: FILE_UNCHANGED_STUB,
+        }
+      case 'text': {
+        let content: string
+  //       这段代码在拼接文件读取后的返回内容，由三部分组成：
+  // 1. memoryFileFreshnessPrefix(data) — 添加一个前缀，提示该文件来自 memory 系统（而非磁盘实时状态），通常包含文件路径和最后更新时间。                             
+  // 2. formatFileLines(data.file) — 格式化文件内容本身（带行号等）。
+  // 3. CYBER_RISK_MITIGATION_REMINDER — 若 shouldIncludeFileReadMitigation() 返回 true，则追加一段网络安全风险提醒（提示模型注意文件内容可能包含恶意                
+  // payload），否则追加空字符串。                                                                                                                                                                                                                                                                  
+  // 简而言之：构建最终返回给模型的文本 = memory 文件前缀 + 格式化后的文件内容 +（可选）安全提醒。                                                          
+        if (data.file.content) {
+          content =
+            formatFileLines(data.file)
+        } else {
+          // Determine the appropriate warning message
+          content =
+            data.file.totalLines === 0
+              ? '<system-reminder>Warning: the file exists but the contents are empty.</system-reminder>'
+              : `<system-reminder>Warning: the file exists but is shorter than the provided offset (${data.file.startLine}). The file has ${data.file.totalLines} lines.</system-reminder>`
+        }
+
+        return {
+          tool_use_id: toolUseID,
+          type: 'tool_result',
+          content,
+        }
+      }
     }
   },
 } satisfies ToolDef<InputSchema, Output>)
@@ -966,3 +1041,7 @@ export async function readFileBytes(fsPath: string, maxBytes?: number) {
 循环分批读取数据（防止一次读太多）
 返回最终读到的字节缓冲区
 无论成功失败，最后一定关闭文件（finally 保证） */
+/** Format file content with line numbers. */
+function formatFileLines(file: { content: string; startLine: number }): string {
+  return addLineNumbers(file)
+}

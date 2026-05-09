@@ -2,6 +2,7 @@ import { z } from 'zod/v4'
 import { buildTool, type ToolDef, type ToolResult } from '../../Tool.js'
 import { getCwd } from '../../utils/cwd.js'
 import { lazySchema } from '../../utils/lazySchema.js'
+import { plural } from 'src/utils/stringUtils.js'
 import { expandPath, toRelativePath } from '../../utils/path.js'
 import { ripGrep } from '../../utils/ripgrep.js'
 import { semanticBoolean } from '../../utils/semanticBoolean.js'
@@ -387,4 +388,73 @@ export const GrepTool = buildTool({
       data: output,
     }
   },
+  mapToolResultToToolResultBlockParam(
+    {
+      mode = 'files_with_matches',
+      numFiles,
+      filenames,
+      content,
+      numLines: _numLines,
+      numMatches,
+      appliedLimit,
+      appliedOffset,
+    },
+    toolUseID,
+  ) {
+    if (mode === 'content') {
+      const limitInfo = formatLimitInfo(appliedLimit, appliedOffset)
+      const resultContent = content || 'No matches found'
+      const finalContent = limitInfo
+        ? `${resultContent}\n\n[Showing results with pagination = ${limitInfo}]`
+        : resultContent
+      return {
+        tool_use_id: toolUseID,
+        type: 'tool_result',
+        content: finalContent,
+      }
+    }
+
+    if (mode === 'count') {
+      const limitInfo = formatLimitInfo(appliedLimit, appliedOffset)
+      const rawContent = content || 'No matches found'
+      const matches = numMatches ?? 0
+      const files = numFiles ?? 0
+      const summary = `\n\nFound ${matches} total ${matches === 1 ? 'occurrence' : 'occurrences'} across ${files} ${files === 1 ? 'file' : 'files'}.${limitInfo ? ` with pagination = ${limitInfo}` : ''}`
+      return {
+        tool_use_id: toolUseID,
+        type: 'tool_result',
+        content: rawContent + summary,
+      }
+    }
+
+    // files_with_matches mode
+    const limitInfo = formatLimitInfo(appliedLimit, appliedOffset)
+    if (numFiles === 0) {
+      return {
+        tool_use_id: toolUseID,
+        type: 'tool_result',
+        content: 'No files found',
+      }
+    }
+    // head_limit has already been applied in call() method, so just show all filenames
+    const result = `Found ${numFiles} ${plural(numFiles, 'file')}${limitInfo ? ` ${limitInfo}` : ''}\n${filenames.join('\n')}`
+    return {
+      tool_use_id: toolUseID,
+      type: 'tool_result',
+      content: result,
+    }
+  },
 } satisfies ToolDef<InputSchema, Output>)
+// 格式化用于工具结果显示的 limit/offset 信息。
+// appliedLimit 仅在实际发生截断时设置（参见 applyHeadLimit），
+// 因此即使设置了 appliedOffset，appliedLimit 也可能未定义 ——
+// 有条件地构建各个部分，避免在用户可见的输出中出现 "limit: undefined"。
+function formatLimitInfo(
+  appliedLimit: number | undefined,
+  appliedOffset: number | undefined,
+): string {
+  const parts: string[] = []
+  if (appliedLimit !== undefined) parts.push(`limit: ${appliedLimit}`)
+  if (appliedOffset) parts.push(`offset: ${appliedOffset}`)
+  return parts.join(', ')
+}

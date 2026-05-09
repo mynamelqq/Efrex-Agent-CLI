@@ -1,18 +1,17 @@
 /**
- * General string utility functions and classes for safe string accumulation
+ * 通用字符串工具函数和用于安全字符串累积的类
  */
 
 /**
- * Escapes special regex characters in a string so it can be used as a literal
- * pattern in a RegExp constructor.
+ * 转义字符串中的正则表达式特殊字符，使其可以用作 RegExp 构造函数中的字面模式。
  */
 export function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 /**
- * Uppercases the first character of a string, leaving the rest unchanged.
- * Unlike lodash `capitalize`, this does NOT lowercase the remaining characters.
+ * 将字符串的首字母大写，其余部分保持不变。
+ * 与 lodash 的 `capitalize` 不同，此函数不会将剩余字符转换为小写。
  *
  * @example capitalize('fooBar') → 'FooBar'
  * @example capitalize('hello world') → 'Hello world'
@@ -22,8 +21,8 @@ export function capitalize(str: string): string {
 }
 
 /**
- * Returns the singular or plural form of a word based on count.
- * Replaces the inline `word${n === 1 ? '' : 's'}` idiom.
+ * 根据数量返回单词的单数或复数形式。
+ * 替代行内的 `word${n === 1 ? '' : 's'}` 习惯用法。
  *
  * @example plural(1, 'file') → 'file'
  * @example plural(3, 'file') → 'files'
@@ -38,8 +37,8 @@ export function plural(
 }
 
 /**
- * Returns the first line of a string without allocating a split array.
- * Used for shebang detection in diff rendering.
+ * 返回字符串的第一行，不分配分割数组。
+ * 用于 diff 渲染中的 shebang 检测。
  */
 export function firstLineOf(s: string): string {
   const nl = s.indexOf('\n')
@@ -47,9 +46,8 @@ export function firstLineOf(s: string): string {
 }
 
 /**
- * Counts occurrences of `char` in `str` using indexOf jumps instead of
- * per-character iteration. Structurally typed so Buffer works too
- * (Buffer.indexOf accepts string needles).
+ * 使用 indexOf 跳跃（而非逐字符迭代）计算 `char` 在 `str` 中出现的次数。
+ * 结构类型设计使得 Buffer 也能工作（Buffer.indexOf 接受字符串 needles）。
  */
 export function countCharInString(
   str: { indexOf(search: string, start?: number): number },
@@ -66,8 +64,8 @@ export function countCharInString(
 }
 
 /**
- * Normalize full-width (zenkaku) digits to half-width digits.
- * Useful for accepting input from Japanese/CJK IMEs.
+ * 将全角数字标准化为半角数字。
+ * 用于接受来自日语/CJK 输入法的输入。
  */
 export function normalizeFullWidthDigits(input: string): string {
   return input.replace(/[０-９]/g, ch =>
@@ -76,24 +74,24 @@ export function normalizeFullWidthDigits(input: string): string {
 }
 
 /**
- * Normalize full-width (zenkaku) space to half-width space.
- * Useful for accepting input from Japanese/CJK IMEs (U+3000 → U+0020).
+ * 将全角空格标准化为半角空格。
+ * 用于接受来自日语/CJK 输入法的输入（U+3000 → U+0020）。
  */
 export function normalizeFullWidthSpace(input: string): string {
   return input.replace(/\u3000/g, ' ')
 }
 
-// Keep in-memory accumulation modest to avoid blowing up RSS.
-// Overflow beyond this limit is spilled to disk by ShellCommand.
+// 保持内存累积适度，避免 RSS 暴涨。
+// 超出此限制的内容将由 ShellCommand 溢出到磁盘。
 const MAX_STRING_LENGTH = 2 ** 21
 
 /**
- * Safely joins an array of strings with a delimiter, truncating if the result exceeds maxSize.
+ * 安全地将字符串数组与分隔符连接，如果结果超过 maxSize 则进行截断。
  *
- * @param lines Array of strings to join
- * @param delimiter Delimiter to use between strings (default: ',')
- * @param maxSize Maximum size of the resulting string
- * @returns The joined string, truncated if necessary
+ * @param lines 要连接的字符串数组
+ * @param delimiter 字符串之间使用的分隔符（默认：','）
+ * @param maxSize 结果字符串的最大大小
+ * @returns 连接后的字符串，必要时会被截断
  */
 export function safeJoinLines(
   lines: string[],
@@ -108,10 +106,10 @@ export function safeJoinLines(
     const fullAddition = delimiterToAdd + line
 
     if (result.length + fullAddition.length <= maxSize) {
-      // The full line fits
+      // 整行都能容纳
       result += fullAddition
     } else {
-      // Need to truncate
+      // 需要截断
       const remainingSpace =
         maxSize -
         result.length -
@@ -119,11 +117,11 @@ export function safeJoinLines(
         truncationMarker.length
 
       if (remainingSpace > 0) {
-        // Add delimiter and as much of the line as will fit
+        // 添加分隔符和尽可能多的行内容
         result +=
           delimiterToAdd + line.slice(0, remainingSpace) + truncationMarker
       } else {
-        // No room for any of this line, just add truncation marker
+        // 没有任何空间容纳这一行，只添加截断标记
         result += truncationMarker
       }
       return result
@@ -133,9 +131,8 @@ export function safeJoinLines(
 }
 
 /**
- * A string accumulator that safely handles large outputs by truncating from the end
- * when a size limit is exceeded. This prevents RangeError crashes while preserving
- * the beginning of the output.
+ * 一个字符串累加器，当超过大小限制时通过从末尾截断来安全地处理大型输出。
+ * 这可以防止 RangeError 崩溃，同时保留输出的开头部分。
  */
 export class EndTruncatingAccumulator {
   private content: string = ''
@@ -143,28 +140,27 @@ export class EndTruncatingAccumulator {
   private totalBytesReceived = 0
 
   /**
-   * Creates a new EndTruncatingAccumulator
-   * @param maxSize Maximum size in characters before truncation occurs
+   * 创建一个新的 EndTruncatingAccumulator
+   * @param maxSize 触发截断前的最大大小（字符数）
    */
   constructor(private readonly maxSize: number = MAX_STRING_LENGTH) {}
 
   /**
-   * Appends data to the accumulator. If the total size exceeds maxSize,
-   * the end is truncated to maintain the size limit.
-   * @param data The string data to append
+   * 向累加器追加数据。如果总大小超过 maxSize，则截断末尾以维持大小限制。
+   * @param data 要追加的字符串数据
    */
   append(data: string | Buffer): void {
     const str = typeof data === 'string' ? data : data.toString()
     this.totalBytesReceived += str.length
 
-    // If already at capacity and truncated, don't modify content
+    // 如果已经达到容量且已截断，不再修改内容
     if (this.isTruncated && this.content.length >= this.maxSize) {
       return
     }
 
-    // Check if adding the string would exceed the limit
+    // 检查添加该字符串是否会超出限制
     if (this.content.length + str.length > this.maxSize) {
-      // Only append what we can fit
+      // 只追加能容纳的部分
       const remainingSpace = this.maxSize - this.content.length
       if (remainingSpace > 0) {
         this.content += str.slice(0, remainingSpace)
@@ -176,7 +172,7 @@ export class EndTruncatingAccumulator {
   }
 
   /**
-   * Returns the accumulated string, with truncation marker if truncated
+   * 返回累积的字符串，如果被截断则附带截断标记
    */
   toString(): string {
     if (!this.isTruncated) {
@@ -189,7 +185,7 @@ export class EndTruncatingAccumulator {
   }
 
   /**
-   * Clears all accumulated data
+   * 清除所有累积的数据
    */
   clear(): void {
     this.content = ''
@@ -198,21 +194,21 @@ export class EndTruncatingAccumulator {
   }
 
   /**
-   * Returns the current size of accumulated data
+   * 返回当前累积数据的大小
    */
   get length(): number {
     return this.content.length
   }
 
   /**
-   * Returns whether truncation has occurred
+   * 返回是否发生了截断
    */
   get truncated(): boolean {
     return this.isTruncated
   }
 
   /**
-   * Returns total bytes received (before truncation)
+   * 返回接收的总字节数（截断前）
    */
   get totalBytes(): number {
     return this.totalBytesReceived
@@ -220,11 +216,11 @@ export class EndTruncatingAccumulator {
 }
 
 /**
- * Truncates text to a maximum number of lines, adding an ellipsis if truncated.
+ * 将文本截断为最大行数，如果被截断则添加省略号。
  *
- * @param text The text to truncate
- * @param maxLines Maximum number of lines to keep
- * @returns The truncated text with ellipsis if truncated
+ * @param text 要截断的文本
+ * @param maxLines 保留的最大行数
+ * @returns 截断后的文本，如果被截断则添加省略号
  */
 export function truncateToLines(text: string, maxLines: number): string {
   const lines = text.split('\n')

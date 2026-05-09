@@ -39,7 +39,7 @@ import {
 const deferredToolNames = new Set<string>()
 
 function getModelMaxOutputTokens(_model: string): { upperLimit: number } {
-  return { upperLimit: 64_000 }
+  return { upperLimit: 32_000 }
 }
 
 function calculateUSDCost(_model: string, _usage: unknown): number {
@@ -163,8 +163,8 @@ export async function* queryModelOpenAI(
 > {
   try {
     // 1. Resolve model name
-    const openaiModel = resolveOpenAIModel(options.model)
-
+    // const openaiModel = resolveOpenAIModel(options.model)
+    const openaiModel=process.env.ANTHROPIC_MODEL?process.env.ANTHROPIC_MODEL:"kimi-k2.6"
     // 2. Normalize messages using shared preprocessing
     const messagesForAPI = normalizeMessagesForAPI(messages, tools)
 
