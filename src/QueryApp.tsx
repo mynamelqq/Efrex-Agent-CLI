@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+﻿import React, { useCallback, useEffect, useRef, useState } from 'react'
 import chalk from 'chalk'
 import { randomUUID } from 'node:crypto'
 import { Box, Text, useApp, useInput, useWindowSize } from './ink.js'
+import { stringWidth } from './ink/stringWidth.js'
 import PromptInput from './components/PromptInput.js'
 import MessageViewport from './components/MessageViewport.js'
 import { parseCommand } from './commands.js'
@@ -19,6 +20,14 @@ type ViewportMessage = {
   role: 'user' | 'assistant' | 'tool'
   text: string
   toolPhase?: 'call' | 'done' | 'error'
+  animatePrefix?: 'blink'
+}
+
+type StreamingAssistantState = {
+  active: boolean
+  placeholderId: number | null
+  text: string
+  pendingToolCalls: string[]
 }
 
 const INPUT_MARGIN_ROWS = 1
@@ -35,11 +44,70 @@ const commands = [
 
 const DEFAULT_SYSTEM_PROMPT = [
   'You are Efrex, a terminal coding assistant.',
-  'Be concise, accurate, and use available tools when needed.Now your current work path is F:\\ChatUI-Cli\\packages',
+  'Be concise, accurate, and use available tools when needed. Now your current work path is F:\\ChatUI-Cli',
 ].join('\n')
+
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+const GLIMMER_PAD_COLUMNS = 10
+const GLIMMER_WIDTH_COLUMNS = 8
+const statusSegmenter =
+  typeof Intl !== 'undefined' && 'Segmenter' in Intl
+    ? new Intl.Segmenter('zh-Hans', { granularity: 'grapheme' })
+    : null
 
 function getCurrentModel(): string {
   return getAnthropicModel()
+}
+
+function splitGraphemes(text: string): string[] {
+  if (statusSegmenter) {
+    return Array.from(statusSegmenter.segment(text), segment => segment.segment)
+  }
+
+  return Array.from(text)
+}
+
+function getShimmerSegments(
+  text: string,
+  glimmerIndex: number,
+): { before: string; shimmer: string; after: string } {
+  const graphemes = splitGraphemes(text)
+  const shimmerStart = glimmerIndex
+  const shimmerEnd = glimmerIndex + GLIMMER_WIDTH_COLUMNS
+
+  let cursor = 0
+  const before: string[] = []
+  const shimmer: string[] = []
+  const after: string[] = []
+
+  for (const grapheme of graphemes) {
+    const width = stringWidth(grapheme)
+    const nextCursor = cursor + width
+    const intersects = nextCursor > shimmerStart && cursor < shimmerEnd
+
+    if (intersects) {
+      shimmer.push(grapheme)
+    } else if (nextCursor <= shimmerStart) {
+      before.push(grapheme)
+    } else {
+      after.push(grapheme)
+    }
+
+    cursor = nextCursor
+  }
+
+  return {
+    before: before.join(''),
+    shimmer: shimmer.join(''),
+    after: after.join(''),
+  }
+}
+
+function getStatusLabelSegments(
+  text: string,
+  glimmerIndex: number,
+): { before: string; shimmer: string; after: string } {
+  return getShimmerSegments(text, glimmerIndex)
 }
 
 function normalizeLineEndings(text: string): string {
@@ -170,6 +238,32 @@ function extractToolUseLabels(content: unknown): string[] {
     .filter((value): value is string => value !== null)
 }
 
+function appendUnique(values: string[], nextValue: string): string[] {
+  return values.includes(nextValue) ? values : [...values, nextValue]
+}
+
+function buildStreamingPlaceholderText(
+  streamingAssistant: StreamingAssistantState,
+): string {
+  const sections: string[] = []
+
+  if (streamingAssistant.pendingToolCalls.length > 0) {
+    sections.push(
+      ['正在请求工具', ...streamingAssistant.pendingToolCalls.map(label => `- ${label}`)].join('\n'),
+    )
+  }
+
+  if (streamingAssistant.text.trim().length > 0) {
+    sections.push(streamingAssistant.text)
+  }
+
+  if (sections.length === 0) {
+    return '正在思考...'
+  }
+
+  return sections.join('\n\n')
+}
+
 function isToolResultUserMessage(message: Message): boolean {
   if (message.type !== 'user' || !Array.isArray(message.message?.content)) {
     return false
@@ -296,8 +390,12 @@ export default function QueryApp() {
   const [loading, setLoading] = useState(false)
   const [alertMessage, setAlertMessage] = useState<string | null>(null)
   const [exitHint, setExitHint] = useState(false)
-  const [streamingText, setStreamingText] = useState('')
-  const [streamingAssistantActive, setStreamingAssistantActive] = useState(false)
+  const [streamingAssistant, setStreamingAssistant] = useState<StreamingAssistantState>({
+    active: false,
+    placeholderId: null,
+    text: '',
+    pendingToolCalls: [],
+  })
   const [messages, rawSetMessages] = useState<Message[]>([])
   const [showCommandSelector, setShowCommandSelector] = useState(false)
   const [filteredCommands, setFilteredCommands] = useState(commands)
@@ -312,6 +410,26 @@ export default function QueryApp() {
   const abortControllerRef = useRef(new AbortController())
   const readFileStateRef = useRef(new FileStateCache(500, 50 * 1024 * 1024))
   const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const nextPlaceholderIdRef = useRef(1)
+  const [animationTick, setAnimationTick] = useState(0)
+
+  useEffect(() => {
+    if (!loading) {
+      setAnimationTick(0)
+      return
+    }
+
+    const timer = setInterval(() => {
+      setAnimationTick(prev => prev + 1)
+    }, 50)
+
+    return () => clearInterval(timer)
+  }, [loading])
+
+  const spinnerFrame =
+    SPINNER_FRAMES[Math.floor(animationTick / 2) % SPINNER_FRAMES.length] ??
+    SPINNER_FRAMES[0]
+  const blinkVisible = Math.floor(animationTick / 6) % 2 === 0
 
   const setMessages = useCallback((updater: React.SetStateAction<Message[]>) => {
     rawSetMessages(prev => {
@@ -444,8 +562,12 @@ export default function QueryApp() {
       }
 
       if (streamEvent.type === 'message_start') {
-        setStreamingAssistantActive(true)
-        setStreamingText('')
+        setStreamingAssistant(prev => ({
+          active: true,
+          placeholderId: prev.placeholderId,
+          text: '',
+          pendingToolCalls: [],
+        }))
         return
       }
 
@@ -457,7 +579,23 @@ export default function QueryApp() {
             : null
 
         if (contentBlock?.type === 'text') {
-          setStreamingAssistantActive(true)
+          setStreamingAssistant(prev => ({
+            ...prev,
+            active: true,
+          }))
+        }
+
+        if (contentBlock?.type === 'tool_use') {
+          const toolName =
+            typeof contentBlock.name === 'string'
+              ? contentBlock.name
+              : 'unknown_tool'
+          const toolLabel = `调用工具 ${toolName}...`
+          setStreamingAssistant(prev => ({
+            ...prev,
+            active: true,
+            pendingToolCalls: appendUnique(prev.pendingToolCalls, toolLabel),
+          }))
         }
         return
       }
@@ -469,13 +607,20 @@ export default function QueryApp() {
             : null
 
         if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
-          setStreamingAssistantActive(true)
-          setStreamingText(prev => prev + delta.text)
+          setStreamingAssistant(prev => ({
+            ...prev,
+            active: true,
+            text: prev.text + delta.text,
+          }))
         }
         return
       }
 
       if (streamEvent.type === 'message_stop') {
+        setStreamingAssistant(prev => ({
+          ...prev,
+          active: prev.text.length > 0 || prev.pendingToolCalls.length > 0,
+        }))
         return
       }
 
@@ -507,8 +652,12 @@ export default function QueryApp() {
 
     const message = event as Message
     if (message.type === 'assistant') {
-      setStreamingAssistantActive(false)
-      setStreamingText('')
+      setStreamingAssistant({
+        active: false,
+        placeholderId: null,
+        text: '',
+        pendingToolCalls: [],
+      })
     }
     setMessages(prev => [...prev, message])
   }, [setMessages])
@@ -548,8 +697,12 @@ export default function QueryApp() {
     const nextMessages = [...messagesRef.current, userMessage]
     setMessages(nextMessages)
     setInput('')
-    setStreamingText('')
-    setStreamingAssistantActive(false)
+    setStreamingAssistant({
+      active: false,
+      placeholderId: nextPlaceholderIdRef.current++,
+      text: '',
+      pendingToolCalls: [],
+    })
     setLoading(true)
 
     const abortController = new AbortController()
@@ -576,8 +729,12 @@ export default function QueryApp() {
       }
     } finally {
       setLoading(false)
-      setStreamingText('')
-      setStreamingAssistantActive(false)
+      setStreamingAssistant({
+        active: false,
+        placeholderId: null,
+        text: '',
+        pendingToolCalls: [],
+      })
       setAppState(prev => ({ ...prev, mainLoopModel: getCurrentModel() }))
     }
   }, [buildToolUseContext, handleQueryEvent, loading, setAppState, setMessages])
@@ -611,12 +768,23 @@ export default function QueryApp() {
     .map((message, index) => messageToViewport(message, index + 1))
     .filter(Boolean) as ViewportMessage[]
 
-  if (loading && streamingAssistantActive) {
-    viewportMessages.push({
-      id: viewportMessages.length + 1,
-      role: 'assistant',
-      text: streamingText || '...',
-    })
+  if (loading && streamingAssistant.placeholderId !== null) {
+    if (streamingAssistant.text.trim().length > 0) {
+      viewportMessages.push({
+        id: streamingAssistant.placeholderId,
+        role: 'assistant',
+        text: buildStreamingPlaceholderText(streamingAssistant),
+        animatePrefix: 'blink',
+      })
+    } else if (streamingAssistant.pendingToolCalls.length > 0) {
+      viewportMessages.push({
+        id: streamingAssistant.placeholderId,
+        role: 'tool',
+        text: streamingAssistant.pendingToolCalls.join('\n'),
+        toolPhase: 'call',
+        animatePrefix: 'blink',
+      })
+    }
   }
 
   const transcriptHeaderLines = getTranscriptHeaderLines({
@@ -626,10 +794,28 @@ export default function QueryApp() {
     width: messageWidth,
   })
 
-  const statusLine = loading
-    ? streamingAssistantActive
+  const statusText = loading
+    ? streamingAssistant.text.trim().length > 0
       ? 'Efrex 正在生成回复...'
-      : 'Efrex 正在处理工具或等待模型继续...'
+      : streamingAssistant.pendingToolCalls.length > 0
+        ? 'Efrex 正在请求工具...'
+        : 'Efrex 正在思考...'
+    : null
+
+  const statusPrefix = statusText
+    ? `${blinkVisible ? '•' : ' '} ${spinnerFrame}`
+    : null
+
+  const statusMessageWidth = statusText ? stringWidth(statusText) : 0
+  const glimmerCycleLength = statusMessageWidth + GLIMMER_PAD_COLUMNS * 2
+  const glimmerStep = glimmerCycleLength > 0 ? animationTick % glimmerCycleLength : 0
+  const glimmerIndex = statusText
+    ? streamingAssistant.pendingToolCalls.length > 0
+      ? glimmerStep - GLIMMER_PAD_COLUMNS
+      : statusMessageWidth + GLIMMER_PAD_COLUMNS - glimmerStep
+    : 0
+  const statusSegments = statusText
+    ? getStatusLabelSegments(statusText, glimmerIndex)
     : null
 
   return (
@@ -642,9 +828,23 @@ export default function QueryApp() {
           height={messageViewportRows}
           nativeScrollback
           alertMessage={alertMessage}
-          statusLine={statusLine}
+          statusLine={null}
+          blinkOn={blinkVisible}
         />
       </Box>
+
+      {loading && statusText && statusPrefix && statusSegments ? (
+        <Box marginTop={1} flexDirection="row" flexWrap="nowrap" flexShrink={0}>
+          <Text color="yellowBright">{statusPrefix} </Text>
+          <Text color="gray">{statusSegments.before}</Text>
+          {statusSegments.shimmer ? (
+            <Text color="cyanBright" bold>
+              {statusSegments.shimmer}
+            </Text>
+          ) : null}
+          <Text color="gray">{statusSegments.after}</Text>
+        </Box>
+      ) : null}
 
       <Box flexDirection="column" marginTop={1} flexShrink={0}>
         <Text color={loading ? 'blue' : 'gray'}>{inputRule}</Text>
@@ -683,13 +883,16 @@ export default function QueryApp() {
         )}
       </Box>
 
-      <Box marginTop={1} justifyContent="space-between" flexShrink={0}>
-        {exitHint ? (
-          <Text dimColor>再按一次 Ctrl+C 确认退出</Text>
-        ) : (
-          <Text color="gray">Enter 发送 · 现在主界面直接走 query.ts · Ctrl+C 退出</Text>
-        )}
+      <Box marginTop={1} flexDirection="column" flexShrink={0}>
+        <Box>
+          {exitHint ? (
+            <Text dimColor>再按一次 Ctrl+C 确认退出</Text>
+          ) : (
+            <Text color="gray">Enter 发送 · 现在主界面直接走 query.ts · Ctrl+C 退出</Text>
+          )}
+        </Box>
       </Box>
     </Box>
   )
 }
+

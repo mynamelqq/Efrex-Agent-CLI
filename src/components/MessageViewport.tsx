@@ -1,4 +1,4 @@
-import React, {type Ref} from 'react';
+﻿import React, {type Ref} from 'react';
 import {Box, Text} from '../ink.js';
 import chalk from 'chalk';
 import {stringWidth} from '../ink/stringWidth.js';
@@ -9,6 +9,7 @@ export type ViewportMessage = {
   role: 'user' | 'assistant' | 'tool';
   text: string;
   toolPhase?: 'call' | 'done' | 'error';
+  animatePrefix?: 'blink';
 };
 
 type Props = {
@@ -20,6 +21,7 @@ type Props = {
   nativeScrollback?: boolean;
   alertMessage?: string | null;
   statusLine?: string | null;
+  blinkOn?: boolean;
 };
 
 type LineOptions = {
@@ -28,6 +30,7 @@ type LineOptions = {
   width: number;
   alertMessage?: string | null;
   statusLine?: string | null;
+  blinkOn?: boolean;
 };
 
 export function getMessageViewportLines({
@@ -36,11 +39,12 @@ export function getMessageViewportLines({
   width,
   alertMessage,
   statusLine,
+  blinkOn = false,
 }: LineOptions): string[] {
   return [
     ...headerLines,
     ...(alertMessage ? [chalk.red(`错误: ${alertMessage}`)] : []),
-    ...messages.flatMap(message => renderMessage(message, width)),
+    ...messages.flatMap(message => renderMessage(message, width, blinkOn)),
     ...(statusLine ? [chalk.yellow(statusLine)] : []),
   ];
 }
@@ -54,6 +58,7 @@ export default function MessageViewport({
   nativeScrollback = false,
   alertMessage,
   statusLine,
+  blinkOn = false,
 }: Props) {
   const lines = getMessageViewportLines({
     headerLines,
@@ -61,6 +66,7 @@ export default function MessageViewport({
     width,
     alertMessage,
     statusLine,
+    blinkOn,
   });
 
   if (nativeScrollback) {
@@ -87,7 +93,7 @@ export default function MessageViewport({
   );
 }
 
-function renderMessage(message: ViewportMessage, width: number): string[] {
+function renderMessage(message: ViewportMessage, width: number, blinkOn: boolean): string[] {
   if (message.role === 'user') {
     const contentWidth = Math.max(1, width - 2);
     return [
@@ -101,15 +107,29 @@ function renderMessage(message: ViewportMessage, width: number): string[] {
 
   if (message.role === 'tool') {
     const color = message.toolPhase === 'error' ? chalk.redBright : chalk.gray;
+    const toolPrefix =
+      message.animatePrefix === 'blink' && message.toolPhase === 'call'
+        ? blinkOn
+          ? chalk.cyanBright('•  ')
+          : '   '
+        : chalk.cyanBright('↳  ');
+
     return wrapPlain(message.text, Math.max(1, width - 3)).map((line, index) =>
-      `${index === 0 ? chalk.cyanBright('↳  ') : '   '}${color(line)}`,
+      `${index === 0 ? toolPrefix : '   '}${color(line)}`,
     );
   }
 
   const markdownLines = markdownToLines(message.text, Math.max(8, width - 3));
+  const assistantPrefix =
+    message.animatePrefix === 'blink'
+      ? blinkOn
+        ? chalk.white.bold('•  ')
+        : '   '
+      : chalk.white.bold('●  ');
+
   return [
     '',
-    ...markdownLines.map((line, index) => `${index === 0 ? chalk.white.bold('●  ') : '   '}${line}`),
+    ...markdownLines.map((line, index) => `${index === 0 ? assistantPrefix : '   '}${line}`),
   ];
 }
 

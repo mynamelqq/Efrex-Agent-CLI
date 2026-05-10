@@ -8,10 +8,10 @@
 // import { buildSystemInitMessage } from "./utils/messages/initSystemMessage"
 // import { toolMatchesName } from "./Tool"
 // import type { Message, SDKMessage } from './types/message'
-// export type ThinkingConfig =
-//   | { type: 'adaptive' }
-//   | { type: 'enabled'; budgetTokens: number }
-//   | { type: 'disabled' }
+export type ThinkingConfig =
+  | { type: 'adaptive' }
+  | { type: 'enabled'; budgetTokens: number }
+  | { type: 'disabled' }
 // export type QueryEngineConfig = {
 //   cwd: string
 //   tools: Tools

@@ -1,6 +1,6 @@
-import { setup } from './src/setup.js'
-import { GrepTool } from './src/tools/GrepTool/GrepTool.js'
-import type { ToolUseContext } from './src/Tool.js'
+import { setup } from '../src/setup.js'
+import { GrepTool } from '../src/tools/GrepTool/GrepTool.js'
+import type { ToolUseContext } from '../src/Tool.js'
 
 async function callGrep(args: Parameters<typeof GrepTool.call>[0]) {
   const abortController = new AbortController()

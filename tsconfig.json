@@ -10,6 +10,11 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true,
+    "baseUrl": ".",
+    "paths": {
+      "src/*": ["src/*"]
+    },
+    "types": ["bun"],
     "ignoreDeprecations": "6.0"
   },
   "include": ["**/*.ts", "**/*.tsx"],

@@ -1,3 +1,6 @@
+之前
+先看工具了解到claude项目大量的使用zod，为工具规范schema，于是也去学习了zod/v4，确实是个好用的工具
+
 4.23
 使用abortController实现ctrl+c对对话的终端,实现流式输出，建立推理输出的前端显示
 
@@ -32,3 +35,72 @@
   - 删除输出里的 backgroundTaskId、backgroundedByUser、assistantAutoBackgrounded。
   - 删除显式后台执行、超时自动后台、assistant 自动后台、Ctrl+B 背景提示/注册逻辑。
   - runShellCommand 现在只启动命令、前台等待、期间上报 progress，完成后返回真实结果。
+
+5.4
+今天改了很多东西，增加并修改过关了FileReadTool细节还没去看。把webFetchTool、和webSearchTool都改完了，webFetch主要是通过axios模块去get html网页，
+webSearch由于不能使用anthroic的搜索工具，使用了自己注册的FireCrawl，可以实现按时间范围、类别、等等搜索
+FileReadTool为了改这个文件引入了完整的ApiLimits.ts、execFileNoThrow.ts、imageResize、messages.ts、pdf.ts、pdfUtils.ts、
+其中readFileInRange最重要，采取了两个策略，如果文件大小小于10MB则直接用node.js的readFile的函数读取后，按indexOf('\n')界定行，对每一行做读取处理，然后满足offset、和limits
+行数之间的要求，如果文件过大，则用creatReadStream读取文件流，主要是维持一个StreamState以便保持当前读取的状态，对每一个回调函数接受到的文件块相同的行处理
+由于不在目标范围内的行不会被保存，只用来计数，所以读超大文件时不会因为跳过很多行而占用巨大内存。
+
+用codex艰难的重塑了queryDemo也就是简单对话功能的页面布局，用的是codex,通过对照claude源码和当前项目前端代码发现
+
+claude保持布局稳定的核心机制：
+
+（布局结构：FullscreenLayout 使用 flex 固定“滚动区 + 底部区”，滚动区可伸缩，底部区固定高度且最大 50%，消息增长不会挤乱输入区域。
+滚动容器：ScrollBox 作为受限高度的滚动容器，内部内容可无限增加但外层不撑开；滚动操作直接操作 DOM 节点，避免 React 状态频繁更新。
+虚拟列表：VirtualMessageList + useVirtualScroll 只渲染视口附近的消息，前后用占位撑高，流式更新时仅增量追加 key，大幅减少挂载节点数。
+自动滚动：渲染阶段计算 scrollHeight 和 maxScroll，若 stickyScroll 为 true 或上一帧在底部，则自动钉到最新消息；用户手动滚动后禁用自动跟随，并显示 “N new messages” 提示。
+增量渲染：Ink 引擎通过 Yoga 布局 → 生成 screen buffer → 与上一帧 diff，仅输出变化部分到终端，降低重绘成本。）
+然后让codex帮我改了本项目，后来用终端本身的滑动条而不是项目自己提供的滑动条（项目里没有单独绘制右侧 scrollbar/thumb 的文件。/src/ink 主要做终端内的滚动内容裁剪和偏移，真正右侧可见滚
+  动条通常是终端程序自身提供的。）
+
+  F:/ChatUI-Cli/index.tsx:94：alternateScreen: false，退出备用屏，内容进入终端主 scrollback。
+  - F:/ChatUI-Cli/app.tsx:575：消息区启用 nativeScrollback，不再用内部滚动 offset。
+  - 移除了应用级鼠标滚轮捕获，所以滚轮会交给 VS Code Terminal / Windows Terminal 自己处理。
+  - F:/ChatUI-Cli/src/components/MessageViewport.tsx:66：nativeScrollback 模式下直接自然高度渲染全部消息行，不裁剪、不画假 scrollbar。
+  
+  注意一个本质限制：真正的终端右侧滚动条滚的是“整个终端 scrollback”，不是中间某个 Box。Claude 也是分两类：AlternateScreen/FullscreenLayout 里没有 native
+  scrollback；不进 alternate screen 的 main-screen/dump 模式才会用终端自己的 scrollbar。现在你的项目走的是后者。
+
+5.5
+今天获取了很多前端的知识，不过claude的代码我是真的看不懂，学过一点react、ink、js但是混在一起就抓瞎了
+注意到输入框输入时，输入法的位置不像别的终端工具一样，寻找原因claude不只是画反色光标。它专门加了一个 useDeclaredCursor 机制，把输入框内部的 caret 坐标声明给自家的 Ink 渲染器，渲染器每帧再用 ANSI光标移动把真实终端光标停到那里。
+因为这个原因，得知claude的ink包是魔改过的，于是干脆直接引入claude写好的前端组件
+重新写了粘贴的钩子，如果文本过多则转成token[Pasted text #1 +52 lines],这个token把他当成是一整个字符，会被跳过，删除时会一次性删除
+图片也是，粘贴到输入框就直接处理bass64，
+
+Cursor 内部是 grapheme-aware 的，不是按 UTF-16 code unit 瞎数。它会用包行后的文本来算当前行和列
+输入框会维护一个可视窗口，不一定把整段文本都展示出来viewportCharOffset 和 viewportCharEnd 用来决定当前渲染哪一段中文/emoji 的光标列按显示宽度算
+● 光标不是单独的 React 组件，而是字符串层面的"反色字符"，由三层协作实现：
+
+  1. 生成带光标的文本 — src/utils/Cursor.ts
+  Cursor.render() 方法负责把光标"画"进文本：
+  - 按终端宽度折行后，找到光标所在行/列。
+  - 把该位置的字符（或一个空格 cursorChar）用 invert 函数包裹。
+  - 平时 invert = chalk.inverse，就是反色块；语音模式下变成动态波形条（▁▂▃ 等）。
+  - 如果光标在末尾且有 ghost text，会把第一个 ghost 字符也放进反色光标里。
+
+  2. 渲染到屏幕 — BaseTextInput.tsx → <Ansi>
+  - useTextInput hook 调用 cursor.render() 得到 renderedValue。
+  - BaseTextInput 直接把它塞给 <Ansi>{renderedValue}</Ansi> 显示。
+  - 所以你看到的光标，其实只是这段字符串里一个被 ANSI 反色码包裹的字符，和其他文字一起被 Ansi 组件解析渲染。
+
+  3. 同步物理光标 — useDeclaredCursor
+  - BaseTextInput 还调用了 useDeclaredCursor({ line, column, active })。
+  - 这用于告诉底层终端："真实光标在第 X 行第 Y 列"。
+  - 目的是让 IME 预编辑文本、屏幕阅读器、终端模拟器能正确定位，但它本身不绘制可见光标。
+
+  一句话总结：可见光标是 Cursor.ts 在字符串里埋的一个反色字符，由 Ansi.tsx 解析上色；useDeclaredCursor 只负责背后真正的终端光标坐标。
+5.6、5.7、5.8
+开始准备实现agent loop 核心环节
+queryEngine.ts->query.ts->claude.ts->index.ts每一个文件的核心实现都有1000多行的代码，还有数不清的其他依赖，重构起来很痛苦，
+还是用递归的方式先弄好index.ts，中间被claude的类型弄得很头疼，claude的默认类型都是遵循anthropic的范式的，中途请求的时候再转换为openai,
+但我不想要这样，我会适配openai，在遵循anthropic的基础上，虽然很痛苦，但是还是要去完成
+
+优化了读取配置文件的统一逻辑，遵循claude把读取文件都抽到一个包内，首先读取userSettings，忽略了其他flg、全局等等。
+读取文件后，把env变量放到环境变量中，别的文件需要配置通过getInitialSetting或者appState获得其他配置
+
+abortController加入子控制器，监听父控制器，单独算作工具的生命周期
+

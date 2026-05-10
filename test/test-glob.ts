@@ -1,4 +1,4 @@
-import { glob } from './src/utils/glob.js'
+import { glob } from '../src/utils/glob.js'
 
 async function testGlob() {
   const cwd = process.cwd()

@@ -8,13 +8,15 @@
  */
 
 import React from 'react';
+import { attachErrorLogSink, createFileErrorSink } from './src/utils/logger.js';
 import path from 'node:path';
-import App from './app.js';
+import QueryApp from './src/QueryApp.js';
+import { init } from 'src/entrypoints/init.js';
 import { homedir } from 'node:os';
-import {Box, Text, render, useApp, useInput} from 'ink';
+import {Box, Text, render, useApp, useInput} from './src/ink.js';
 import { isWorkSpaceTruested, trustFoler } from './utils/load.js';
 import { existsSync, mkdirSync } from 'node:fs';
-
+import {logError} from 'src/utils/logger.js';
 const TrustPrompt = ({onTrust}: {onTrust: () => void}) => {
   const {exit} = useApp();
   const [selectedIndex, setSelectedIndex] = React.useState(0);
@@ -79,17 +81,17 @@ const Root = () => {
     return <TrustPrompt onTrust={() => setTrusted(true)} />;
   }
 
-  return <App />;
+  return <QueryApp />;
 };
 
 (async () => {
+  attachErrorLogSink(createFileErrorSink());
   const efrexFolder=path.join(homedir(),".efrex")
   if(!existsSync(efrexFolder)){
     mkdirSync(efrexFolder, { recursive: true });
   }
-  process.stdout.write('\u001b[2J\u001b[H');
-  render(<Root />, {
+  await init();
+  await render(<Root />, {
     exitOnCtrlC: false,
-    alternateScreen: false,
   });
 })();

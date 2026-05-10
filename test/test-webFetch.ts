@@ -1,9 +1,9 @@
-import { WebFetchTool } from './src/tools/WebFetchTool/WebFetchTool.js'
+import { WebFetchTool } from '../src/tools/WebFetchTool/WebFetchTool.js'
 import {
   clearWebFetchCache,
   getURLMarkdownContent,
-} from './src/tools/WebFetchTool/utils.js'
-import type { ToolUseContext } from './src/Tool.js'
+} from '../src/tools/WebFetchTool/utils.js'
+import type { ToolUseContext } from '../src/Tool.js'
 
 type Args = {
   url: string

@@ -1,132 +1,41 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
-import {Box, Text, useApp, usePaste, useStdout} from 'ink';
-import {Alert} from '@inkjs/ui';
-import Select from 'ink-select-input';
-import {askOpenAI} from './src/openai.js';
-import { appendFileSync } from 'node:fs';
+import {Box, Text, useApp, useInput, useWindowSize} from './src/ink.js';
+import chalk from 'chalk';
+import {askOpenAI, type ToolExecutionMessage, type UserMessageContent} from './src/queryDemo.js';
 import {randomUUID} from 'crypto';
-import {readFileSync} from 'node:fs';
+import {existsSync, statSync} from 'node:fs';
 import path from 'node:path';
-import {PastedContent, readHistoryJSONL, saveSessionHistory, SessionHistory} from './utils/load.js';
+import {readHistoryJSONL, saveSessionHistory, SessionHistory} from './utils/load.js';
 import PromptInput from './src/components/PromptInput.js';
-import MarkdownText from './src/components/MarkdownText.js';
-import {formatPastedTextLabel} from './hooks/format.js';
+import MessageViewport from './src/components/MessageViewport.js';
 import {parseCommand} from './src/commands.js';
+import {stringWidth} from './src/ink/stringWidth.js';
+import {formatPastedTextLabel} from './src/hooks/format.js';
+import {readImageWithTokenBudget} from './src/tools/FileReadTool/FileReadTool.js';
+import {createImageDataURL, type ImageMediaType} from './src/utils/imageResizer.js';
+import {getAnthropicModel, getEffortLevel} from './src/utils/anthropicConfig.js';
 type Message = {
   id: number;
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'tool';
   text: string;
   timestamp: Date;
+  toolPhase?: ToolExecutionMessage['phase'];
 };
 
-const ThinkingIndicator = ({ reasoningDuration }: { reasoningDuration?: number }) => {
-  const [frame, setFrame] = useState(0);
-  const [elapsed, setElapsed] = useState(0);
-  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-  const startTimeRef = useRef<number>(Date.now());
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setFrame(prev => (prev + 1) % frames.length);
-      setElapsed(Date.now() - startTimeRef.current);
-    }, 80);
-    return () => clearInterval(timer);
-  }, []);
-
-  const displayMs = reasoningDuration ?? elapsed;
-  const seconds = Math.floor(displayMs / 1000);
-
-  return (
-    <Box>
-      <Text color="blueBright">{frames[frame]} </Text>
-      <Text color="cyanBright">Efrex 正在思考</Text>
-      <Text color="gray">... ({seconds}s)</Text>
-    </Box>
-  );
-};
-
-function chunkLine(text: string, width: number): string[] {
-  if (width <= 0) {
-    return [text];
-  }
-
-  const chars = Array.from(text);
-  if (chars.length === 0) {
-    return [''];
-  }
-
-  const lines: string[] = [];
-  for (let index = 0; index < chars.length; index += width) {
-    lines.push(chars.slice(index, index + width).join(''));
-  }
-
-  return lines;
-}
-
-function getHighlightedUserLines(text: string, width: number): string[] {
-  const contentWidth = Math.max(1, width - 2);
-  const rawLines = text.split('\n');
-
-  return rawLines.flatMap((line, lineIndex) => {
-    const chunks = chunkLine(line, contentWidth);
-
-    return chunks.map((chunk, chunkIndex) => {
-      const prefix = lineIndex === 0 && chunkIndex === 0 ? '> ' : '  ';
-      return `${prefix}${chunk}`;
-    });
-  });
-}
-
-const MessageBubble = ({message, width}: {message: Message; width: number}) => {
-  const isUser = message.role === 'user';
-  const highlightedLines = isUser ? getHighlightedUserLines(message.text, width) : [];
-
-  return (
-    <Box flexDirection="column" marginBottom={1}>
-      {isUser ? (
-        <Box flexDirection="column">
-          {highlightedLines.map((line, index) => (
-            <Box key={`${message.id}-${index}`} width={width} backgroundColor="gray">
-              <Text color="white">
-                {line}
-              </Text>
-            </Box>
-          ))}
-        </Box>
-      ) : (
-        <Box flexDirection="row">
-          <Text color="White" bold>●  </Text>
-          <Text color="white" wrap="wrap">
-            <MarkdownText text={message.text} />
-          </Text>
-        </Box>
-      )}
-    </Box>
-  );
-};
+type PastedContentEntry =
+  | {id: number; type: 'text'; content: string}
+  | {id: number; type: 'image'; sourcePath: string; mediaType?: string};
 
 const MASCOT = ['  /\\_/\\\\', ' ( o.o )', '  > ^ <'];
+const INPUT_MARGIN_ROWS = 1;
+const INPUT_RULE_ROWS = 2;
+const FOOTER_ROWS = 2;
+const MIN_MESSAGE_VIEWPORT_ROWS = 1;
+const MAX_PROMPT_INPUT_ROWS = 6;
+const COMMAND_SELECTOR_LIMIT = 5;
 
 function getCurrentModel(): string {
-  try {
-    const settingPath = path.join(process.cwd(), 'setting.json');
-    const content = readFileSync(settingPath, 'utf-8');
-    const parsed = JSON.parse(content);
-    return parsed?.env?.ANTHROPIC_MODEL || 'gpt-5';
-  } catch {
-    return 'gpt-5';
-  }
-}
-
-function getEffortLevel(): string {
-  try {
-    const settingPath = path.join(process.cwd(), 'setting.json');
-    const content = readFileSync(settingPath, 'utf-8');
-    const parsed = JSON.parse(content);
-    return parsed?.effortLevel || 'medium';
-  } catch {
-    return 'medium';
-  }
+  return getAnthropicModel();
 }
 
 const commands = [
@@ -156,69 +65,21 @@ const commands = [
   {label: '/keybindings                  Open or create your keybindings configuration file', value: '/keybindings'},
 ];
 
-const Header = ({cwd, model, effort, key}: {cwd: string; model: string; effort: string; key: number}) => (
-  <Box
-    key={key}
-    borderStyle="round"
-    borderColor="blue"
-    paddingX={1}
-    paddingY={0}
-    marginBottom={0}
-    justifyContent="space-between"
-  >
-    <Box flexDirection="column">
-      <Box alignItems="center">
-        <Text bold color="blueBright">
-          Efrex
-        </Text>
-        <Text color="gray"> terminal assistant</Text>
-      </Box>
-      <Box>
-        <Text color="gray">{cwd}  ·  model: {model}  ·  effort: {effort}</Text>
-      </Box>
-    </Box>
-    <Box flexDirection="column" marginLeft={2}>
-      {MASCOT.map(line => (
-        <Text key={line} color="cyanBright">
-          {line}
-        </Text>
-      ))}
-    </Box>
-  </Box>
-);
-
-function resolvePastedPlaceholders(text: string, pastedMap: Map<number, string>) {
+function resolvePastedPlaceholders(text: string, pastedMap: Map<number, PastedContentEntry>) {
   const usedIds = new Set<number>();
-  const resolvedText = text.replace(/\[Pasted #(\d+) (?:\d+ lines|\d+ characters)\]/g, (match, idText) => {
+  const resolvedText = text.replace(/\[(?:Pasted text|Pasted) #(\d+)(?: \+\d+ lines| \d+ lines| \d+ characters)?\]/g, (match, idText) => {
     const id = Number(idText);
-    const pastedText = pastedMap.get(id);
-    if (pastedText === undefined) {
+    const pastedContent = pastedMap.get(id);
+    if (pastedContent?.type !== 'text') {
       return match;
     }
     usedIds.add(id);
-    return pastedText;
+    return pastedContent.content;
   });
 
   return {resolvedText, usedIds};
 }
-function resolvePastedPlaceholdersByObj(
-  text: string, 
-  pastedObj: { [key: string]: PastedContent }
-) {
-  const usedIds = new Set<number>();
-  const resolvedText = text.replace(/\[Pasted #(\d+) (?:\d+ lines|\d+ characters)\]/g, (match, idText) => {
-    const id = Number(idText);
-    const pastedText = pastedObj[id.toString()]?.content;
-    if (pastedText === undefined) {
-      return match;
-    }
-    usedIds.add(id);
-    return pastedText;
-  });
-
-  return { resolvedText, usedIds };
-}
-function toPastedContentsRecord(pastedMap: Map<number, string>, usedIds: Set<number>) {
+function toPastedContentsRecord(pastedMap: Map<number, PastedContentEntry>, usedIds: Set<number>) {
   return Object.fromEntries(
     Array.from(usedIds).flatMap(id => {
       const content = pastedMap.get(id);
@@ -228,9 +89,48 @@ function toPastedContentsRecord(pastedMap: Map<number, string>, usedIds: Set<num
 
       return [[
       String(id),
-      {id, type: 'text' as const, content},
+      content,
       ]];
     }),
+  );
+}
+
+function arePastedContentsEqual(
+  left: SessionHistory['pastedContents'],
+  right: SessionHistory['pastedContents'],
+): boolean {
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+
+  if (leftKeys.length !== rightKeys.length) {
+    return false;
+  }
+
+  return leftKeys.every((key, index) => {
+    if (key !== rightKeys[index]) {
+      return false;
+    }
+
+    const leftValue = left[key];
+    const rightValue = right[key];
+
+    return (
+      leftValue?.id === rightValue?.id &&
+      leftValue?.type === rightValue?.type &&
+      leftValue?.content === rightValue?.content
+    );
+  });
+}
+
+function isSameHistoryEntry(left: SessionHistory | undefined, right: SessionHistory): boolean {
+  if (!left) {
+    return false;
+  }
+
+  return (
+    left.display === right.display &&
+    left.project === right.project &&
+    arePastedContentsEqual(left.pastedContents, right.pastedContents)
   );
 }
 
@@ -253,9 +153,171 @@ function normalizeLineEndings(text: string): string {
   return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
+function formatImageLabel(index: number): string {
+  return `[Image #${index}]`;
+}
+
+function normalizePastedPath(text: string): string | null {
+  const trimmed = normalizeLineEndings(text).trim();
+  if (!trimmed || trimmed.includes('\n')) {
+    return null;
+  }
+
+  return trimmed.replace(/^["']|["']$/g, '');
+}
+
+function isImagePath(text: string): boolean {
+  const filePath = normalizePastedPath(text);
+  if (!filePath) {
+    return false;
+  }
+
+  const ext = path.extname(filePath).toLowerCase();
+  if (!['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(ext)) {
+    return false;
+  }
+
+  try {
+    return existsSync(filePath) && statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function resolveImagePlaceholders(text: string, pastedMap: Map<number, PastedContentEntry>) {
+  const usedIds = new Set<number>();
+  const imageRefs: PastedContentEntry[] = [];
+  const textWithRefs = text.replace(/\[Image #(\d+)\]/g, (match, idText) => {
+    const id = Number(idText);
+    const pastedContent = pastedMap.get(id);
+    if (pastedContent?.type !== 'image') {
+      return match;
+    }
+    usedIds.add(id);
+    imageRefs.push(pastedContent);
+    return '';
+  });
+
+  return {
+    text: textWithRefs.replace(/[ \t]+\n/g, '\n').trim(),
+    usedIds,
+    imageRefs,
+  };
+}
+
+async function createUserContentWithImages(
+  text: string,
+  imageRefs: PastedContentEntry[],
+): Promise<UserMessageContent> {
+  if (imageRefs.length === 0) {
+    return text;
+  }
+
+  const content: Exclude<UserMessageContent, string> = [];
+  if (text.length > 0) {
+    content.push({type: 'text', text});
+  }
+
+  for (const imageRef of imageRefs) {
+    if (imageRef.type !== 'image') {
+      continue;
+    }
+    const image = await readImageWithTokenBudget(imageRef.sourcePath);
+    content.push({
+      type: 'image_url',
+      image_url: {
+        url: createImageDataURL(
+          image.file.type as ImageMediaType,
+          image.file.base64,
+        ),
+      },
+    });
+  }
+
+  return content;
+}
+
+function countWrappedRows(text: string, width: number): number {
+  if (text.length === 0) {
+    return 1;
+  }
+
+  const safeWidth = Math.max(1, width);
+  return normalizeLineEndings(text)
+    .split('\n')
+    .reduce((rows, logicalLine) => {
+      if (logicalLine.length === 0) {
+        return rows + 1;
+      }
+
+      let lineWidth = 0;
+      let visualRows = 1;
+      for (const char of Array.from(logicalLine)) {
+        const charWidth = stringWidth(char);
+        if (lineWidth > 0 && lineWidth + charWidth > safeWidth) {
+          visualRows++;
+          lineWidth = charWidth;
+        } else {
+          lineWidth += charWidth;
+        }
+      }
+
+      return rows + visualRows;
+    }, 0);
+}
+
+function truncateDisplay(text: string, width: number): string {
+  if (stringWidth(text) <= width) {
+    return text;
+  }
+
+  let output = '';
+  for (const char of Array.from(text)) {
+    if (stringWidth(output + char) > width - 1) {
+      break;
+    }
+    output += char;
+  }
+  return `${output}…`;
+}
+
+function getTranscriptHeaderLines({
+  cwd,
+  model,
+  effort,
+  width,
+}: {
+  cwd: string;
+  model: string;
+  effort: string;
+  width: number;
+}): string[] {
+  const boxWidth = Math.max(12, width);
+  const innerWidth = Math.max(1, boxWidth - 2);
+  const border = '─'.repeat(innerWidth);
+  const title = `${chalk.blueBright.bold('Efrex')} ${chalk.gray('terminal assistant')}`;
+  const metaWidth = Math.max(1, innerWidth - stringWidth(MASCOT[1] ?? '') - 1);
+  const meta = chalk.gray(truncateDisplay(`${cwd}  ·  model: ${model}  ·  effort: ${effort}`, metaWidth));
+
+  const row = (left: string, right = '') => {
+    const gap = Math.max(1, innerWidth - stringWidth(left) - stringWidth(right));
+    const content = `${left}${' '.repeat(gap)}${right}`;
+    return `${chalk.blue('│')}${content}${' '.repeat(Math.max(0, innerWidth - stringWidth(content)))}${chalk.blue('│')}`;
+  };
+
+  return [
+    chalk.blue(`╭${border}╮`),
+    row(title, chalk.cyanBright(MASCOT[0] ?? '')),
+    row(meta, chalk.cyanBright(MASCOT[1] ?? '')),
+    row('', chalk.cyanBright(MASCOT[2] ?? '')),
+    chalk.blue(`╰${border}╯`),
+    '',
+  ];
+}
+
 export default function App() {
   const {exit} = useApp();
-  const {stdout} = useStdout();
+  const {columns, rows} = useWindowSize();
   const [input, setInput] = useState('');
   const [cursorSyncKey, setCursorSyncKey] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -264,27 +326,78 @@ export default function App() {
   const [retryInfo, setRetryInfo] = useState<{attempt: number; max: number} | null>(null);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const [exitHint, setExitHint] = useState(false);
-  const [pastedContents,setPasteContents]=useState(new Map<number,string>())
+  const [pastedContents,setPasteContents]=useState(new Map<number,PastedContentEntry>())
+  const pastedContentsRef = useRef(new Map<number, PastedContentEntry>());
   const pasteCountRef = useRef(0);
+  const toolMessageIdRef = useRef(0);
   const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const controllerRef = useRef<AbortController>(new AbortController());
   const [historyList, setHistoryList] = useState<SessionHistory[]>([]);
   const historyListRef = useRef<SessionHistory[]>([]);
-  const [historyCursor, setHistoryCursor] = useState(-1);
-  const historyCursorRef = useRef(-1);
-  const [draftInput, setDraftInput] = useState('');
-  const draftInputRef = useRef('');
   const [committedMessages, setCommittedMessages] = useState<Message[]>([]);
   const [streamingMessage, setStreamingMessage] = useState<Message | null>(null);
+  const [activeToolMessages, setActiveToolMessages] = useState<Message[]>([]);
+  const activeToolMessagesRef = useRef<Message[]>([]);
   const streamingMessageRef = useRef<Message | null>(null);
   const [showCommandSelector, setShowCommandSelector] = useState(false);
   const [filteredCommands, setFilteredCommands] = useState(commands);
+  const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
   const [modelRefreshKey, setModelRefreshKey] = useState(0);
   const cwd: string = process.cwd();
   const model = getCurrentModel();
   const effort = getEffortLevel();
-  const inputRule = '─'.repeat(Math.max(8, stdout.columns - 2));
-  const messageWidth = Math.max(8, stdout.columns - 2);
+  const terminalColumns = columns || process.stdout.columns || 80;
+  const inputRule = '─'.repeat(Math.max(8, terminalColumns - 2));
+  const messageWidth = Math.max(8, terminalColumns - 4);
+  const terminalRows = rows || process.stdout.rows || 24;
+  const promptInputWidth = Math.max(8, terminalColumns - 6);
+  const fixedRows =
+    INPUT_MARGIN_ROWS +
+    INPUT_RULE_ROWS +
+    FOOTER_ROWS;
+  const maxPromptInputRows = Math.max(
+    1,
+    Math.min(
+      MAX_PROMPT_INPUT_ROWS,
+      terminalRows - fixedRows - MIN_MESSAGE_VIEWPORT_ROWS,
+    ),
+  );
+  const promptInputRows = Math.min(
+    maxPromptInputRows,
+    countWrappedRows(input, promptInputWidth),
+  );
+  const maxCommandSelectorRows = Math.max(
+    0,
+    Math.min(
+      COMMAND_SELECTOR_LIMIT,
+      terminalRows - fixedRows - promptInputRows - MIN_MESSAGE_VIEWPORT_ROWS,
+    ),
+  );
+  const commandSelectorRows = showCommandSelector
+    ? Math.min(COMMAND_SELECTOR_LIMIT, filteredCommands.length, maxCommandSelectorRows)
+    : 0;
+  const commandSelectorVisible = showCommandSelector && commandSelectorRows > 0;
+  const messageViewportRows = Math.max(
+    MIN_MESSAGE_VIEWPORT_ROWS,
+    terminalRows - fixedRows - promptInputRows - commandSelectorRows,
+  );
+  const viewportMessages = [
+    ...committedMessages,
+    ...activeToolMessages,
+    ...(streamingMessage ? [streamingMessage] : []),
+  ];
+  const transcriptHeaderLines = getTranscriptHeaderLines({
+    cwd,
+    model,
+    effort,
+    width: messageWidth,
+  });
+  const activityStatusLine = retryInfo
+    ? `⟳ 正在连接重试 ${retryInfo.attempt}/${retryInfo.max}...`
+    : loading && isReasoning
+      ? `Efrex 正在思考... (${Math.floor((reasoningDuration ?? 0) / 1000)}s)`
+      : null;
+  const statusLine = activityStatusLine;
 
   // 过滤命令
   useEffect(() => {
@@ -295,8 +408,10 @@ export default function App() {
       );
       setFilteredCommands(filtered);
       setShowCommandSelector(filtered.length > 0);
+      setSelectedCommandIndex(0);
     } else {
       setShowCommandSelector(false);
+      setSelectedCommandIndex(0);
     }
   }, [input]);
 
@@ -306,6 +421,65 @@ export default function App() {
     setCursorSyncKey(prev => prev + 1);
     setShowCommandSelector(false);
   };
+
+  const handlePasteText = useCallback((text: string): string => {
+    const normalizedText = normalizeLineEndings(text);
+    const imagePath = normalizePastedPath(normalizedText);
+    if (imagePath && isImagePath(imagePath)) {
+      const id = pasteCountRef.current + 1;
+      pasteCountRef.current = id;
+      const next = new Map(pastedContentsRef.current);
+      next.set(id, {
+        id,
+        type: 'image',
+        sourcePath: imagePath,
+      });
+      pastedContentsRef.current = next;
+      setPasteContents(next);
+      return formatImageLabel(id);
+    }
+
+    if (!shouldUsePastedPlaceholder(normalizedText)) {
+      return normalizedText;
+    }
+
+    const id = pasteCountRef.current + 1;
+    pasteCountRef.current = id;
+    const next = new Map(pastedContentsRef.current);
+    next.set(id, {
+      id,
+      type: 'text',
+      content: normalizedText,
+    });
+    pastedContentsRef.current = next;
+    setPasteContents(next);
+    return formatPastedTextLabel(id, normalizedText);
+  }, []);
+
+  useInput((_, key) => {
+    if (!commandSelectorVisible) {
+      return;
+    }
+
+    if (key.upArrow) {
+      setSelectedCommandIndex(index => Math.max(0, index - 1));
+      return;
+    }
+
+    if (key.downArrow) {
+      setSelectedCommandIndex(index =>
+        Math.min(commandSelectorRows - 1, index + 1),
+      );
+      return;
+    }
+
+    if (key.return) {
+      const selected = filteredCommands[selectedCommandIndex];
+      if (selected) {
+        handleCommandSelect(selected);
+      }
+    }
+  }, {isActive: commandSelectorVisible});
 
   const handleCtrlC = useCallback(() => {
     if (loading) {
@@ -334,51 +508,20 @@ export default function App() {
     }, 3000);
   }, [exit, exitHint, loading]);
 
-  const handleHistoryPrev = useCallback(() => {
-    if (showCommandSelector) {
+  const appendHistoryEntry = useCallback((newHistory: SessionHistory) => {
+    const previousHistory = historyListRef.current;
+    const lastHistory = previousHistory[previousHistory.length - 1];
+
+    if (isSameHistoryEntry(lastHistory, newHistory)) {
       return;
     }
 
-    setHistoryCursor(prev => {
-      if (historyList.length === 0) return -1;
-      if (prev === -1) {
-        setDraftInput(input);
-        const newIndex = historyList.length - 1;
-        setInput(historyList[newIndex].display);
-        setCursorSyncKey(key => key + 1);
-        return newIndex;
-      }
+    const nextHistory = [...previousHistory, newHistory];
+    historyListRef.current = nextHistory;
+    setHistoryList(nextHistory);
+    void saveSessionHistory(newHistory);
+  }, []);
 
-      const newIndex = Math.max(0, prev - 1);
-      setInput(historyList[newIndex].display);
-      setCursorSyncKey(key => key + 1);
-      return newIndex;
-    });
-  }, [historyList, input, showCommandSelector]);
-
-  const handleHistoryNext = useCallback(() => {
-    if (showCommandSelector) {
-      return;
-    }
-
-    setHistoryCursor(prev => {
-      if (prev === -1) return -1;
-      if (prev >= historyList.length - 1) {
-        setInput(draftInput);
-        setCursorSyncKey(key => key + 1);
-        return -1;
-      }
-      const newIndex = prev + 1;
-      if (newIndex >= historyList.length) {
-        setInput(draftInput);
-        setCursorSyncKey(key => key + 1);
-        return -1;
-      }
-      setInput(historyList[newIndex].display);
-      setCursorSyncKey(key => key + 1);
-      return newIndex;
-    });
-  }, [draftInput, historyList, showCommandSelector]);
   const onSubmit = useCallback(
     async (value: string) => {
       const text = value.trim();
@@ -405,45 +548,41 @@ export default function App() {
           }
         }
         setInput('');
-        setHistoryCursor(-1);
-        setDraftInput('');
         return;
       }
 
-      const pastedHistoryText:{ [key: string]: PastedContent }=historyListRef.current[historyCursorRef.current]?.pastedContents;
-      const {resolvedText, usedIds}=historyCursorRef.current==-1?resolvePastedPlaceholders(text, pastedContents)
-      :resolvePastedPlaceholdersByObj(text,pastedHistoryText);
-      if(historyCursorRef.current!=-1){
-          const newHistory=historyListRef.current[historyCursorRef.current]
-          saveSessionHistory(newHistory);
-          setHistoryList(prev => {
-            return [...prev, newHistory];
-          });
-      };
+      const {resolvedText, usedIds: usedTextIds} = resolvePastedPlaceholders(text, pastedContentsRef.current);
+      const {
+        text: textWithoutImageRefs,
+        usedIds: usedImageIds,
+        imageRefs,
+      } = resolveImagePlaceholders(resolvedText, pastedContentsRef.current);
+      const usedIds = new Set([...usedTextIds, ...usedImageIds]);
+      const userContent = await createUserContentWithImages(
+        textWithoutImageRefs || resolvedText,
+        imageRefs,
+      );
       // 每次请求创建新的 AbortController
       controllerRef.current = new AbortController();
       const sessionId = randomUUID();
       const userMsg: Message = {
         id: Date.now(),
         role: 'user',
-        text: resolvedText,
+        text: text,
         timestamp: new Date(),
       };
       const newHistory: SessionHistory = {
         display: text,
-        pastedContents: toPastedContentsRecord(pastedContents, usedIds),
+        pastedContents: toPastedContentsRecord(pastedContentsRef.current, usedIds),
         timestamp: Date.now(),
         project: cwd,
         sessionId: sessionId,
       };
-      saveSessionHistory(newHistory);
-      setHistoryList(prev => {
-        return [...prev, newHistory];
-      });
+      appendHistoryEntry(newHistory);
       setCommittedMessages(prev => [...prev, userMsg]);
       setInput('');
-      setHistoryCursor(-1);
-      setDraftInput('');
+      activeToolMessagesRef.current = [];
+      setActiveToolMessages([]);
       const streamingMsgId = Date.now() + 1;
       setStreamingMessage({
         id: streamingMsgId,
@@ -456,7 +595,7 @@ export default function App() {
         setIsReasoning(false);
         setReasoningDuration(null);
         const result = await askOpenAI(
-          resolvedText,
+          userContent,
           controllerRef.current.signal,
           (attempt, max) => {
             setRetryInfo({attempt, max});
@@ -475,7 +614,22 @@ export default function App() {
             setIsReasoning(false);
             setReasoningDuration(durationMs);
           },
+          (toolMessage) => {
+            const nextMessage: Message = {
+                id: Date.now() + 10_000 + toolMessageIdRef.current++,
+                role: 'tool',
+                text: toolMessage.text,
+                timestamp: new Date(),
+                toolPhase: toolMessage.phase,
+              };
+            activeToolMessagesRef.current = [
+              ...activeToolMessagesRef.current,
+              nextMessage,
+            ];
+            setActiveToolMessages(activeToolMessagesRef.current);
+          },
         );
+        setCommittedMessages(prev => [...prev, ...activeToolMessagesRef.current]);
         if (result.text) {
           const finalAssistantMessage: Message = {
             id: streamingMsgId,
@@ -486,6 +640,8 @@ export default function App() {
           setCommittedMessages(prev => [...prev, finalAssistantMessage]);
         }
         setStreamingMessage(null);
+        activeToolMessagesRef.current = [];
+        setActiveToolMessages([]);
       } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') {
           setAlertMessage('当前请求已取消');
@@ -494,6 +650,8 @@ export default function App() {
             setCommittedMessages(prev => [...prev, partialMessage]);
           }
           setStreamingMessage(null);
+          activeToolMessagesRef.current = [];
+          setActiveToolMessages([]);
           return;
         }
 
@@ -505,6 +663,8 @@ export default function App() {
           timestamp: new Date(),
         };
         setStreamingMessage(null);
+        activeToolMessagesRef.current = [];
+        setActiveToolMessages([]);
         setCommittedMessages(prev => [...prev, errorMsg]);
       } finally {
       setLoading(false);
@@ -512,19 +672,16 @@ export default function App() {
       setRetryInfo(null);
     }
   },
-    [cwd, loading, pastedContents],
+    [appendHistoryEntry, cwd, loading],
   );
+
+  useEffect(() => {
+    pastedContentsRef.current = pastedContents;
+  }, [pastedContents]);
+
   useEffect(() => {
     historyListRef.current = historyList;
   }, [historyList]);
-
-  useEffect(() => {
-    historyCursorRef.current = historyCursor;
-  }, [historyCursor]);
-
-  useEffect(() => {
-    draftInputRef.current = draftInput;
-  }, [draftInput]);
 
   useEffect(() => {
     streamingMessageRef.current = streamingMessage;
@@ -533,93 +690,90 @@ export default function App() {
   useEffect(() => {
     const loadHistory = async () => {
       const data:SessionHistory[] = await readHistoryJSONL();
+      historyListRef.current = data;
       setHistoryList(data);
     };
 
     loadHistory();
   }, []);
-  usePaste((text:string) => {
-      const normalizedText = normalizeLineEndings(text);
-      if (shouldUsePastedPlaceholder(normalizedText)) {
-         pasteCountRef.current+=1
-         setPasteContents(prev => {
-           const next = new Map(prev);
-           next.set(pasteCountRef.current, normalizedText);
-           return next;
-         });
-         setInput(prev => prev + formatPastedTextLabel(pasteCountRef.current, normalizedText));
-      } else {
-         setInput(prev => prev + normalizedText);
-      }
-      setCursorSyncKey(prev => prev + 1);
-  });
+  // usePaste((text:string) => {
+  //     const normalizedText = normalizeLineEndings(text);
+  //     if (shouldUsePastedPlaceholder(normalizedText)) {
+  //        pasteCountRef.current+=1
+  //        setPasteContents(prev => {
+  //          const next = new Map(prev);
+  //          next.set(pasteCountRef.current, normalizedText);
+  //          return next;
+  //        });
+  //        setInput(prev => prev + formatPastedTextLabel(pasteCountRef.current, normalizedText));
+  //     } else {
+  //        setInput(prev => prev + normalizedText);
+  //     }
+  //     setCursorSyncKey(prev => prev + 1);
+  // });
 
   return (
     <Box flexDirection="column" paddingX={1} paddingY={0}>
-      <Header cwd={cwd} model={model} effort={effort} key={modelRefreshKey} />
-
-      <Box flexDirection="column" paddingX={1} flexGrow={1} flexShrink={1} overflowY="hidden">
-        {alertMessage && (
-          <Alert variant="error">{alertMessage}</Alert>
-        )}
-        {committedMessages.map(message => (
-          <Box key={message.id} flexDirection="column">
-            <MessageBubble message={message} width={messageWidth} />
-          </Box>
-        ))}
-        {streamingMessage && (
-          <Box key={streamingMessage.id} flexDirection="column">
-            <MessageBubble message={streamingMessage} width={messageWidth} />
-          </Box>
-        )}
-        {loading && !retryInfo && isReasoning && <ThinkingIndicator reasoningDuration={reasoningDuration ?? undefined} />}
-        {loading && retryInfo && (
-          <Box>
-            <Text color="yellow">⟳ 正在连接重试 {retryInfo.attempt}/{retryInfo.max}...</Text>
-          </Box>
-        )}
+      <Box
+        flexDirection="column"
+        flexShrink={0}
+      >
+        <MessageViewport
+          headerLines={transcriptHeaderLines}
+          messages={viewportMessages}
+          width={messageWidth}
+          height={messageViewportRows}
+          nativeScrollback
+          alertMessage={alertMessage}
+          statusLine={statusLine}
+        />
       </Box>
 
-      <Box flexDirection="column" marginTop={1}>
+      <Box flexDirection="column" marginTop={1} flexShrink={0}>
         <Text color={loading ? 'blue' : 'gray'}>{inputRule}</Text>
         <Box>
           <Text color={loading ? 'blueBright' : 'greenBright'}>› </Text>
           <PromptInput
             value={input}
-            width={Math.max(8, stdout.columns - 6)}
+            width={promptInputWidth}
+            maxVisibleLines={maxPromptInputRows}
             cursorSyncKey={cursorSyncKey}
             isActive
-            suspendSubmit={showCommandSelector}
-            suspendVerticalArrows={showCommandSelector}
+            suspendSubmit={commandSelectorVisible}
+            suspendVerticalArrows={commandSelectorVisible}
             onChange={setInput}
             onSubmit={onSubmit}
-            onHistoryPrev={handleHistoryPrev}
-            onHistoryNext={handleHistoryNext}
             onCtrlC={handleCtrlC}
+            onPasteText={handlePasteText}
             placeholder={loading ? '等待回复中...':""}
           />
         </Box>
         <Text  color={loading ? 'blue' : 'gray'}>{inputRule}</Text>
 
         {/* 命令选择器 */}
-        {showCommandSelector && (
+        {commandSelectorVisible && (
           <Box
             flexDirection="column"
           >
-            <Select
-              items={filteredCommands}
-              onSelect={handleCommandSelect}
-              limit={5}
-            />
+            {filteredCommands.slice(0, commandSelectorRows).map((item, index) => (
+              <Box key={item.value}>
+                <Text color={index === selectedCommandIndex ? 'greenBright' : 'gray'}>
+                  {index === selectedCommandIndex ? '› ' : '  '}
+                </Text>
+                <Text color={index === selectedCommandIndex ? 'greenBright' : undefined}>
+                  {item.label}
+                </Text>
+              </Box>
+            ))}
           </Box>
         )}
       </Box>
 
-      <Box marginTop={1} justifyContent="space-between">
+      <Box marginTop={1} justifyContent="space-between" flexShrink={0}>
         {exitHint ? (
           <Text  dimColor >再按一次 Ctrl+C 确认退出</Text>
         ) : (
-          <Text   color="gray">Enter 发送 · Ctrl+C 退出</Text>
+          <Text   color="gray">Enter 发送 · 鼠标滚轮使用终端滚动 · Ctrl+C 退出</Text>
         )}
       </Box>
     </Box>

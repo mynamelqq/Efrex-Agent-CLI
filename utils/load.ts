@@ -34,8 +34,10 @@ function pathToDisplayNameSimple(filePath: string): string {
 }
 export interface PastedContent {
   id: number;
-  type: 'text';  // 如果有其他类型可扩展，例如 'image', 'file' 等
-  content: string;
+  type: 'text' | 'image';
+  content?: string;
+  sourcePath?: string;
+  mediaType?: string;
 }
 export interface SessionHistory {
   display: string;          // 展示文本，如 "[Pasted text #1 +72 lines]"
@@ -68,7 +70,6 @@ export async function readHistoryJSONL(): Promise<SessionHistory[]> {
         }
       }
     }
-    appendFileSync("./tmp/debug.log",`[Trace] 消息${sessions.length}} \n`)
     return sessions;
     
   } catch (err) {

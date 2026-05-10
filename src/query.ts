@@ -2,6 +2,7 @@
 import type { Terminal } from 'src/query/transitions.js'
 import { normalizeMessagesForAPI } from './utils/api.js'
 import { StreamingToolExecutor } from './services/tools/StreamingToolExecutor.js'
+import { runTools } from './services/tools/toolOrchestration.js'
 import { createAssistantAPIErrorMessage } from './utils/messages.js'
 import { queryModelWithStreaming } from './services/api/efrex.js'
 import { buildQueryConfig } from './query/config.js'
@@ -17,7 +18,6 @@ import type {
   UserMessage,
 } from 'src/package/message.js'
 import { asSystemPrompt } from './prompt.js'
-import { runToolUse, type MessageUpdateLazy } from './services/tools/toolExecution.js'
 
 export type QueryParams = {
   messages: Message[]
@@ -44,31 +44,6 @@ function collectToolUseBlocks(assistantMessage: AssistantMessage): ToolUseBlock[
     ? assistantMessage.message.content
     : []
   return content.filter((block: { type?: string }) => block.type === 'tool_use') as ToolUseBlock[]
-}
-
-async function* runTools(
-  toolUseBlocks: ToolUseBlock[],
-  assistantMessages: AssistantMessage[],
-  toolUseContext: ToolUseContext,
-): AsyncGenerator<{ message?: Message; newContext?: ToolUseContext }, void> {
-  let currentContext = toolUseContext
-
-  for (const block of toolUseBlocks) {
-    const ownerAssistant =
-      assistantMessages.find(m => {
-        const blocks = collectToolUseBlocks(m)
-        return blocks.some(b => b.id === block.id)
-      }) ?? assistantMessages.at(-1)
-
-    if (!ownerAssistant) continue
-
-    for await (const update of runToolUse(block, ownerAssistant, currentContext)) {
-      if (update.contextModifier) {
-        currentContext = update.contextModifier.modifyContext(currentContext)
-      }
-      yield { message: update.message, newContext: currentContext }
-    }
-  }
 }
 
 export async function* query(

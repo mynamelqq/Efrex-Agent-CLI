@@ -1,5 +1,5 @@
-import { WebSearchTool } from './src/tools/WebSearchTool/WebSearchTool.js'
-import type { ToolUseContext } from './src/Tool.js'
+import { WebSearchTool } from '../src/tools/WebSearchTool/WebSearchTool.js'
+import type { ToolUseContext } from '../src/Tool.js'
 
 type Args = {
   query: string
