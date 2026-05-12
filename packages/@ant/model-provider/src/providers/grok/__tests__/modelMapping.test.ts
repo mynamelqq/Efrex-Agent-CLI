@@ -10,9 +10,9 @@ describe('resolveGrokModel', () => {
     delete process.env.GROK_DEFAULT_SONNET_MODEL
     delete process.env.GROK_DEFAULT_OPUS_MODEL
     delete process.env.GROK_DEFAULT_HAIKU_MODEL
-    delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL
-    delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL
-    delete process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL
+    delete process.env.DEFAULT_SONNET_MODEL
+    delete process.env.DEFAULT_OPUS_MODEL
+    delete process.env.DEFAULT_HAIKU_MODEL
   })
 
   afterEach(() => {

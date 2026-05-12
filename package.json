@@ -1,5 +1,9 @@
 {
-	"name": "ChatUI-Cli",
+	"name": "ChatUI-CLI",
+	"workspaces": [
+		"packages/@ant/*"
+	],
+	"private": true,
 	"description": "a terminal agent developed by YaQi Li(Efrewew)",
 	"version": "0.0.1",
 	"license": "UNLICENSED",
@@ -24,10 +28,12 @@
 	],
 	"scripts": {
 		"format": "prettier --write \"./**/*.{js,json}\"",
-		"dev": "tsx index.tsx",
-		"build": "tsup index.tsx --format esm --out-dir dist --clean"
+		"dev": "bun --hot src/index.tsx",
+		"build": "bun build index.tsx --format esm --outdir dist --clean",
+		"start": "bun dist/index.js"
 	},
 	"dependencies": {
+		"@anthropic/ink": "workspace:*",
 		"@inkjs/ui": "^2.0.0",
 		"chalk": "^5.6.2",
 		"cli-alerts": "^2.0.0",

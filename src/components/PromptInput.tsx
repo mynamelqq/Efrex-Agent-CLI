@@ -4,6 +4,9 @@ import chalk from 'chalk';
 import useTextInput from '../hooks/useTextInput.js';
 import {useDeclaredCursor} from '../ink/hooks/use-declared-cursor.js';
 
+const INPUT_CURSOR_BG = '#3a3a35';
+const INPUT_CURSOR_FG = '#f0f0ea';
+
 type Props = {
   value: string;
   width: number;
@@ -64,8 +67,8 @@ export default function PromptInput({
   if (value.length === 0) {
     const renderedPlaceholder = isActive
       ? placeholder.length > 0
-        ? chalk.inverse(placeholder[0]) + chalk.gray(placeholder.slice(1))
-        : chalk.inverse(' ')
+        ? chalk.bgHex(INPUT_CURSOR_BG).hex(INPUT_CURSOR_FG)(placeholder[0]) + chalk.gray(placeholder.slice(1))
+        : chalk.bgHex(INPUT_CURSOR_BG)(' ')
       : chalk.gray(placeholder);
 
     return (
@@ -78,7 +81,7 @@ export default function PromptInput({
   const lines = cursor.render({
     width,
     maxVisibleLines,
-    invert: text => chalk.inverse(text),
+    invert: text => chalk.bgHex(INPUT_CURSOR_BG).hex(INPUT_CURSOR_FG)(text),
   });
 
   return (

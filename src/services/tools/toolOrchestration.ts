@@ -13,11 +13,11 @@ type Batch = { isConcurrencySafe: boolean; blocks: ToolUseBlock[] }
 
 function getMaxToolUseConcurrency(): number {
   return (
-    parseInt(process.env.CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY || '', 10) || 10
+    parseInt(process.env.CODE_MAX_TOOL_USE_CONCURRENCY || '', 10) || 10
   )
 }
 
-function findOwnerAssistant(
+function findOwnerAssistant(//找到调用工具的助手消息
   toolUse: ToolUseBlock,
   assistantMessages: AssistantMessage[],
 ): AssistantMessage | undefined {

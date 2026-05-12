@@ -47,7 +47,7 @@ export function getOpenAIClient(options?: {
   if (cachedClient) return cachedClient
 
   const apiKey = process.env.AUTH_TOKEN || ''
-  const baseURL = process.env.ANTHROPIC_BASE_URL
+  const baseURL = process.env.BASE_URL
 
   if (!apiKey.trim()) {
     throw new Error(

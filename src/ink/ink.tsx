@@ -5,7 +5,7 @@ import throttle from 'lodash/throttle.js';
 import React, { type ReactNode } from 'react';
 import type { FiberRoot } from 'react-reconciler';
 import { ConcurrentRoot } from 'react-reconciler/constants.js';
-import signalExit from 'signal-exit';
+import {onExit} from 'signal-exit';
 import { flushInteractionTime } from 'src/bootstrap/state.js';
 import { getYogaCounters } from 'src/native-ts/yoga-layout/index.js';
 import { logForDebugging } from 'src/utils/debug.js';
@@ -219,7 +219,7 @@ export default class Ink {
     this.isUnmounted = false;
 
     // Unmount when process exits
-    this.unsubscribeExit = signalExit(this.unmount, {
+    this.unsubscribeExit = onExit(this.unmount, {
       alwaysLast: false
     });
     if (options.stdout.isTTY) {

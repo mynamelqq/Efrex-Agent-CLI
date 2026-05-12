@@ -4,10 +4,14 @@ import chalk from 'chalk';
 import {stringWidth} from '../ink/stringWidth.js';
 import ScrollBox, {type ScrollBoxHandle} from '../ink/components/ScrollBox.js';
 
+const USER_MESSAGE_BG = '#2e2f30';
+const USER_MESSAGE_FG = '#f0f0ea';
+
 export type ViewportMessage = {
   id: number;
   role: 'user' | 'assistant' | 'tool';
   text: string;
+  content?: React.ReactNode;
   toolPhase?: 'call' | 'done' | 'error';
   animatePrefix?: 'blink';
 };
@@ -72,11 +76,18 @@ export default function MessageViewport({
   if (nativeScrollback) {
     return (
       <Box flexDirection="column" flexShrink={0}>
-        {lines.map((line, index) => (
-          <Text key={index} wrap="truncate-end">
+        {headerLines?.map((line, index) => (
+          <Text key={`header-${index}`} wrap="truncate-end">
             {line || ' '}
           </Text>
         ))}
+        {alertMessage ? (
+          <Text color="redBright">错误: {alertMessage}</Text>
+        ) : null}
+        {messages.map(message => renderMessageNode(message, width, blinkOn))}
+        {statusLine ? (
+          <Text color="yellow">{statusLine}</Text>
+        ) : null}
       </Box>
     );
   }
@@ -93,6 +104,61 @@ export default function MessageViewport({
   );
 }
 
+function renderMessageNode(message: ViewportMessage, width: number, blinkOn: boolean): React.ReactNode {
+  if (!message.content) {
+    return renderMessage(message, width, blinkOn).map((line, index) => (
+      <Text key={`${message.id}-${index}`} wrap="truncate-end">
+        {line || ' '}
+      </Text>
+    ));
+  }
+
+  if (message.role === 'user') {
+    return (
+      <Box key={message.id} flexDirection="column" marginTop={1} width={width}>
+        <Text color={USER_MESSAGE_FG} backgroundColor={USER_MESSAGE_BG} wrap="wrap">
+          {`> ${message.text}`}
+        </Text>
+      </Box>
+    );
+  }
+
+  if (message.role === 'assistant') {
+    const assistantPrefix =
+      message.animatePrefix === 'blink'
+        ? blinkOn
+          ? '•  '
+          : '   '
+        : '●  ';
+
+    return (
+      <Box key={message.id} flexDirection="row" marginTop={1} width={width}>
+        <Text bold>{assistantPrefix}</Text>
+        <Box flexDirection="column" flexShrink={1}>
+          {message.content}
+        </Box>
+      </Box>
+    );
+  }
+
+  const toolPrefix =
+    message.animatePrefix === 'blink' && message.toolPhase === 'call'
+      ? blinkOn
+        ? '•  '
+        : '   '
+      : '↳  ';
+  const prefixColor = message.toolPhase === 'error' ? 'redBright' : 'cyanBright';
+
+  return (
+    <Box key={message.id} flexDirection="row" width={width}>
+      <Text color={prefixColor}>{toolPrefix}</Text>
+      <Box flexDirection="column" flexShrink={1}>
+        {message.content}
+      </Box>
+    </Box>
+  );
+}
+
 function renderMessage(message: ViewportMessage, width: number, blinkOn: boolean): string[] {
   if (message.role === 'user') {
     const contentWidth = Math.max(1, width - 2);
@@ -100,7 +166,9 @@ function renderMessage(message: ViewportMessage, width: number, blinkOn: boolean
       '',
       ...wrapPlain(message.text, contentWidth).map((line, index) => {
         const prefix = index === 0 ? '> ' : '  ';
-        return chalk.inverse(padPlain(`${prefix}${truncatePlain(line, contentWidth)}`, width));
+        return chalk.bgHex(USER_MESSAGE_BG).hex(USER_MESSAGE_FG)(
+          padPlain(`${prefix}${truncatePlain(line, contentWidth)}`, width),
+        );
       }),
     ];
   }

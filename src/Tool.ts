@@ -1,4 +1,5 @@
 import { z } from 'zod/v4'
+import type { ReactNode } from 'react'
 import { Theme } from "./utils/theme";
 import { AppState } from './state/AppStateStore';
 import type { FileStateCache } from './utils/fileStateCache';
@@ -40,6 +41,8 @@ export type ToolUseContext = {
   },
   readFileState: FileStateCache,
   abortController: AbortController,
+  /** Custom system prompt that replaces the default system prompt */
+
   updateFileHistoryState: (
     updater: (prev: FileHistoryState) => FileHistoryState,
   ) => void,
@@ -81,10 +84,25 @@ export type Tool<
   userFacingNameBackgroundColor?(
     input: Partial<z.infer<Input>> | undefined,
   ): keyof Theme | undefined,
- mapToolResultToToolResultBlockParam(
+  mapToolResultToToolResultBlockParam(
     content: Output,
     toolUseID: string,
   ): ToolResultBlockParam
+  renderToolResultMessage?(
+    content: Output,
+    progressMessagesForMessage: Message[],
+    options: {
+      style?: 'condensed'
+      theme: Theme
+      tools: Tools
+      verbose: boolean
+      input?: unknown
+    },
+  ): ReactNode
+  renderToolUseMessage?(
+    input: Partial<z.infer<Input>>,
+    options: { theme: Theme; verbose: boolean; commands?: unknown[] },
+  ): ReactNode
 }
 export type ToolDef<
     Input extends AnyObject=AnyObject,
@@ -109,3 +127,4 @@ export function toolMatchesName(
 ): boolean {
   return tool.name === name || (tool.aliases?.includes(name) ?? false)
 }
+export type ToolProgressData = any

@@ -34,7 +34,7 @@ const OPENAI_PREFIX_MODELS_TO_KEEP = new Set([
 ])
 
 export function resolveOpenAIModel(model: string): string {
-  const override = process.env.OPENAI_MODEL?.trim()
+  const override = process.env.MODEL?.trim()
   if (override) return normalizeOpenAIModelName(override)
 
   return normalizeOpenAIModelName(model)

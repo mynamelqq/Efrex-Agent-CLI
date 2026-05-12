@@ -7,6 +7,7 @@ import { buildTool } from '../../Tool'
 import { ToolDef } from '../../Tool'
 import { getCwd } from '../../utils/cwd'
 import { glob } from '../../utils/glob.js'
+import { renderToolResultMessage, renderToolUseMessage } from './UI'
 
 const inputSchema = lazySchema(() =>
   z.strictObject({
@@ -100,5 +101,6 @@ export const GlobTool = buildTool({
         ].join('\n'),
       }
     },
-
+    renderToolResultMessage:renderToolResultMessage,
+    renderToolUseMessage:renderToolUseMessage
   } satisfies ToolDef<InputSchema, Output>)

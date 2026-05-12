@@ -7,9 +7,9 @@ describe('resolveGeminiModel', () => {
     GEMINI_DEFAULT_HAIKU_MODEL: process.env.GEMINI_DEFAULT_HAIKU_MODEL,
     GEMINI_DEFAULT_SONNET_MODEL: process.env.GEMINI_DEFAULT_SONNET_MODEL,
     GEMINI_DEFAULT_OPUS_MODEL: process.env.GEMINI_DEFAULT_OPUS_MODEL,
-    ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
-    ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
-    ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
+    DEFAULT_HAIKU_MODEL: process.env.DEFAULT_HAIKU_MODEL,
+    DEFAULT_SONNET_MODEL: process.env.DEFAULT_SONNET_MODEL,
+    DEFAULT_OPUS_MODEL: process.env.DEFAULT_OPUS_MODEL,
   }
 
   beforeEach(() => {
@@ -17,9 +17,9 @@ describe('resolveGeminiModel', () => {
     delete process.env.GEMINI_DEFAULT_HAIKU_MODEL
     delete process.env.GEMINI_DEFAULT_SONNET_MODEL
     delete process.env.GEMINI_DEFAULT_OPUS_MODEL
-    delete process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL
-    delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL
-    delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL
+    delete process.env.DEFAULT_HAIKU_MODEL
+    delete process.env.DEFAULT_SONNET_MODEL
+    delete process.env.DEFAULT_OPUS_MODEL
   })
 
   afterEach(() => {
@@ -28,14 +28,14 @@ describe('resolveGeminiModel', () => {
 
   test('GEMINI_MODEL env var overrides family mappings', () => {
     process.env.GEMINI_MODEL = 'gemini-2.5-pro'
-    process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'gemini-2.5-flash'
+    process.env.DEFAULT_SONNET_MODEL = 'gemini-2.5-flash'
 
     expect(resolveGeminiModel('claude-sonnet-4-6')).toBe('gemini-2.5-pro')
   })
 
-  test('GEMINI_DEFAULT_*_MODEL takes precedence over ANTHROPIC_DEFAULT_*', () => {
+  test('GEMINI_DEFAULT_*_MODEL takes precedence over DEFAULT_*', () => {
     process.env.GEMINI_DEFAULT_SONNET_MODEL = 'gemini-2.5-flash-priority'
-    process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'gemini-2.5-flash-fallback'
+    process.env.DEFAULT_SONNET_MODEL = 'gemini-2.5-flash-fallback'
 
     expect(resolveGeminiModel('claude-sonnet-4-6')).toBe(
       'gemini-2.5-flash-priority',
@@ -59,25 +59,25 @@ describe('resolveGeminiModel', () => {
     expect(resolveGeminiModel('claude-opus-4-6')).toBe('gemini-2.5-pro')
   })
 
-  test('falls back to ANTHROPIC_DEFAULT_* when GEMINI_DEFAULT_* not set', () => {
-    process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'gemini-2.5-flash'
+  test('falls back to DEFAULT_* when GEMINI_DEFAULT_* not set', () => {
+    process.env.DEFAULT_SONNET_MODEL = 'gemini-2.5-flash'
     expect(resolveGeminiModel('claude-sonnet-4-6')).toBe('gemini-2.5-flash')
   })
 
-  test('resolves haiku from ANTHROPIC_DEFAULT_HAIKU_MODEL as fallback', () => {
-    process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'gemini-2.5-flash-lite'
+  test('resolves haiku from DEFAULT_HAIKU_MODEL as fallback', () => {
+    process.env.DEFAULT_HAIKU_MODEL = 'gemini-2.5-flash-lite'
     expect(resolveGeminiModel('claude-haiku-4-5-20251001')).toBe(
       'gemini-2.5-flash-lite',
     )
   })
 
-  test('resolves opus from ANTHROPIC_DEFAULT_OPUS_MODEL as fallback', () => {
-    process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = 'gemini-2.5-pro'
+  test('resolves opus from DEFAULT_OPUS_MODEL as fallback', () => {
+    process.env.DEFAULT_OPUS_MODEL = 'gemini-2.5-pro'
     expect(resolveGeminiModel('claude-opus-4-6')).toBe('gemini-2.5-pro')
   })
 
   test('uses backward compatible family override', () => {
-    process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'legacy-gemini-sonnet'
+    process.env.DEFAULT_SONNET_MODEL = 'legacy-gemini-sonnet'
     expect(resolveGeminiModel('claude-sonnet-4-6')).toBe('legacy-gemini-sonnet')
   })
 
@@ -94,7 +94,7 @@ describe('resolveGeminiModel', () => {
 
   test('throws when no Gemini model configuration is available', () => {
     expect(() => resolveGeminiModel('claude-sonnet-4-6')).toThrow(
-      'Gemini provider requires GEMINI_MODEL or GEMINI_DEFAULT_SONNET_MODEL (or ANTHROPIC_DEFAULT_SONNET_MODEL for backward compatibility) to be configured.',
+      'Gemini provider requires GEMINI_MODEL or GEMINI_DEFAULT_SONNET_MODEL (or DEFAULT_SONNET_MODEL for backward compatibility) to be configured.',
     )
   })
 })

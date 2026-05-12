@@ -17,13 +17,14 @@ import type {
   ToolUseSummaryMessage,
   UserMessage,
 } from 'src/package/message.js'
-import { asSystemPrompt } from './prompt.js'
+import { asSystemPrompt, SystemPrompt } from './prompt.js'
+import { logForDebugging } from './utils/debug.js'
 
 export type QueryParams = {
   messages: Message[]
-  systemPrompt: string
-  userContext: Record<string, string>
-  systemContext: Record<string, string>
+  systemPrompt: SystemPrompt
+  userContext: { [k: string]: string }
+  systemContext: { [k: string]: string }
   toolUseContext: ToolUseContext
   fallbackModel?: string
   querySource: string
@@ -99,7 +100,7 @@ async function* queryLoop(
     const model =
       toolUseContext.options.mainLoopModel || fallbackModel || 'kimi-k2.6'
 
-    const fullSystemPrompt = asSystemPrompt([params.systemPrompt])
+    const fullSystemPrompt = asSystemPrompt(params.systemPrompt)
 
     const useStreamingToolExecution = config.gates.streamingToolExecution
     const streamingToolExecutor = useStreamingToolExecution
@@ -138,17 +139,18 @@ async function* queryLoop(
           needsFollowUp = true
           toolUseBlocks.push(...msgToolUseBlocks)
 
-          if (streamingToolExecutor && !toolUseContext.abortController.signal.aborted) {
+          if (streamingToolExecutor && !toolUseContext.abortController.signal.aborted) {//启用流式工具执行器且未中止，则将工具块添加到流式执行器中，以便在生成过程中逐步处理工具调用。
             for (const toolBlock of msgToolUseBlocks) {
               streamingToolExecutor.addTool(toolBlock, assistantMessage)
             }
           }
         }
 
-        if (streamingToolExecutor && !toolUseContext.abortController.signal.aborted) {
-          for (const result of streamingToolExecutor.getCompletedResults()) {
+        if (streamingToolExecutor && !toolUseContext.abortController.signal.aborted) {//如果启用流式工具执行器且未中止，则获取已完成的工具结果并更新上下文。
+          for (const result of streamingToolExecutor.getCompletedResults()) {//流式执行器中已完成的工具结果是一个生成器，逐个处理每个结果。
             if (!result.message) continue
             yield result.message
+            logForDebugging('Received tool result message from streaming executor:', result.message)
             toolResults.push(
               ...normalizeMessagesForAPI([result.message], toolUseContext.options.tools).filter(
                 m => m.type === 'user',
@@ -187,7 +189,7 @@ async function* queryLoop(
 
     const toolUpdates = streamingToolExecutor
       ? streamingToolExecutor.getRemainingResults()
-      : runTools(toolUseBlocks, assistantMessages, toolUseContext)
+      : runTools(toolUseBlocks, assistantMessages, toolUseContext)//流式执行器存在，走 StreamingToolExecutor；否则回退到传统的 runTools 批处理执行器。
 
     for await (const update of toolUpdates) {
       if (!update.message) continue

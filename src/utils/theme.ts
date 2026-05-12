@@ -90,7 +90,7 @@ export type Theme = {
  * Light theme using explicit RGB values to avoid inconsistencies
  * from users' custom terminal ANSI color definitions
  */
-const lightTheme: Theme = {
+export const lightTheme: Theme = {
   autoAccept: 'rgb(135,0,255)', // Electric violet
   bashBorder: 'rgb(255,0,135)', // Vibrant pink
   claude: 'rgb(215,119,87)', // Claude orange
@@ -172,7 +172,7 @@ const lightTheme: Theme = {
  * Light ANSI theme using only the 16 standard ANSI colors
  * for terminals without true color support
  */
-const lightAnsiTheme: Theme = {
+export const lightAnsiTheme: Theme = {
   autoAccept: 'ansi:magenta',
   bashBorder: 'ansi:magenta',
   claude: 'ansi:redBright',
@@ -248,3 +248,5 @@ const lightAnsiTheme: Theme = {
   rainbow_indigo_shimmer: 'ansi:blueBright',
   rainbow_violet_shimmer: 'ansi:magentaBright',
 }
+
+export const defaultToolRenderTheme = lightAnsiTheme

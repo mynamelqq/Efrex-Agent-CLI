@@ -9,7 +9,7 @@ import { semanticBoolean } from '../../utils/semanticBoolean.js'
 import {stat}from "fs/promises"
 import { semanticNumber } from '../../utils/semanticNumber.js'
 import { GREP_TOOL_NAME,getDescription } from './prompt'
-import { getToolUseSummary } from './UI.js'
+import { getToolUseSummary, renderToolResultMessage, renderToolUseMessage } from './UI.js'
 const inputSchema = lazySchema(() =>
   z.strictObject({
     pattern: z
@@ -139,6 +139,8 @@ export const GrepTool = buildTool({
   get outputSchema():OutputSchema{
       return outputSchema()
   },
+  renderToolResultMessage:renderToolResultMessage,
+  renderToolUseMessage:renderToolUseMessage,
   isConcurrencySafe() {
     return true
   },

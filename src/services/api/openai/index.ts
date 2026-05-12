@@ -164,14 +164,11 @@ export async function* queryModelOpenAI(
   try {
     // 1. Resolve model name
     // const openaiModel = resolveOpenAIModel(options.model)
-    const openaiModel=process.env.ANTHROPIC_MODEL?process.env.ANTHROPIC_MODEL:"kimi-k2.6"
+    const openaiModel=resolveOpenAIModel('kimi-k2.5')
     // 2. Normalize messages using shared preprocessing
     const messagesForAPI = normalizeMessagesForAPI(messages, tools)
 
-
-    // 5. Filter tools (similar to Anthropic path)
     let filteredTools = tools
-
 
     // 6. Build tool schemas with deferLoading flag
     const toolSchemas = await Promise.all(

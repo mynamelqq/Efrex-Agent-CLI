@@ -66,7 +66,7 @@ export function resolveGrokModel(anthropicModel: string): string {
     const grokOverride = process.env[grokEnvVar]
     if (grokOverride) return grokOverride
 
-    const anthropicEnvVar = `ANTHROPIC_DEFAULT_${family.toUpperCase()}_MODEL`
+    const anthropicEnvVar = `DEFAULT_${family.toUpperCase()}_MODEL`
     const anthropicOverride = process.env[anthropicEnvVar]
     if (anthropicOverride) return anthropicOverride
   }

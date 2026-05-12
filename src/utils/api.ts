@@ -64,7 +64,7 @@ export async function toolToAPISchema(
   const schema: BetaTool = {
     name: tool.name,
     description: tool.searchHint || tool.name,
-    input_schema:
+    input_schema://针对结构化输出工具而言
       'inputJSONSchema' in tool &&
       typeof tool.inputJSONSchema === 'object' &&
       tool.inputJSONSchema !== null
@@ -80,7 +80,7 @@ export async function toolToAPISchema(
 }
 
 // TODO: Generalize this to all tools
-export function normalizeToolInput<T extends Tool>(
+export function normalizeToolInput<T extends Tool>(//FileWriteTool.name FileEditTool.name
   tool: T,
   input: z.infer<T['inputSchema']>,
 ): z.infer<T['inputSchema']> {

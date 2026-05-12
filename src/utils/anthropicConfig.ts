@@ -18,9 +18,9 @@ function firstDefined(...values: Array<string | undefined>): string | undefined 
 export function getAnthropicApiKey(): string | undefined {
   const env = getSettingsEnv()
   return firstDefined(
-    process.env.ANTHROPIC_AUTH_TOKEN,
+    process.env.AUTH_TOKEN,
     process.env.OPENAI_API_KEY,
-    env?.ANTHROPIC_AUTH_TOKEN,
+    env?.AUTH_TOKEN,
     env?.AUTH_TOKEN,
   )
 }
@@ -31,13 +31,13 @@ export function getSettingsEnvValue(key: string): string | undefined {
 
 export function getAnthropicBaseURL(): string | undefined {
   const env = getSettingsEnv()
-  return firstDefined(process.env.ANTHROPIC_BASE_URL, env?.ANTHROPIC_BASE_URL)
+  return firstDefined(process.env.BASE_URL, env?.BASE_URL)
 }
 
 export function getAnthropicModel(defaultModel = 'kimi-k2.6'): string {
   const env = getSettingsEnv()
   return (
-    firstDefined(process.env.ANTHROPIC_MODEL, env?.ANTHROPIC_MODEL) ??
+    firstDefined(process.env.MODEL, env?.MODEL) ??
     defaultModel
   )
 }

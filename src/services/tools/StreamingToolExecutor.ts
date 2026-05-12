@@ -8,15 +8,13 @@ import {
 import { createChildAbortController } from 'src/utils/abortController.js'
 import { createUserMessage } from 'src/utils/messages.js'
 import { runToolUse } from './toolExecution.js'
+import { type MessageUpdate } from './toolOrchestration.js'
+import { loggerFor } from 'node_modules/openai/internal/utils/log.mjs'
+import { logError } from 'src/utils/logger.js'
 
-type MessageUpdate = {
-  message?: Message
-  newContext?: ToolUseContext
-}
+type ToolStatus = 'queued' | 'executing' | 'completed' | 'yielded'//排队、执行中、已完成、已产出结果
 
-type ToolStatus = 'queued' | 'executing' | 'completed' | 'yielded'
-
-type TrackedTool = {
+type TrackedTool = {//跟踪工具的状态和结果
   id: string
   block: ToolUseBlock
   assistantMessage: AssistantMessage
@@ -52,7 +50,7 @@ export class StreamingToolExecutor {
 
   addTool(block: ToolUseBlock, assistantMessage: AssistantMessage): void {
     const toolDefinition = findToolByName(this.toolDefinitions, block.name)
-    if (!toolDefinition) {
+    if (!toolDefinition) {//如果工具定义不存在，直接将错误结果添加到工具列表中，并标记为已完成
       this.tools.push({
         id: block.id,
         block,
@@ -79,6 +77,9 @@ export class StreamingToolExecutor {
     }
 
     const parsedInput = toolDefinition.inputSchema.safeParse(block.input)
+    if(parsedInput.success===false){
+      logError(`Error parsing input for tool '${block.name}': ${parsedInput.error.message}: ${JSON.stringify(block.input)}`)
+    }
     const isConcurrencySafe = parsedInput.success
       ? Boolean(toolDefinition.isConcurrencySafe(parsedInput.data))
       : false
@@ -102,13 +103,22 @@ export class StreamingToolExecutor {
       (isConcurrencySafe && executingTools.every(t => t.isConcurrencySafe))
     )
   }
-
+  private getToolDescription(tool: TrackedTool): string {
+    const input = tool.block.input as Record<string, unknown> | undefined
+    const summary = input?.command ?? input?.file_path ?? input?.pattern ?? ''
+    if (typeof summary === 'string' && summary.length > 0) {
+      const truncated =
+        summary.length > 40 ? summary.slice(0, 40) + '\u2026' : summary
+      return `${tool.block.name}(${truncated})`
+    }
+    return tool.block.name
+  }
   private async processQueue(): Promise<void> {
-    for (const tool of this.tools) {
+    for (const tool of this.tools) {//遍历工具列表，如果工具状态不是排队中，跳过
       if (tool.status !== 'queued') continue
 
       if (this.canExecuteTool(tool.isConcurrencySafe)) {
-        await this.executeTool(tool)
+        await this.executeTool(tool)//执行工具
       } else if (!tool.isConcurrencySafe) {
         break
       }
@@ -116,7 +126,7 @@ export class StreamingToolExecutor {
   }
 
   private async executeTool(tool: TrackedTool): Promise<void> {
-    tool.status = 'executing'
+    tool.status = 'executing'//标记工具为执行中
     const messages: Message[] = []
     const contextModifiers: Array<(context: ToolUseContext) => ToolUseContext> =
       []
@@ -129,7 +139,7 @@ export class StreamingToolExecutor {
       }
 
       const toolAbortController = createChildAbortController(
-        this.siblingAbortController,
+        this.siblingAbortController,//创建一个新的AbortController，用于控制工具执行的取消
       )
 
       const generator = runToolUse(tool.block, tool.assistantMessage, {

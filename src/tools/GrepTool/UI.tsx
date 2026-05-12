@@ -1,6 +1,70 @@
 
 import { truncate } from '../../utils/format.js';
+import {Box} from "src/ink.js"
+import { Text } from 'src/ink.js';
 import { TOOL_SUMMARY_MAX_LENGTH } from '../../constants/toolLimits.js';
+import { getDisplayPath } from 'src/utils/file.js';
+import { MessageResponse } from 'src/components/MessageResponse.js';
+import type { ProgressMessage } from 'src/package/message.js';
+import type { ToolProgressData } from 'src/Tool.js';
+// Reusable component for search result summaries
+function SearchResultSummary({
+  count,
+  countLabel,
+  secondaryCount,
+  secondaryLabel,
+  content,
+  verbose,
+}: {
+  count: number;
+  countLabel: string;
+  secondaryCount?: number;
+  secondaryLabel?: string;
+  content?: string;
+  verbose: boolean;
+}): React.ReactNode {
+  const primaryText = (
+    <Text>
+      Found <Text bold>{count} </Text>
+      {count === 0 || count > 1 ? countLabel : countLabel.slice(0, -1)}
+    </Text>
+  );
+
+  const secondaryText =
+    secondaryCount !== undefined && secondaryLabel ? (
+      <Text>
+        {' '}
+        across <Text bold>{secondaryCount} </Text>
+        {secondaryCount === 0 || secondaryCount > 1 ? secondaryLabel : secondaryLabel.slice(0, -1)}
+      </Text>
+    ) : null;
+
+  if (verbose) {
+    return (
+      <Box flexDirection="column">
+        <Box flexDirection="row">
+          <Text>
+            <Text dimColor>&nbsp;&nbsp;⎿ &nbsp;</Text>
+            {primaryText}
+            {secondaryText}
+          </Text>
+        </Box>
+        <Box marginLeft={5}>
+          <Text>{content}</Text>
+        </Box>
+      </Box>
+    );
+  }
+
+  return (
+    <MessageResponse height={1}>
+      <Text>
+        {primaryText}
+        {secondaryText} 
+      </Text>
+    </MessageResponse>
+  );
+}
 export function getToolUseSummary(input: Partial<{
   pattern: string;
   path?: string;
@@ -13,4 +77,54 @@ export function getToolUseSummary(input: Partial<{
     return null;
   }
   return truncate(input.pattern, TOOL_SUMMARY_MAX_LENGTH);
+}
+type Output = {
+  mode?: 'content' | 'files_with_matches' | 'count';
+  numFiles: number;
+  filenames: string[];
+  content?: string;
+  numLines?: number; // For content mode
+  numMatches?: number; // For count mode
+};
+
+export function renderToolUseMessage(
+  { pattern, path }: Partial<{ pattern: string; path?: string }>,
+  { verbose }: { verbose: boolean },
+): React.ReactNode {
+  if (!pattern) {
+    return null;
+  }
+  const parts = [`pattern: "${pattern}"`];
+
+  if (path) {
+    parts.push(`path: "${verbose ? path : getDisplayPath(path)}"`);
+  }
+
+  return parts.join(', ');
+}
+export function renderToolResultMessage(
+  { mode = 'files_with_matches', filenames, numFiles, content, numLines, numMatches }: Output,
+  _progressMessagesForMessage: ProgressMessage<ToolProgressData>[],
+  { verbose }: { verbose: boolean },
+): React.ReactNode {
+  if (mode === 'content') {
+    return <SearchResultSummary count={numLines ?? 0} countLabel="lines" content={content} verbose={verbose} />;
+  }
+
+  if (mode === 'count') {
+    return (
+      <SearchResultSummary
+        count={numMatches ?? 0}
+        countLabel="matches"
+        secondaryCount={numFiles}
+        secondaryLabel="files"
+        content={content}
+        verbose={verbose}
+      />
+    );
+  }
+
+  // files_with_matches mode
+  const fileListContent = filenames.map(filename => filename).join('\n');
+  return <SearchResultSummary count={numFiles} countLabel="files" content={fileListContent} verbose={verbose} />;
 }

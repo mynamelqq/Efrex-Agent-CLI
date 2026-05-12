@@ -5,6 +5,7 @@ import { appendFileSync } from 'node:fs';
 import { existsSync,mkdirSync} from 'node:fs';
 import {createReadStream}from "node:fs";
 import  readline from 'readline';
+import pkg from '../package.json';
 import { appendFile } from 'fs/promises';
 export function trustFoler(){
     ensureDirSync();
@@ -13,6 +14,8 @@ export function trustFoler(){
         mkdirSync(dirPath, { recursive: true });
     }
 }
+export const CLI_APP_NAME = pkg.name;
+export const CLI_APP_VERSION = pkg.version;
 function ensureDirSync(): void {
     const projectFolder=join(homedir(),".efrex","projects","")
     if(!existsSync(projectFolder)){
@@ -34,10 +37,8 @@ function pathToDisplayNameSimple(filePath: string): string {
 }
 export interface PastedContent {
   id: number;
-  type: 'text' | 'image';
-  content?: string;
-  sourcePath?: string;
-  mediaType?: string;
+  type: 'text';  // 如果有其他类型可扩展，例如 'image', 'file' 等
+  content: string;
 }
 export interface SessionHistory {
   display: string;          // 展示文本，如 "[Pasted text #1 +72 lines]"

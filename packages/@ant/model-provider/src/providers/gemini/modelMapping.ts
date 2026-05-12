@@ -23,7 +23,7 @@ export function resolveGeminiModel(anthropicModel: string): string {
     return geminiModel
   }
 
-  const sharedEnvVar = `ANTHROPIC_DEFAULT_${family.toUpperCase()}_MODEL`
+  const sharedEnvVar = `DEFAULT_${family.toUpperCase()}_MODEL`
   const resolvedModel = process.env[sharedEnvVar]
   if (resolvedModel) {
     return resolvedModel

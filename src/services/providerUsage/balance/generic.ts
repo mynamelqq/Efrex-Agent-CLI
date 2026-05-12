@@ -6,7 +6,7 @@ import type { BalanceProvider } from './types.js'
  *
  * Environment:
  *   CLAUDE_CODE_BALANCE_URL        — GET endpoint returning JSON (required)
- *   CLAUDE_CODE_BALANCE_KEY        — optional Bearer token (falls back to OPENAI_API_KEY / ANTHROPIC_API_KEY)
+ *   CLAUDE_CODE_BALANCE_KEY        — optional Bearer token (falls back to OPENAI_API_KEY / API_KEY)
  *   CLAUDE_CODE_BALANCE_JSON_PATH  — dot path into the JSON for the remaining number (default: "balance")
  *                                    array indices allowed, e.g. "data.0.credit"
  *   CLAUDE_CODE_BALANCE_CURRENCY   — display currency label (default: "USD")
@@ -72,13 +72,13 @@ export const genericBalanceProvider: BalanceProvider = {
       return null
     }
 
-    // Fallback chain: BALANCE_KEY → OPENAI_API_KEY → ANTHROPIC_API_KEY.
+    // Fallback chain: BALANCE_KEY → OPENAI_API_KEY → API_KEY.
     // WARNING: fallback keys are sent to CLAUDE_CODE_BALANCE_URL as Bearer token.
     // If that URL is untrusted, your provider key leaks. Prefer CLAUDE_CODE_BALANCE_KEY.
     const key =
       process.env.CLAUDE_CODE_BALANCE_KEY ||
       process.env.OPENAI_API_KEY ||
-      process.env.ANTHROPIC_API_KEY ||
+      process.env.API_KEY ||
       ''
     const path = process.env.CLAUDE_CODE_BALANCE_JSON_PATH || 'balance'
     const currency = process.env.CLAUDE_CODE_BALANCE_CURRENCY || 'USD'

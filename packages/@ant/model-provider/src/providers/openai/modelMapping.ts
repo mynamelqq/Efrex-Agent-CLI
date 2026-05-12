@@ -1,6 +1,6 @@
 /**
  * Default mapping from Anthropic model names to OpenAI model names.
- * Used only when ANTHROPIC_DEFAULT_*_MODEL env vars are not set.
+ * Used only when DEFAULT_*_MODEL env vars are not set.
  */
 const DEFAULT_MODEL_MAP: Record<string, string> = {
   'claude-sonnet-4-20250514': 'gpt-4o',
@@ -29,7 +29,7 @@ function getModelFamily(model: string): 'haiku' | 'sonnet' | 'opus' | null {
  * Priority:
  * 1. OPENAI_MODEL env var (override all)
  * 2. OPENAI_DEFAULT_{FAMILY}_MODEL env var (e.g. OPENAI_DEFAULT_SONNET_MODEL)
- * 3. ANTHROPIC_DEFAULT_{FAMILY}_MODEL env var (backward compatibility)
+ * 3. DEFAULT_{FAMILY}_MODEL env var (backward compatibility)
  * 4. DEFAULT_MODEL_MAP lookup
  * 5. Pass through original model name
  */
@@ -46,7 +46,7 @@ export function resolveOpenAIModel(anthropicModel: string): string {
     const openaiOverride = process.env[openaiEnvVar]
     if (openaiOverride) return openaiOverride
 
-    const anthropicEnvVar = `ANTHROPIC_DEFAULT_${family.toUpperCase()}_MODEL`
+    const anthropicEnvVar = `DEFAULT_${family.toUpperCase()}_MODEL`
     const anthropicOverride = process.env[anthropicEnvVar]
     if (anthropicOverride) return anthropicOverride
   }

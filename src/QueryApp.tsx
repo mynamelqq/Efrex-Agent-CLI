@@ -3,24 +3,37 @@ import chalk from 'chalk'
 import { randomUUID } from 'node:crypto'
 import { Box, Text, useApp, useInput, useWindowSize } from './ink.js'
 import { stringWidth } from './ink/stringWidth.js'
+import { buildEffectiveSystemPrompt } from './utils/systemPrompt.js'
+import type { ScrollBoxHandle } from './ink/components/ScrollBox.js'
 import PromptInput from './components/PromptInput.js'
 import MessageViewport from './components/MessageViewport.js'
 import { parseCommand } from './commands.js'
-import type { Message } from './package/message.js'
-import { query } from './query.js'
-import type { ToolUseContext } from './Tool.js'
+import type { Message as MessageType } from './package/message.js'
+import { findToolByName, type Tool, type ToolUseContext } from './Tool.js'
 import { getAllBaseTools } from './tools.js'
-import { createUserMessage } from './utils/messages.js'
+import { query } from './query.js'
+import { handlePromptSubmit } from './utils/handlePromptSubmit.js'
 import { getAnthropicModel, getEffortLevel } from './utils/anthropicConfig.js'
 import { FileStateCache } from './utils/fileStateCache.js'
+import { getSystemPrompt } from './constants/prompts.js'
+import { getUserContext } from './context.js'
 import { getDefaultAppState, type AppState } from './state/AppStateStore.js'
-
+import { ThinkingConfig } from './queryEngine.js'
+import { handleMessageFromStream } from './utils/handleMessageFromStream.js'
+import { renderToolResultContent, renderToolUseContent } from './components/messages/renderToolContent.js'
+import { APP_VERSION, CLI_APP_VERSION } from 'utils/load.js'
 type ViewportMessage = {
   id: number
   role: 'user' | 'assistant' | 'tool'
   text: string
+  content?: React.ReactNode
   toolPhase?: 'call' | 'done' | 'error'
   animatePrefix?: 'blink'
+}
+
+type ToolUseRenderItem = {
+  text: string
+  content: React.ReactNode
 }
 
 type StreamingAssistantState = {
@@ -36,18 +49,16 @@ const FOOTER_ROWS = 2
 const MIN_MESSAGE_VIEWPORT_ROWS = 1
 const MAX_PROMPT_INPUT_ROWS = 6
 const COMMAND_SELECTOR_LIMIT = 5
+const APP_BRAND = 'efrex code'
+const APP_VERSION = CLI_APP_VERSION
 
 const commands = [
   { label: '/model                         Change Your Model', value: '/model' },
   { label: '/help                          Show help and available commands', value: '/help' },
 ]
 
-const DEFAULT_SYSTEM_PROMPT = [
-  'You are Efrex, a terminal coding assistant.',
-  'Be concise, accurate, and use available tools when needed. Now your current work path is F:\\ChatUI-Cli',
-].join('\n')
 
-const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+
 const GLIMMER_PAD_COLUMNS = 10
 const GLIMMER_WIDTH_COLUMNS = 8
 const statusSegmenter =
@@ -151,33 +162,110 @@ function truncateDisplay(text: string, width: number): string {
   return `${text.slice(0, Math.max(0, width - 1))}…`
 }
 
+function fitDisplay(text: string, width: number): string {
+  if (stringWidth(text) <= width) {
+    return text
+  }
+
+  let next = ''
+  for (const char of Array.from(text)) {
+    if (stringWidth(`${next}${char}…`) > width) {
+      break
+    }
+    next += char
+  }
+
+  return `${next}…`
+}
+
+function padDisplay(text: string, width: number): string {
+  return `${text}${' '.repeat(Math.max(0, width - stringWidth(text)))}`
+}
+
+function centerDisplay(text: string, width: number): string {
+  const textWidth = stringWidth(text)
+  const leftPad = Math.max(0, Math.floor((width - textWidth) / 2))
+  return `${' '.repeat(leftPad)}${text}${' '.repeat(Math.max(0, width - textWidth - leftPad))}`
+}
+
 function getTranscriptHeaderLines({
   cwd,
   model,
   effort,
   width,
+  welcome,
 }: {
   cwd: string
   model: string
   effort: string
   width: number
+  welcome: boolean
 }): string[] {
   const boxWidth = Math.max(12, width)
   const innerWidth = Math.max(1, boxWidth - 2)
-  const border = '─'.repeat(innerWidth)
-  const title = `${chalk.blueBright.bold('Efrex')} ${chalk.gray('query main UI')}`
-  const meta = chalk.gray(
-    truncateDisplay(`${cwd}  ·  model: ${model}  ·  effort: ${effort}`, innerWidth),
-  )
+  const meta = fitDisplay(`${cwd}  ·  model: ${model}  ·  effort: ${effort}`, innerWidth)
+  const brand = `${chalk.cyanBright.bold('»')} ${chalk.cyanBright.bold(APP_BRAND)} ${chalk.gray(APP_VERSION)}`
+  const brandPlain = `» ${APP_BRAND} ${APP_VERSION}`
+  const rule = chalk.gray(` ${'─'.repeat(Math.max(0, boxWidth - stringWidth(brandPlain) - 2))}`)
 
-  const row = (content: string) =>
-    `${chalk.blue('│')}${content}${' '.repeat(Math.max(0, innerWidth - content.length))}${chalk.blue('│')}`
+  if (!welcome || boxWidth < 72) {
+    return [
+      `${brand}${rule}`,
+      chalk.gray(fitDisplay(meta, boxWidth)),
+      '',
+    ]
+  }
+
+  const leftWidth = Math.max(28, Math.min(52, Math.floor(innerWidth * 0.42)))
+  const rightWidth = Math.max(20, innerWidth - leftWidth - 1)
+  const top = `${chalk.blue(`╭${'─'.repeat(leftWidth)}`)}${chalk.green(`┬${'─'.repeat(rightWidth)}╮`)}`
+  const bottom = `${chalk.blue(`╰${'─'.repeat(leftWidth)}`)}${chalk.green(`┴${'─'.repeat(rightWidth)}╯`)}`
+  const row = (
+    leftPlain: string,
+    leftStyled: string,
+    rightPlain: string,
+    rightStyled: string,
+  ) =>
+    `${chalk.blue('│')}${leftStyled}${' '.repeat(Math.max(0, leftWidth - stringWidth(leftPlain)))}${chalk.green('│')}${rightStyled}${' '.repeat(Math.max(0, rightWidth - stringWidth(rightPlain)))}${chalk.green('│')}`
+  const left = (text: string, style: (value: string) => string = value => value) => {
+    const plain = centerDisplay(fitDisplay(text, leftWidth), leftWidth)
+    return { plain, styled: style(plain) }
+  }
+  const right = (text: string, style: (value: string) => string = value => value) => {
+    const plain = padDisplay(fitDisplay(text, rightWidth), rightWidth)
+    return { plain, styled: style(plain) }
+  }
+  const makeRow = (
+    leftText: string,
+    rightText: string,
+    leftStyle: (value: string) => string = value => value,
+    rightStyle: (value: string) => string = value => value,
+  ) => {
+    const leftCell = left(leftText, leftStyle)
+    const rightCell = right(rightText, rightStyle)
+    return row(leftCell.plain, leftCell.styled, rightCell.plain, rightCell.styled)
+  }
+  const makeLeftInfoRow = (leftText: string, rightText: string) => {
+    const leftPlain = padDisplay(`  ${fitDisplay(leftText, Math.max(1, leftWidth - 4))}`, leftWidth)
+    const rightCell = right(rightText, value => chalk.gray(value))
+    return row(leftPlain, chalk.gray(leftPlain), rightCell.plain, rightCell.styled)
+  }
 
   return [
-    chalk.blue(`╭${border}╮`),
-    row(title),
-    row(meta),
-    chalk.blue(`╰${border}╯`),
+    `${brand}${rule}`,
+    top,
+    makeRow('efrex code', '✦  Getting Started', value => chalk.hex('#8f7cff').bold(value), value => chalk.greenBright.bold(value)),
+    makeRow('AI Coding Assistant', 'Ask anything, edit code, run commands.', value => chalk.gray(value), value => chalk.gray(value)),
+    makeRow('Power your ideas with code.', 'Let efrex code handle the rest.', value => chalk.gray(value), value => chalk.gray(value)),
+    makeRow('     ╭──────╮', 'Tips', value => chalk.blueBright(value), value => chalk.yellowBright.bold(`${value}`)),
+    makeRow('     │ •  • │', '────────────────────────────────────────', value => chalk.blueBright(value), value => chalk.green(value)),
+    makeRow('     │  ──  │', '', value => chalk.blueBright(value)),
+    makeRow('     ╰─┬──┬─╯', '→  Ask questions about your codebase', value => chalk.blueBright(value), value => chalk.gray(value.replace('→', chalk.yellowBright('→')))),
+    makeRow('      ╰──╯', '', value => chalk.blueBright(value)),
+    makeRow(`model: ${model} | effort: ${effort} `, '→  Generate or refactor code', value => chalk.gray(value), value => chalk.gray(value.replace('→', chalk.yellowBright('→')))),
+    makeRow(`${cwd}`, '→  Run shell commands and analyze results', value => value, value => chalk.gray(value.replace('→', chalk.yellowBright('→')))),
+    // makeRow('Type /help to see available commands', '→  Use natural language to automate tasks', value => chalk.gray(value.replace('/help', chalk.cyanBright('/help'))), value => chalk.gray(value.replace('→', chalk.yellowBright('→')))),
+    bottom,
     '',
   ]
 }
@@ -238,6 +326,92 @@ function extractToolUseLabels(content: unknown): string[] {
     .filter((value): value is string => value !== null)
 }
 
+function renderNodeToPlainText(node: React.ReactNode): string {
+  if (node === null || node === undefined || typeof node === 'boolean') {
+    return ''
+  }
+
+  if (typeof node === 'string' || typeof node === 'number') {
+    return String(node)
+  }
+
+  if (Array.isArray(node)) {
+    return node.map(child => renderNodeToPlainText(child)).join('')
+  }
+
+  if (React.isValidElement(node)) {
+    const props = node.props as { children?: React.ReactNode }
+    return renderNodeToPlainText(props.children)
+  }
+
+  return ''
+}
+
+function getToolResultBlock(message: MessageType): {
+  toolUseId: string
+  isError: boolean
+} | null {
+  if (!Array.isArray(message.message?.content)) {
+    return null
+  }
+
+  const block = message.message.content.find((contentBlock: unknown) => {
+    if (!contentBlock || typeof contentBlock !== 'object') {
+      return false
+    }
+
+    return (contentBlock as Record<string, unknown>).type === 'tool_result'
+  }) as { tool_use_id?: unknown; is_error?: unknown } | undefined
+
+  if (!block || typeof block.tool_use_id !== 'string') {
+    return null
+  }
+
+  return {
+    toolUseId: block.tool_use_id,
+    isError: Boolean(block.is_error),
+  }
+}
+
+function findAssistantToolUse(
+  messages: MessageType[],
+  message: MessageType,
+  toolUseId: string,
+): { name: string; input: unknown } | null {
+  const sourceAssistantUUID =
+    typeof message.sourceToolAssistantUUID === 'string'
+      ? message.sourceToolAssistantUUID
+      : null
+
+  const candidateMessages = sourceAssistantUUID
+    ? messages.filter(candidate => String(candidate.uuid) === sourceAssistantUUID)
+    : messages
+
+  for (const candidate of candidateMessages) {
+    if (!Array.isArray(candidate.message?.content)) {
+      continue
+    }
+
+    const toolUse = candidate.message.content.find((block: unknown) => {
+      if (!block || typeof block !== 'object') {
+        return false
+      }
+
+      const typedBlock = block as Record<string, unknown>
+      return typedBlock.type === 'tool_use' && typedBlock.id === toolUseId
+    }) as { name?: unknown; input?: unknown } | undefined
+
+    if (toolUse && typeof toolUse.name === 'string') {
+      return {
+        name: toolUse.name,
+        input: toolUse.input,
+      }
+    }
+  }
+
+  return null
+}
+
 function appendUnique(values: string[], nextValue: string): string[] {
   return values.includes(nextValue) ? values : [...values, nextValue]
 }
@@ -264,7 +438,7 @@ function buildStreamingPlaceholderText(
   return sections.join('\n\n')
 }
 
-function isToolResultUserMessage(message: Message): boolean {
+function isToolResultUserMessage(message: MessageType): boolean {
   if (message.type !== 'user' || !Array.isArray(message.message?.content)) {
     return false
   }
@@ -278,7 +452,7 @@ function isToolResultUserMessage(message: Message): boolean {
   })
 }
 
-function extractToolResult(message: Message): {
+function extractToolResult(message: MessageType): {
   text: string
   phase: 'call' | 'done' | 'error'
 } {
@@ -286,7 +460,7 @@ function extractToolResult(message: Message): {
     return { text: '', phase: 'done' }
   }
 
-  const toolResult = message.message.content.find(block => {
+  const toolResult = message.message.content.find((block: unknown) => {
     if (!block || typeof block !== 'object') {
       return false
     }
@@ -309,9 +483,40 @@ function extractToolResult(message: Message): {
   }
 }
 
-function messageToViewport(message: Message, fallbackId: number): ViewportMessage | null {
+function messageToViewport(
+  message: MessageType,
+  fallbackId: number,
+  messages: MessageType[],
+  tools: readonly Tool[],
+): ViewportMessage | null {
   if (message.type === 'user') {
     if (isToolResultUserMessage(message)) {
+      const toolResultBlock = getToolResultBlock(message)
+      if (toolResultBlock && !toolResultBlock.isError) {
+        const toolUse = findAssistantToolUse(
+          messages,
+          message,
+          toolResultBlock.toolUseId,
+        )
+        const tool = toolUse ? findToolByName(tools, toolUse.name) : undefined
+        const renderedContent = renderToolResultContent(
+          tool,
+          message.toolUseResult,
+          toolUse?.input,
+          tools,
+        )
+
+        if (renderedContent) {
+          return {
+            id: fallbackId,
+            role: 'tool',
+            text: renderNodeToPlainText(renderedContent),
+            content: renderedContent,
+            toolPhase: 'done',
+          }
+        }
+      }
+
       const { text, phase } = extractToolResult(message)
       return text
         ? {
@@ -343,12 +548,53 @@ function messageToViewport(message: Message, fallbackId: number): ViewportMessag
       }
     }
 
-    const toolUseLabels = extractToolUseLabels(message.message?.content)
-    return toolUseLabels.length > 0
+    const toolUseItems: ToolUseRenderItem[] = Array.isArray(message.message?.content)
+      ? message.message.content
+          .map((block): ToolUseRenderItem | null => {
+            if (!block || typeof block !== 'object') {
+              return null
+            }
+
+            const typedBlock = block as Record<string, unknown>
+            if (typedBlock.type !== 'tool_use') {
+              return null
+            }
+
+            const toolName =
+              typeof typedBlock.name === 'string'
+                ? typedBlock.name
+                : 'unknown_tool'
+            const tool = findToolByName(tools, toolName)
+            const content = renderToolUseContent(tool, typedBlock.input)
+            const text =
+              content === null
+                ? `调用工具 ${toolName}...`
+                : renderNodeToPlainText(content)
+            return {
+              text: text.trim() || `调用工具 ${toolName}...`,
+              content: content ?? <Text>{`调用工具 ${toolName}...`}</Text>,
+            }
+          })
+          .filter((value): value is ToolUseRenderItem => value !== null)
+      : extractToolUseLabels(message.message?.content).map(label => ({
+          text: label,
+          content: <Text>{label}</Text>,
+        }))
+
+    return toolUseItems.length > 0
       ? {
           id: fallbackId,
           role: 'tool',
-          text: toolUseLabels.join('\n'),
+          text: toolUseItems.map(item => item.text).join('\n'),
+          content: (
+            <Box flexDirection="column">
+              {toolUseItems.map((item, index) => (
+                <Box key={index} flexDirection="column">
+                  {item.content}
+                </Box>
+              ))}
+            </Box>
+          ),
           toolPhase: 'call',
         }
       : null
@@ -381,8 +627,48 @@ function messageToViewport(message: Message, fallbackId: number): ViewportMessag
 
   return null
 }
-
-export default function QueryApp() {
+export type Props = {
+  debug: boolean;
+  initialTools: Tool[];
+  // Initial messages to populate the REPL with
+  initialMessages?: MessageType[];
+  // Content-replacement records from a resumed session's transcript — used to
+  // Initial agent context for session resume (name/color set via /rename or /color)
+  initialAgentName?: string;
+  autoConnectIdeFlag?: boolean;
+  strictMcpConfig?: boolean;
+  systemPrompt?: string;
+  appendSystemPrompt?: string;
+  // Optional callback invoked before query execution
+  // Called after user message is added to conversation but before API call
+  // Return false to prevent query execution
+  onBeforeQuery?: (input: string, newMessages: MessageType[]) => Promise<boolean>;
+  // Optional callback when a turn completes (model finishes responding)
+  onTurnComplete?: (messages: MessageType[]) => void | Promise<void>;
+  // When true, disables REPL input (hides prompt and prevents message selector)
+  disabled?: boolean;
+  // When true, disables all slash commands
+  disableSlashCommands?: boolean;
+  // Task list id: when set, enables tasks mode that watches a task list and auto-processes tasks.
+  taskListId?: string;
+  thinkingConfig: ThinkingConfig;
+};
+export default function QueryApp(
+  {
+  debug,
+  initialMessages,
+  initialTools,
+  strictMcpConfig = false,
+  systemPrompt: customSystemPrompt,
+  appendSystemPrompt,
+  onBeforeQuery,
+  onTurnComplete,
+  disabled = false,
+  disableSlashCommands = false,
+  taskListId,
+  thinkingConfig
+}: Props
+) {
   const { exit } = useApp()
   const { columns, rows } = useWindowSize()
   const [input, setInput] = useState('')
@@ -396,7 +682,7 @@ export default function QueryApp() {
     text: '',
     pendingToolCalls: [],
   })
-  const [messages, rawSetMessages] = useState<Message[]>([])
+  const [messages, rawSetMessages] = useState<MessageType[]>([])
   const [showCommandSelector, setShowCommandSelector] = useState(false)
   const [filteredCommands, setFilteredCommands] = useState(commands)
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
@@ -407,10 +693,14 @@ export default function QueryApp() {
 
   const messagesRef = useRef(messages)
   const appStateRef = useRef(appState)
-  const abortControllerRef = useRef(new AbortController())
+  const [abortController, setAbortController] = useState<AbortController | null>(null)
+  // 始终指向当前中止控制器的 Ref，用于在异步回调中读取最新 controller。
+  const abortControllerRef = useRef<AbortController | null>(null)
+  abortControllerRef.current = abortController
   const readFileStateRef = useRef(new FileStateCache(500, 50 * 1024 * 1024))
   const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const nextPlaceholderIdRef = useRef(1)
+  const scrollRef = useRef<ScrollBoxHandle | null>(null)
   const [animationTick, setAnimationTick] = useState(0)
 
   useEffect(() => {
@@ -426,17 +716,13 @@ export default function QueryApp() {
     return () => clearInterval(timer)
   }, [loading])
 
-  const spinnerFrame =
-    SPINNER_FRAMES[Math.floor(animationTick / 2) % SPINNER_FRAMES.length] ??
-    SPINNER_FRAMES[0]
   const blinkVisible = Math.floor(animationTick / 6) % 2 === 0
 
-  const setMessages = useCallback((updater: React.SetStateAction<Message[]>) => {
-    rawSetMessages(prev => {
-      const next = typeof updater === 'function' ? updater(prev) : updater
-      messagesRef.current = next
-      return next
-    })
+  const setMessages = useCallback((updater: React.SetStateAction<MessageType[]>) => {
+    const next =
+      typeof updater === 'function' ? updater(messagesRef.current) : updater
+    messagesRef.current = next
+    rawSetMessages(next)
   }, [])
 
   const setAppState = useCallback((updater: (prev: AppState) => AppState) => {
@@ -479,7 +765,8 @@ export default function QueryApp() {
 
   const handleCtrlC = useCallback(() => {
     if (loading) {
-      abortControllerRef.current.abort()
+      abortControllerRef.current?.abort('user-cancel')
+      setAbortController(null)
       return
     }
 
@@ -502,6 +789,10 @@ export default function QueryApp() {
       exitTimerRef.current = null
     }, 3000)
   }, [exit, exitHint, loading])
+
+  const repinScroll = useCallback(() => {
+    scrollRef.current?.scrollToBottom()
+  }, [])
 
   useInput((_, key) => {
     if (!showCommandSelector) {
@@ -529,7 +820,7 @@ export default function QueryApp() {
   }, { isActive: showCommandSelector })
 
   const buildToolUseContext = useCallback(
-    (nextMessages: Message[], abortController: AbortController): ToolUseContext => ({
+    (nextMessages: MessageType[], abortController: AbortController): ToolUseContext => ({
       options: {
         debug: false,
         verbose: false,
@@ -537,6 +828,8 @@ export default function QueryApp() {
         mainLoopModel: getCurrentModel(),
         tools: getAllBaseTools(),
         isNonInteractiveSession: false,
+        customSystemPrompt,
+        appendSystemPrompt
       },
       readFileState: readFileStateRef.current,
       abortController,
@@ -546,121 +839,176 @@ export default function QueryApp() {
       getAppState: () => appStateRef.current,
       setAppState,
       messages: nextMessages,
+
     }),
     [setAppState],
   )
 
-  const handleQueryEvent = useCallback((event: Message | { type: string; [key: string]: unknown }) => {
-    if (event.type === 'stream_event') {
-      const streamEvent =
-        event.event && typeof event.event === 'object'
-          ? (event.event as Record<string, unknown>)
-          : null
-
-      if (!streamEvent || typeof streamEvent.type !== 'string') {
-        return
-      }
-
-      if (streamEvent.type === 'message_start') {
+  const onQueryEvent = useCallback((event: MessageType | { type: string; [key: string]: unknown }) => {
+    handleMessageFromStream(event, {
+      onMessageStart: () => {
         setStreamingAssistant(prev => ({
           active: true,
           placeholderId: prev.placeholderId,
           text: '',
           pendingToolCalls: [],
         }))
-        return
-      }
-
-      if (streamEvent.type === 'content_block_start') {
-        const contentBlock =
-          streamEvent.content_block &&
-          typeof streamEvent.content_block === 'object'
-            ? (streamEvent.content_block as Record<string, unknown>)
-            : null
-
-        if (contentBlock?.type === 'text') {
-          setStreamingAssistant(prev => ({
-            ...prev,
-            active: true,
-          }))
-        }
-
-        if (contentBlock?.type === 'tool_use') {
-          const toolName =
-            typeof contentBlock.name === 'string'
-              ? contentBlock.name
-              : 'unknown_tool'
-          const toolLabel = `调用工具 ${toolName}...`
-          setStreamingAssistant(prev => ({
-            ...prev,
-            active: true,
-            pendingToolCalls: appendUnique(prev.pendingToolCalls, toolLabel),
-          }))
-        }
-        return
-      }
-
-      if (streamEvent.type === 'content_block_delta') {
-        const delta =
-          streamEvent.delta && typeof streamEvent.delta === 'object'
-            ? (streamEvent.delta as Record<string, unknown>)
-            : null
-
-        if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
-          setStreamingAssistant(prev => ({
-            ...prev,
-            active: true,
-            text: prev.text + delta.text,
-          }))
-        }
-        return
-      }
-
-      if (streamEvent.type === 'message_stop') {
+      },
+      onTextBlockStart: () => {
+        setStreamingAssistant(prev => ({
+          ...prev,
+          active: true,
+        }))
+      },
+      onToolUseBlockStart: toolName => {
+        const toolLabel = `调用工具 ${toolName}...`
+        setStreamingAssistant(prev => ({
+          ...prev,
+          active: true,
+          pendingToolCalls: appendUnique(prev.pendingToolCalls, toolLabel),
+        }))
+      },
+      onTextDelta: text => {
+        setStreamingAssistant(prev => ({
+          ...prev,
+          active: true,
+          text: prev.text + text,
+        }))
+      },
+      onMessageStop: () => {
         setStreamingAssistant(prev => ({
           ...prev,
           active: prev.text.length > 0 || prev.pendingToolCalls.length > 0,
         }))
-        return
-      }
+      },
+      onTombstone: tombstone => {
+        const targetUuid =
+          tombstone.message &&
+          typeof tombstone.message === 'object' &&
+          'uuid' in tombstone.message
+            ? String((tombstone.message as Record<string, unknown>).uuid ?? '')
+            : ''
 
-      return
-    }
+        if (!targetUuid) {
+          return
+        }
 
-    if (event.type === 'stream_request_start' || event.type === 'tool_use_summary') {
-      return
-    }
-
-    if (event.type === 'tombstone') {
-      const tombstone = event as Message
-      const targetUuid =
-        tombstone.message &&
-        typeof tombstone.message === 'object' &&
-        'uuid' in tombstone.message
-          ? String((tombstone.message as Record<string, unknown>).uuid ?? '')
-          : ''
-
-      if (!targetUuid) {
-        return
-      }
-
-      setMessages(prev =>
-        prev.filter(message => String(message.uuid) !== targetUuid),
-      )
-      return
-    }
-
-    const message = event as Message
-    if (message.type === 'assistant') {
-      setStreamingAssistant({
-        active: false,
-        placeholderId: null,
-        text: '',
-        pendingToolCalls: [],
-      })
-    }
-    setMessages(prev => [...prev, message])
+        setMessages(prev =>
+          prev.filter(message => String(message.uuid) !== targetUuid),
+        )
+      },
+      onMessage: message => {
+        if (message.type === 'assistant') {
+          setStreamingAssistant({
+            active: false,
+            placeholderId: null,
+            text: '',
+            pendingToolCalls: [],
+          })
+        }
+        setMessages(prev => [...prev, message])
+      },
+    })
   }, [setMessages])
+
+  const onQueryImpl = useCallback(async (
+    messagesIncludingNewMessages: MessageType[],
+    _newMessages: MessageType[],
+    abortController: AbortController,
+    shouldQuery: boolean,
+    _additionalAllowedTools: string[],
+    mainLoopModelParam: string,
+  ): Promise<void> => {
+    if (!shouldQuery) {
+      return
+    }
+    const toolUseContext =  buildToolUseContext(messagesIncludingNewMessages, abortController)
+    const {
+      tools: freshTools,
+    } = toolUseContext.options;
+    const [defaultSystemPrompt, baseUserContext] = await Promise.all([
+    getSystemPrompt(freshTools, mainLoopModelParam, 
+      ["F:\\pythonProject"]), getUserContext()]);//, getSystemContext()] systemContext
+    const userContext = {
+      ...baseUserContext}
+    const systemPrompt = buildEffectiveSystemPrompt({
+      toolUseContext,
+      customSystemPrompt,
+      defaultSystemPrompt,
+      appendSystemPrompt
+    });
+    
+    try {
+      for await (const event of query({
+        messages: messagesIncludingNewMessages,
+        systemPrompt: systemPrompt,
+        userContext: userContext,
+        systemContext: {},
+        toolUseContext:toolUseContext,
+        querySource: 'repl_main_thread',
+      })) {
+        onQueryEvent(event as MessageType)
+      }
+    
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        setAlertMessage('当前请求已取消')
+      } else {
+        setAlertMessage(error instanceof Error ? error.message : String(error))
+      }
+    }
+  }, [buildToolUseContext, onQueryEvent])
+
+  const onQuery = useCallback(async (
+    newMessages: MessageType[],
+    abortController: AbortController,
+    shouldQuery: boolean,
+    additionalAllowedTools: string[],
+    mainLoopModelParam: string,
+  ): Promise<void> => {
+    
+    setMessages(oldMessages => [...oldMessages, ...newMessages]);
+    setInput('')
+    setStreamingAssistant({
+      active: false,
+      placeholderId: nextPlaceholderIdRef.current++,
+      text: '',
+      pendingToolCalls: [],
+    })
+    setLoading(true)
+
+    try {
+      const latestMessages = messagesRef.current
+      await onQueryImpl(
+        latestMessages,
+        newMessages,
+        abortController,
+        shouldQuery,
+        additionalAllowedTools,
+        mainLoopModelParam,
+      )
+    } finally {
+      setLoading(false)
+      if (shouldQuery) {
+        setStreamingAssistant({
+          active: false,
+          placeholderId: null,
+          text: '',
+          pendingToolCalls: [],
+        })
+        setAppState(prev => ({ ...prev, mainLoopModel: getCurrentModel() }))
+      }
+    }
+  }, [onQueryImpl, setAppState, setMessages])
+
+  const submitPrompt = useCallback(async (text: string) => {
+    await handlePromptSubmit({
+      text,
+      setAbortController,
+      getCurrentModel,
+      onQuery,
+    })
+  }, [getCurrentModel, onQuery])
 
   const onSubmit = useCallback(async (value: string) => {
     const text = value.trim()
@@ -668,6 +1016,7 @@ export default function QueryApp() {
       return
     }
 
+    repinScroll()//滚回底部
     setAlertMessage(null)
 
     const commandResult = await parseCommand(text)
@@ -685,7 +1034,7 @@ export default function QueryApp() {
               role: 'assistant',
               content: commandResult.message,
             },
-          } as Message,
+          } as MessageType,
         ])
         setAppState(prev => ({ ...prev, mainLoopModel: getCurrentModel() }))
       }
@@ -693,51 +1042,8 @@ export default function QueryApp() {
       return
     }
 
-    const userMessage = createUserMessage({ content: text })
-    const nextMessages = [...messagesRef.current, userMessage]
-    setMessages(nextMessages)
-    setInput('')
-    setStreamingAssistant({
-      active: false,
-      placeholderId: nextPlaceholderIdRef.current++,
-      text: '',
-      pendingToolCalls: [],
-    })
-    setLoading(true)
-
-    const abortController = new AbortController()
-    abortControllerRef.current = abortController
-
-    try {
-      for await (const event of query({
-        messages: nextMessages,
-        systemPrompt: DEFAULT_SYSTEM_PROMPT,
-        userContext: {
-          cwd: process.cwd(),
-        },
-        systemContext: {},
-        toolUseContext: buildToolUseContext(nextMessages, abortController),
-        querySource: 'repl_main_thread',
-      })) {
-        handleQueryEvent(event as Message)
-      }
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        setAlertMessage('当前请求已取消')
-      } else {
-        setAlertMessage(error instanceof Error ? error.message : String(error))
-      }
-    } finally {
-      setLoading(false)
-      setStreamingAssistant({
-        active: false,
-        placeholderId: null,
-        text: '',
-        pendingToolCalls: [],
-      })
-      setAppState(prev => ({ ...prev, mainLoopModel: getCurrentModel() }))
-    }
-  }, [buildToolUseContext, handleQueryEvent, loading, setAppState, setMessages])
+    await submitPrompt(text)
+  }, [loading, repinScroll, setAppState, setMessages, submitPrompt])
 
   const terminalColumns = columns || process.stdout.columns || 80
   const terminalRows = rows || process.stdout.rows || 24
@@ -764,8 +1070,11 @@ export default function QueryApp() {
     terminalRows - fixedRows - promptInputRows - commandSelectorRows,
   )
 
+  const renderTools = initialTools.length > 0 ? initialTools : getAllBaseTools()
   const viewportMessages = messages
-    .map((message, index) => messageToViewport(message, index + 1))
+    .map((message, index) =>
+      messageToViewport(message, index + 1, messages, renderTools),
+    )
     .filter(Boolean) as ViewportMessage[]
 
   if (loading && streamingAssistant.placeholderId !== null) {
@@ -792,6 +1101,7 @@ export default function QueryApp() {
     model: getCurrentModel(),
     effort: getEffortLevel(),
     width: messageWidth,
+    welcome: messages.length === 0 && !loading,
   })
 
   const statusText = loading
@@ -801,18 +1111,22 @@ export default function QueryApp() {
         ? 'Efrex 正在请求工具...'
         : 'Efrex 正在思考...'
     : null
-
-  const statusPrefix = statusText
-    ? `${blinkVisible ? '•' : ' '} ${spinnerFrame}`
+  const statusMode = loading
+    ? streamingAssistant.pendingToolCalls.length > 0
+      ? 'requesting'
+      : 'default'
     : null
 
+  const statusPrefix = statusText ? (blinkVisible ? '•' : ' ') : null
+
   const statusMessageWidth = statusText ? stringWidth(statusText) : 0
+  const glimmerSpeed = statusMode === 'requesting' ? 50 : 200
+  const elapsedMs = animationTick * 50
   const glimmerCycleLength = statusMessageWidth + GLIMMER_PAD_COLUMNS * 2
-  const glimmerStep = glimmerCycleLength > 0 ? animationTick % glimmerCycleLength : 0
+  const cyclePosition =
+    glimmerCycleLength > 0 ? Math.floor(elapsedMs / glimmerSpeed) : 0
   const glimmerIndex = statusText
-    ? streamingAssistant.pendingToolCalls.length > 0
-      ? glimmerStep - GLIMMER_PAD_COLUMNS
-      : statusMessageWidth + GLIMMER_PAD_COLUMNS - glimmerStep
+    ? (cyclePosition % glimmerCycleLength) - GLIMMER_PAD_COLUMNS
     : 0
   const statusSegments = statusText
     ? getStatusLabelSegments(statusText, glimmerIndex)
@@ -826,6 +1140,7 @@ export default function QueryApp() {
           messages={viewportMessages}
           width={messageWidth}
           height={messageViewportRows}
+          scrollBoxRef={scrollRef}
           nativeScrollback
           alertMessage={alertMessage}
           statusLine={null}
@@ -895,4 +1210,3 @@ export default function QueryApp() {
     </Box>
   )
 }
-
