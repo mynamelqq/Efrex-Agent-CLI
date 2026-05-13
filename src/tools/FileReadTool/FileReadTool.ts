@@ -48,10 +48,12 @@ import { buildTool } from '../../Tool'
 import { getCwd } from '../../utils/cwd'
 import { FILE_READ_TOOL_NAME,DESCRIPTION } from './prompt'
 import {semanticNumber}from "../../utils/semanticNumber"
+import { renderToolUseMessage,renderToolResultMessage,renderToolUseErrorMessage} from './UI'
 import { expandPath } from '../../utils/path'
 import {PDF_MAX_PAGES_PER_READ,PDF_AT_MENTION_INLINE_THRESHOLD ,PDF_EXTRACT_SIZE_THRESHOLD} from '../../constants/ApiLimits'
 const inputSchema = lazySchema(() =>
   z.strictObject({
+
     file_path: z.string().describe('The absolute path to the file to read'),
     offset: semanticNumber(z.number().int().nonnegative().optional()).describe(//偏移量
       'The line number to start reading from. Only provide if the file is too large to read at once',
@@ -321,6 +323,9 @@ export const FileReadTool = buildTool({
   async description() {
     return DESCRIPTION
   },
+  renderToolResultMessage,
+  renderToolUseMessage,
+  renderToolUseErrorMessage,
   get inputSchema(): InputSchema {
     return inputSchema()
   },

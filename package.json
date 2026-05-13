@@ -28,13 +28,15 @@
 	],
 	"scripts": {
 		"format": "prettier --write \"./**/*.{js,json}\"",
-		"dev": "bun --hot src/index.tsx",
-		"build": "bun build index.tsx --format esm --outdir dist --clean",
-		"start": "bun dist/index.js"
+		"dev": "bun --hot ./index.tsx",
+		"build": "bun build ./index.tsx --target bun --format esm --outfile ./dist/index.js",
+		"start": "bun run ./dist/index.js",
+		"test": "bun test"
 	},
 	"dependencies": {
 		"@anthropic/ink": "workspace:*",
 		"@inkjs/ui": "^2.0.0",
+		"axios": "^1.16.0",
 		"chalk": "^5.6.2",
 		"cli-alerts": "^2.0.0",
 		"cli-handle-error": "^4.4.1",
@@ -52,7 +54,8 @@
 		"meow": "^14.1.0",
 		"openai": "^6.34.0",
 		"react": "^19.2.5",
-		"sharp": "^0.34.5"
+		"sharp": "^0.34.5",
+		"turndown": "^7.2.4"
 	},
 	"devDependencies": {
 		"@types/bun": "^1.3.13",

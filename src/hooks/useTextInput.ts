@@ -51,6 +51,7 @@ export default function useTextInput({
       }
 
       if (key.ctrl && textInput === 'c') {
+        event.stopImmediatePropagation();
         onCtrlC?.();
         return;
       }
@@ -63,6 +64,7 @@ export default function useTextInput({
         if (suspendSubmit) {
           return;
         }
+        event.stopImmediatePropagation();
         onSubmit?.(cursor.text);
         return;
       }
@@ -71,6 +73,7 @@ export default function useTextInput({
         if (suspendVerticalArrows) {
           return;
         }
+        event.stopImmediatePropagation();
         if (cursor.text.includes('\n')) {
           setCursor(previous => previous.up(width));
         } else {
@@ -83,6 +86,7 @@ export default function useTextInput({
         if (suspendVerticalArrows) {
           return;
         }
+        event.stopImmediatePropagation();
         if (cursor.text.includes('\n')) {
           setCursor(previous => previous.down(width));
         } else {
@@ -93,17 +97,20 @@ export default function useTextInput({
 
       if (key.ctrl) {
         if (textInput === 'p') {
+          event.stopImmediatePropagation();
           onHistoryPrev?.();
           return;
         }
 
         if (textInput === 'n') {
+          event.stopImmediatePropagation();
           onHistoryNext?.();
           return;
         }
 
         const nextCursor = handleCtrl(textInput, cursor, width);
         if (nextCursor !== cursor) {
+          event.stopImmediatePropagation();
           setCursor(nextCursor);
           if (nextCursor.text !== cursor.text) {
             onChange(nextCursor.text);
@@ -138,6 +145,7 @@ export default function useTextInput({
         return;
       }
 
+      event.stopImmediatePropagation();
       setCursor(nextCursor);
       if (nextCursor.text !== cursor.text) {
         onChange(nextCursor.text);

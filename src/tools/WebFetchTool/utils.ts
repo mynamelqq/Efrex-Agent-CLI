@@ -1,7 +1,7 @@
 import axios, { type AxiosResponse } from 'axios'
 import { LRUCache } from 'lru-cache'
-
-import { asSystemPrompt, querySmallModel } from '../../services/smallModel.js'
+import { asSystemPrompt } from 'src/prompt.js'
+import {  querySmallModel } from 'src/services/api/smallModel.js'
 import { AbortError } from '../../utils/error.js'
 import { getChatUIWebFetchUserAgent } from '../../utils/http.js'
 import { logError } from '../../utils/logger.js'
@@ -410,15 +410,8 @@ export async function getURLMarkdownContent(
         break
       case 'blocked':
         throw new DomainBlockedError(hostname)
-      case 'check_failed':
-        throw new DomainCheckFailedError(hostname)
-    }
-
-    if (process.env.USER_TYPE === 'ant') {
-      // logEvent('tengu_web_fetch_host', {
-      //   hostname:
-      //     hostname as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-      // })
+      // case 'check_failed':
+      //   throw new DomainCheckFailedError(hostname)
     }
   } catch (e) {
     if (

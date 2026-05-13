@@ -64,6 +64,21 @@ function makeAltScreenParkPatch(terminalRows: number) {
     content: cursorPosition(terminalRows, 1)
   });
 }
+
+function moveMainCursorToFrameCursor(from: { x: number; y: number }, frame: Frame): string {
+  const dx = frame.cursor.x - from.x;
+  const dy = frame.cursor.y - from.y;
+  if (dx === 0 && dy === 0) {
+    return '';
+  }
+
+  if (dy > 0 && frame.cursor.y >= frame.screen.height) {
+    const horizontal = frame.cursor.x > 0 ? cursorMove(frame.cursor.x, 0) : '';
+    return '\r' + '\n'.repeat(dy) + horizontal;
+  }
+
+  return cursorMove(dx, dy);
+}
 export type Options = {
   stdout: NodeJS.WriteStream;
   stdin: NodeJS.ReadStream;
@@ -674,12 +689,11 @@ export default class Ink {
       // elsewhere, move back before the diff runs. Alt-screen's CSI H
       // already resets to (0,0) so no preamble needed.
       if (parked !== null && !this.altScreenActive && hasDiff) {
-        const pdx = prevFrame.cursor.x - parked.x;
-        const pdy = prevFrame.cursor.y - parked.y;
-        if (pdx !== 0 || pdy !== 0) {
+        const restore = moveMainCursorToFrameCursor(parked, prevFrame);
+        if (restore.length > 0) {
           optimized.unshift({
             type: 'stdout',
-            content: cursorMove(pdx, pdy)
+            content: restore
           });
         }
       }
@@ -720,12 +734,11 @@ export default class Ink {
         // !hasDiff (e.g. accessibility mode where blur doesn't change
         // renderedValue since invert is identity).
         if (parked !== null && !this.altScreenActive && !hasDiff) {
-          const rdx = frame.cursor.x - parked.x;
-          const rdy = frame.cursor.y - parked.y;
-          if (rdx !== 0 || rdy !== 0) {
+          const restore = moveMainCursorToFrameCursor(parked, frame);
+          if (restore.length > 0) {
             optimized.push({
               type: 'stdout',
-              content: cursorMove(rdx, rdy)
+              content: restore
             });
           }
         }
@@ -1465,10 +1478,9 @@ export default class Ink {
     this.unsubscribeTTYHandlers?.();
 
     if (this.options.stdout.isTTY && this.displayCursor !== null && !this.altScreenActive) {
-      const dx = this.frontFrame.cursor.x - this.displayCursor.x;
-      const dy = this.frontFrame.cursor.y - this.displayCursor.y;
-      if (dx !== 0 || dy !== 0) {
-        writeSync(1, cursorMove(dx, dy));
+      const restore = moveMainCursorToFrameCursor(this.displayCursor, this.frontFrame);
+      if (restore.length > 0) {
+        writeSync(1, restore);
       }
       this.displayCursor = null;
     }

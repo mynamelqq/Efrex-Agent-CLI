@@ -19,6 +19,14 @@ export type MessageType =
   | 'tombstone'
   | 'grouped_tool_use'
   | 'collapsed_read_search'
+export type BetaTool = {
+  name: string
+  description: string
+  input_schema: Record<string, unknown>
+  defer_loading?: boolean
+}
+
+export type BetaToolUnion = BetaTool
 export interface ToolResultBlockParam {
   tool_use_id: string;
   type: 'tool_result';

@@ -4,10 +4,12 @@ import { Theme } from "./utils/theme";
 import { AppState } from './state/AppStateStore';
 import type { FileStateCache } from './utils/fileStateCache';
 import type { FileHistoryState } from './utils/fileHistory';
+import { ProgressMessage } from 'src/package/message';
 import type { UserMessage,AssistantMessage,AttachmentMessage,SystemMessage } from "src/package/message";
 import { Message } from 'src/package/message';
 import { ToolResultBlockParam } from 'src/package/message';
 import { ThinkingConfig } from './queryEngine';
+import { ThemeName } from 'packages/@ant/ink/src';
 export type ToolResult<T> =
 {
   type?: string,
@@ -63,6 +65,7 @@ export type AnyObject = z.ZodType<{ [key: string]: unknown }>
 export type Tool<
   Input extends AnyObject = AnyObject,
   Output = unknown,
+  P extends ToolProgressData = ToolProgressData,
 > = {
   name: string,
   searchHint:string,//搜索提示
@@ -87,7 +90,17 @@ export type Tool<
   mapToolResultToToolResultBlockParam(
     content: Output,
     toolUseID: string,
-  ): ToolResultBlockParam
+  ): ToolResultBlockParam,
+  renderToolUseErrorMessage?(
+    result: ToolResultBlockParam['content'],
+    options: {
+      progressMessagesForMessage: ProgressMessage<P>[]
+      tools: Tools
+      verbose: boolean
+      isTranscriptMode?: boolean
+    },
+  ): React.ReactNode
+
   renderToolResultMessage?(
     content: Output,
     progressMessagesForMessage: Message[],
@@ -101,8 +114,9 @@ export type Tool<
   ): ReactNode
   renderToolUseMessage?(
     input: Partial<z.infer<Input>>,
-    options: { theme: Theme; verbose: boolean; commands?: unknown[] },
+    options: { theme: ThemeName; verbose: boolean; commands?: unknown[] },
   ): ReactNode
+
 }
 export type ToolDef<
     Input extends AnyObject=AnyObject,

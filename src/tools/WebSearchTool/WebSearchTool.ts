@@ -1,9 +1,14 @@
 import { z } from 'zod/v4'
 import { buildTool, type ToolDef } from '../../Tool.js'
-import { truncate } from '../../utils/format.js'
 import { lazySchema } from '../../utils/lazySchema.js'
 import { getChatUICliUserAgent } from '../../utils/http.js'
 import { WEB_SEARCH_TOOL_NAME } from './prompt.js'
+import {
+  getToolUseSummary,
+  renderToolResultMessage,
+  renderToolUseErrorMessage,
+  renderToolUseMessage,
+} from './UI.js'
 
 const FIRECRAWL_SEARCH_URL =
   process.env.FIRECRAWL_SEARCH_URL ?? 'https://api.firecrawl.dev/v2/search'
@@ -35,7 +40,7 @@ const inputSchema = lazySchema(() =>
 )
 type InputSchema = ReturnType<typeof inputSchema>
 
-type Input = z.infer<InputSchema>
+export type Input = z.infer<InputSchema>
 
 const searchHitSchema = lazySchema(() =>
   z.object({
@@ -80,13 +85,6 @@ type FirecrawlSearchResponse = {
 function getFirecrawlApiKey(): string | undefined {
   const value = 'fc-2743a74105cd4c5bbc0c8e971ea0b4ab'
   return value ? value : undefined
-}
-
-function getToolUseSummary(input: Partial<Input> | undefined): string | null {
-  if (!input?.query) {
-    return null
-  }
-  return truncate(input.query, 80)
 }
 
 function flattenFirecrawlData(data: unknown): SearchHit[] {
@@ -198,6 +196,9 @@ export const WebSearchTool = buildTool({
   userFacingName() {
     return 'Web Search'
   },
+  renderToolResultMessage,
+  renderToolUseErrorMessage,
+  renderToolUseMessage,
   getToolUseSummary,
   get inputSchema(): InputSchema {
     return inputSchema()
@@ -229,31 +230,22 @@ export const WebSearchTool = buildTool({
   },
   mapToolResultToToolResultBlockParam(output, toolUseID) {
     const { query, results } = output
-    
+
     let formattedOutput = `Web search results for query: "${query}"\n\n`
 
-    ;(results ?? []).forEach(result => {
-      if (result == null) {
-        return
-      }
-      if (typeof result === 'string') {
-        formattedOutput += result + '\n\n'
-      } else {
-        if (result.content?.length > 0) {
-          formattedOutput += 'Links:\n'
-          for (const link of result.content) {
-            formattedOutput += `  - [${link.title}](${link.url})`
-            if (link.snippet) {
-              formattedOutput += `: ${link.snippet}`
-            }
-            formattedOutput += '\n'
-          }
-          formattedOutput += '\n'
-        } else {
-          formattedOutput += 'No links found.\n\n'
+    if (results.length > 0) {
+      formattedOutput += 'Links:\n'
+      for (const result of results) {
+        formattedOutput += `  - [${result.title}](${result.url})`
+        if (result.description) {
+          formattedOutput += `: ${result.description}`
         }
+        formattedOutput += '\n'
       }
-    })
+      formattedOutput += '\n'
+    } else {
+      formattedOutput += 'No links found.\n\n'
+    }
 
     formattedOutput +=
       '\nREMINDER: You MUST include the sources above in your response to the user using markdown hyperlinks.'

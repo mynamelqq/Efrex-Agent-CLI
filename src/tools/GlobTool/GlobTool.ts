@@ -5,9 +5,10 @@ import { DESCRIPTION } from './prompt'
 import { expandPath, toRelativePath } from '../../utils/path.js'
 import { buildTool } from '../../Tool'
 import { ToolDef } from '../../Tool'
+
 import { getCwd } from '../../utils/cwd'
 import { glob } from '../../utils/glob.js'
-import { renderToolResultMessage, renderToolUseMessage } from './UI'
+import { renderToolResultMessage, renderToolUseMessage,renderToolUseErrorMessage } from './UI'
 
 const inputSchema = lazySchema(() =>
   z.strictObject({
@@ -56,7 +57,7 @@ export const GlobTool = buildTool({
       return outputSchema()
     },
     
-
+    renderToolUseErrorMessage,
     isConcurrencySafe: () => true,
     isReadOnly: () => true,
     async call(input, context) {

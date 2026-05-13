@@ -4,11 +4,15 @@ import type {
   ChatCompletionMessage,
 } from 'openai/resources/chat/completions'
 import { randomUUID, type UUID } from 'crypto'
+
 import { Tools } from 'src/Tool'
 import { findToolByName } from 'src/Tool'
 import { safeParseJSON } from './json'
+import { Attachment } from './attachments'
 import {normalizeToolInput} from "src/utils/api"
+import { escapeRegExp } from './stringUtils'
 import type {
+  ToolResultBlockParam,
   AssistantMessage,
   AttachmentMessage,
   ContentBlock,
@@ -44,6 +48,11 @@ import type {
   UserMessage,
 } from '../package/message'
 export const NO_CONTENT_MESSAGE = '(no content)'
+export const INTERRUPT_MESSAGE_FOR_TOOL_USE =
+  '[Request interrupted by user for tool use]'
+export const INTERRUPT_MESSAGE = '[Request interrupted by user]'
+export const CANCEL_MESSAGE =
+  "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed."
 export type SDKAssistantMessageError =
   | 'authentication_failed'
   | 'billing_error'
@@ -120,6 +129,16 @@ export function createAssistantAPIErrorMessage({
     errorDetails,
   })
 }
+export function createToolResultStopMessage(
+  toolUseID: string,
+): ToolResultBlockParam {
+  return {
+    type: 'tool_result',
+    content: CANCEL_MESSAGE,
+    is_error: true,
+    tool_use_id: toolUseID,
+  }
+}
 function baseCreateAssistantMessage({
   content,
   isApiErrorMessage = false,
@@ -160,6 +179,32 @@ function baseCreateAssistantMessage({
     isApiErrorMessage,
     isVirtual,
   }
+}
+export function createUserInterruptionMessage({
+  toolUse = false,
+}: {
+  toolUse?: boolean
+}): UserMessage {
+  const content = toolUse ? INTERRUPT_MESSAGE_FOR_TOOL_USE : INTERRUPT_MESSAGE
+
+  return createUserMessage({
+    content: [
+      {
+        type: 'text',
+        text: content,
+      },
+    ],
+  })
+}
+export function createAttachmentMessage(
+  attachment: Attachment,
+): AttachmentMessage<Attachment> {
+  return {
+    attachment,
+    type: 'attachment',
+    uuid: randomUUID(),
+    timestamp: new Date().toISOString(),
+  } as unknown as AttachmentMessage<Attachment>
 }
 
 // 处理 API 返回的不规范数据格式
@@ -254,4 +299,59 @@ export function normalizeContentFromAPI(
         return contentBlock
     }
   })
+}
+export function extractTag(html: string, tagName: string): string | null {
+  if (!html.trim() || !tagName.trim()) {
+    return null
+  }
+
+  const escapedTag = escapeRegExp(tagName)
+
+  // Create regex pattern that handles:
+  // 1. Self-closing tags
+  // 2. Tags with attributes
+  // 3. Nested tags of the same type
+  // 4. Multiline content
+  const pattern = new RegExp(
+    `<${escapedTag}(?:\\s+[^>]*)?>` + // Opening tag with optional attributes
+      '([\\s\\S]*?)' + // Content (non-greedy match)
+      `<\\/${escapedTag}>`, // Closing tag
+    'gi',
+  )
+
+  let match
+  let depth = 0
+  let lastIndex = 0
+  const openingTag = new RegExp(`<${escapedTag}(?:\\s+[^>]*?)?>`, 'gi')
+  const closingTag = new RegExp(`<\\/${escapedTag}>`, 'gi')
+
+  while ((match = pattern.exec(html)) !== null) {
+    // Check for nested tags
+    const content = match[1]
+    const beforeMatch = html.slice(lastIndex, match.index)
+
+    // Reset depth counter
+    depth = 0
+
+    // Count opening tags before this match
+    openingTag.lastIndex = 0
+    while (openingTag.exec(beforeMatch) !== null) {
+      depth++
+    }
+
+    // Count closing tags before this match
+    closingTag.lastIndex = 0
+    while (closingTag.exec(beforeMatch) !== null) {
+      depth--
+    }
+
+    // Only include content if we're at the correct nesting level
+    if (depth === 0 && content) {
+      return content
+    }
+
+    lastIndex = match.index + match[0].length
+  }
+
+  return null
 }

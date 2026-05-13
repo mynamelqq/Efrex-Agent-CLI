@@ -16,13 +16,16 @@ export function normalizeToolRenderNode(node: React.ReactNode): React.ReactNode 
   return node
 }
 
-export function renderToolUseContent(tool: Tool | undefined, input: unknown): React.ReactNode | null {
-  if (!tool?.renderToolUseMessage) {
+export function renderToolUseContent(
+  tool: Tool | undefined,
+  input: Record<string, unknown> | undefined,
+): React.ReactNode | null {
+  if (!tool?.renderToolUseMessage || !input) {
     return null
   }
 
   try {
-    return normalizeToolRenderNode(tool.renderToolUseMessage(input as Record<string, unknown>, {
+    return normalizeToolRenderNode(tool.renderToolUseMessage(input, {
       theme: defaultToolRenderTheme,
       verbose: true,
       commands: [],
@@ -52,6 +55,32 @@ export function renderToolResultContent(
     }))
   } catch {
     logForDebugging(`Error rendering tool result message for ${tool.name}`, { level: 'error' })
+    return null
+  }
+}
+
+export function renderToolErrorContent(
+  tool: Tool | undefined,
+  result: unknown,
+  tools: readonly Tool[],
+): React.ReactNode | null {
+  if (!tool?.renderToolUseErrorMessage) {
+    return null
+  }
+
+  try {
+    return normalizeToolRenderNode(
+      tool.renderToolUseErrorMessage(result as string | Record<string, unknown>[], {
+        progressMessagesForMessage: [],
+        tools,
+        verbose: true,
+        isTranscriptMode: false,
+      }),
+    )
+  } catch {
+    logForDebugging(`Error rendering tool error message for ${tool.name}`, {
+      level: 'error',
+    })
     return null
   }
 }

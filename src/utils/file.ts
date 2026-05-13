@@ -24,6 +24,11 @@ export type File = {
   content: string
 }
 /**
+ * Marker included in file-not-found error messages that contain a cwd note.
+ * UI renderers check for this to show a short "File not found" message.
+ */
+export const FILE_NOT_FOUND_CWD_NOTE = 'Note: your current working directory is'
+/**
  * Check if a path exists asynchronously.
  */
 export async function pathExists(path: string): Promise<boolean> {

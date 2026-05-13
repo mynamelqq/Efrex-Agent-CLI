@@ -1,5 +1,5 @@
 import React from 'react';
-import {Box, Text} from '../ink.js';
+import { Ansi, Box } from '../ink.js';
 import chalk from 'chalk';
 import useTextInput from '../hooks/useTextInput.js';
 import {useDeclaredCursor} from '../ink/hooks/use-declared-cursor.js';
@@ -72,8 +72,8 @@ export default function PromptInput({
       : chalk.gray(placeholder);
 
     return (
-      <Box ref={cursorRef}>
-        <Text>{renderedPlaceholder}</Text>
+      <Box ref={cursorRef} width={width} flexShrink={0}>
+        <Ansi>{renderedPlaceholder}</Ansi>
       </Box>
     );
   }
@@ -85,9 +85,9 @@ export default function PromptInput({
   });
 
   return (
-    <Box ref={cursorRef} flexDirection="column">
+    <Box ref={cursorRef} flexDirection="column" width={width} flexShrink={0}>
       {lines.map((line, index) => (
-        <Text key={`${index}-${line.length}`}>{line}</Text>
+        <Ansi key={index}>{line.length === 0 ? ' ' : line}</Ansi>
       ))}
     </Box>
   );

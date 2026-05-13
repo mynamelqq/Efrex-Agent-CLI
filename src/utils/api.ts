@@ -33,18 +33,15 @@ import type {
   TombstoneMessage,
   ToolUseSummaryMessage,
   UserMessage,
+  BetaToolUnion,BetaTool
 } from 'src/package/message.js'
 import { createUserMessage } from './messages.js'
 import type { z } from 'zod/v4'
+import { toJSONSchema } from 'zod/v4'
+import { logForDebugging } from './debug.js'
+import { getToolSchemaCache } from './toolSchemaCache.js'
 
-type BetaTool = {
-  name: string
-  description: string
-  input_schema: Record<string, unknown>
-  defer_loading?: boolean
-}
 
-type BetaToolUnion = BetaTool
 
 export async function toolToAPISchema(
   tool: Tool,
@@ -61,22 +58,27 @@ export async function toolToAPISchema(
     }
   },
 ): Promise<BetaToolUnion> {
-  const schema: BetaTool = {
-    name: tool.name,
-    description: tool.searchHint || tool.name,
-    input_schema://针对结构化输出工具而言
-      'inputJSONSchema' in tool &&
-      typeof tool.inputJSONSchema === 'object' &&
-      tool.inputJSONSchema !== null
-        ? (tool.inputJSONSchema as Record<string, unknown>)
-        : { type: 'object', additionalProperties: true },
+  const cacheKey =
+  'inputJSONSchema' in tool && tool.inputJSONSchema
+    ? `${tool.name}:${JSON.stringify(tool.inputJSONSchema)}`
+    : tool.name
+  const cache = getToolSchemaCache()
+  let base = cache.get(cacheKey)
+  if (!base) {
+    let input_schema = (
+      'inputJSONSchema' in tool && tool.inputJSONSchema
+        ? tool.inputJSONSchema
+        : toJSONSchema(tool.inputSchema)
+    )as Record<string, unknown>
+    base = {
+      name: tool.name,
+      description: tool.searchHint || tool.name,
+      input_schema:input_schema
+    }
+    cache.set(cacheKey, base)
+    return base as BetaTool
   }
-
-  if (options.deferLoading) {
-    schema.defer_loading = true
-  }
-
-  return schema
+  return base
 }
 
 // TODO: Generalize this to all tools
@@ -84,33 +86,38 @@ export function normalizeToolInput<T extends Tool>(//FileWriteTool.name FileEdit
   tool: T,
   input: z.infer<T['inputSchema']>,
 ): z.infer<T['inputSchema']> {
-  switch (tool.name) {
-    default:
-      return input
-  }
+  return input
 }
 export function normalizeMessagesForAPI(
   messages: Message[],
   tools: Tools = [],
 ): (UserMessage | AssistantMessage)[] {
   const result: (UserMessage | AssistantMessage)[] = []
+  let assistantMessageIndexesById = new Map<string, number>()
+
   for (const message of messages) {
     if (message.type !== 'user' && message.type !== 'assistant') continue
     if (message.isVirtual) continue
-
+    logForDebugging("Normalizing message for API:", message)
     if (message.type === 'user') {
       pushUserMessage(result, message as UserMessage)
+      assistantMessageIndexesById = new Map()
       continue
     }
 
     pushAssistantMessage(
       result,
       normalizeAssistantMessageForAPI(message as AssistantMessage, tools),
+      assistantMessageIndexesById,
     )
   }
 
   return ensureAssistantMessagesHaveContent(
-    filterWhitespaceOnlyAssistantMessages(result),
+    filterWhitespaceOnlyAssistantMessages(
+      filterOrphanedThinkingOnlyMessages(
+        filterTrailingThinkingFromLastAssistant(result),
+      ),
+    ),
   )
 }
 
@@ -129,13 +136,32 @@ function pushUserMessage(
 function pushAssistantMessage(
   result: (UserMessage | AssistantMessage)[],
   message: AssistantMessage,
+  assistantMessageIndexesById: Map<string, number>,
 ): void {
-  const previous = result.at(-1)
-  if (previous?.type === 'assistant' && previous.message.id === message.message.id) {
-    result[result.length - 1] = mergeAssistantMessages(previous, message)
-    return
+  const messageId = getAssistantMessageId(message)
+  const existingIndex =
+    messageId === undefined ? undefined : assistantMessageIndexesById.get(messageId)
+
+  if (existingIndex !== undefined) {
+    const existing = result[existingIndex]
+    if (existing?.type === 'assistant') {
+      result[existingIndex] = mergeAssistantMessages(existing, message)
+      return
+    }
+  }
+
+  if (messageId !== undefined) {
+    assistantMessageIndexesById.set(messageId, result.length)
   }
   result.push(message)
+}
+
+function getAssistantMessageId(message: AssistantMessage): string | undefined {
+  const id = message.message.id
+  if (typeof id === 'string' && id.length > 0) {
+    return id
+  }
+  return undefined
 }
 
 function normalizeAssistantMessageForAPI(
@@ -259,6 +285,77 @@ function filterWhitespaceOnlyAssistantMessages(
   })
 }
 
+function filterOrphanedThinkingOnlyMessages(
+  messages: (UserMessage | AssistantMessage)[],
+): (UserMessage | AssistantMessage)[] {
+  return messages.filter(message => {
+    if (message.type !== 'assistant') return true
+    const content = message.message.content
+    if (!Array.isArray(content) || content.length === 0) return true
+
+    return (content as unknown[]).some(isMeaningfulNonThinkingBlock)
+  })
+}
+
+function filterTrailingThinkingFromLastAssistant(
+  messages: (UserMessage | AssistantMessage)[],
+): (UserMessage | AssistantMessage)[] {
+  const lastAssistantIndex = findLastAssistantIndex(messages)
+  if (lastAssistantIndex === -1) return messages
+
+  const lastAssistant = messages[lastAssistantIndex]
+  if (lastAssistant?.type !== 'assistant') return messages
+
+  const content = lastAssistant.message.content
+  if (!Array.isArray(content) || content.length === 0) return messages
+
+  const trimmedContent = [...(content as unknown[])]
+  while (
+    trimmedContent.length > 0 &&
+    isThinkingBlock(trimmedContent[trimmedContent.length - 1])
+  ) {
+    trimmedContent.pop()
+  }
+
+  if (trimmedContent.length === content.length) return messages
+
+  const nextMessages = [...messages]
+  nextMessages[lastAssistantIndex] = {
+    ...lastAssistant,
+    message: {
+      ...lastAssistant.message,
+      content: trimmedContent as AssistantMessage['message']['content'],
+    },
+  }
+  return nextMessages
+}
+
+function findLastAssistantIndex(
+  messages: (UserMessage | AssistantMessage)[],
+): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.type === 'assistant') return i
+  }
+  return -1
+}
+
+function isThinkingBlock(block: unknown): boolean {
+  if (typeof block !== 'object' || block === null) return false
+  const type = (block as Record<string, unknown>).type
+  return type === 'thinking' || type === 'redacted_thinking'
+}
+
+function isMeaningfulNonThinkingBlock(block: unknown): boolean {
+  if (isThinkingBlock(block)) return false
+  if (typeof block !== 'object' || block === null) return false
+
+  const typedBlock = block as Record<string, unknown>
+  if (typedBlock.type === 'text') {
+    return typeof typedBlock.text === 'string' && typedBlock.text.trim().length > 0
+  }
+  return true
+}
+
 function ensureAssistantMessagesHaveContent(
   messages: (UserMessage | AssistantMessage)[],
 ): (UserMessage | AssistantMessage)[] {
@@ -277,4 +374,25 @@ function ensureAssistantMessagesHaveContent(
     }
   })
 }
+export function prependUserContext(
+  messages: Message[],
+  context: { [k: string]: string },
+): Message[] {
+  if (Object.entries(context).length === 0) {
+    return messages
+  }
 
+  return [
+    createUserMessage({
+      content: `<system-reminder>\nAs you answer the user's questions, you can use the following context:\n${Object.entries(
+        context,
+      )
+        .map(([key, value]) => `# ${key}\n${value}`)
+        .join('\n')}
+
+      IMPORTANT: this context may or may not be relevant to your tasks. You should not respond to this context unless it is highly relevant to your task.\n</system-reminder>\n`,
+      isMeta: true,
+    }),
+    ...messages,
+  ]
+}

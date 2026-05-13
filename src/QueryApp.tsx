@@ -20,20 +20,32 @@ import { getUserContext } from './context.js'
 import { getDefaultAppState, type AppState } from './state/AppStateStore.js'
 import { ThinkingConfig } from './queryEngine.js'
 import { handleMessageFromStream } from './utils/handleMessageFromStream.js'
-import { renderToolResultContent, renderToolUseContent } from './components/messages/renderToolContent.js'
-import { APP_VERSION, CLI_APP_VERSION } from 'utils/load.js'
+import {
+  renderToolErrorContent,
+  renderToolResultContent,
+  renderToolUseContent,
+} from './components/messages/renderToolContent.js'
+import { CLI_APP_VERSION } from 'utils/load.js'
 type ViewportMessage = {
   id: number
   role: 'user' | 'assistant' | 'tool'
   text: string
   content?: React.ReactNode
   toolPhase?: 'call' | 'done' | 'error'
+  toolDisplayStyle?: 'use' | 'result' | 'progress'
+  toolUseId?: string
   animatePrefix?: 'blink'
 }
 
 type ToolUseRenderItem = {
   text: string
   content: React.ReactNode
+}
+
+type ParsedAssistantToolUse = {
+  toolName: string
+  parsedInput: Record<string, unknown> | undefined
+  userFacingToolName: string
 }
 
 type StreamingAssistantState = {
@@ -141,7 +153,7 @@ function countWrappedRows(text: string, width: number): number {
       let lineWidth = 0
       let visualRows = 1
       for (const char of Array.from(logicalLine)) {
-        const charWidth = char.length
+        const charWidth = Math.max(1, stringWidth(char))
         if (lineWidth > 0 && lineWidth + charWidth > safeWidth) {
           visualRows++
           lineWidth = charWidth
@@ -257,13 +269,14 @@ function getTranscriptHeaderLines({
     makeRow('efrex code', '✦  Getting Started', value => chalk.hex('#8f7cff').bold(value), value => chalk.greenBright.bold(value)),
     makeRow('AI Coding Assistant', 'Ask anything, edit code, run commands.', value => chalk.gray(value), value => chalk.gray(value)),
     makeRow('Power your ideas with code.', 'Let efrex code handle the rest.', value => chalk.gray(value), value => chalk.gray(value)),
-    makeRow('     ╭──────╮', 'Tips', value => chalk.blueBright(value), value => chalk.yellowBright.bold(`${value}`)),
-    makeRow('     │ •  • │', '────────────────────────────────────────', value => chalk.blueBright(value), value => chalk.green(value)),
-    makeRow('     │  ──  │', '', value => chalk.blueBright(value)),
-    makeRow('     ╰─┬──┬─╯', '→  Ask questions about your codebase', value => chalk.blueBright(value), value => chalk.gray(value.replace('→', chalk.yellowBright('→')))),
-    makeRow('      ╰──╯', '', value => chalk.blueBright(value)),
+    makeRow('╭ ────── ╮', 'Tips', value => chalk.blueBright(value), value => chalk.yellowBright.bold(`${value}`)),
+    makeRow('│  •  •  │', '────────────────────────────────────────', value => chalk.blueBright(value), value => chalk.green(value)),
+    makeRow('│  ────  │', '', value => chalk.blueBright(value)),
+    makeRow('─────  ─────','→  Ask questions about your codebase', value => chalk.blueBright(value), value => chalk.gray(value.replace('→', chalk.yellowBright('→')))),
+    // makeRow('╰─┬──┬─╯', '→  Ask questions about your codebase', value => chalk.blueBright(value), value => chalk.gray(value.replace('→', chalk.yellowBright('→')))),
+    // makeRow('      ', '', value => chalk.blueBright(value)),
     makeRow(`model: ${model} | effort: ${effort} `, '→  Generate or refactor code', value => chalk.gray(value), value => chalk.gray(value.replace('→', chalk.yellowBright('→')))),
-    makeRow(`${cwd}`, '→  Run shell commands and analyze results', value => value, value => chalk.gray(value.replace('→', chalk.yellowBright('→')))),
+    makeRow(`${cwd}`, '→  Run shell commands and analyze results', value =>chalk.hex('#438bcc').bold(value), value => chalk.gray(value.replace('→', chalk.yellowBright('→')))),
     // makeRow('Type /help to see available commands', '→  Use natural language to automate tasks', value => chalk.gray(value.replace('/help', chalk.cyanBright('/help'))), value => chalk.gray(value.replace('→', chalk.yellowBright('→')))),
     bottom,
     '',
@@ -319,11 +332,220 @@ function extractToolUseLabels(content: unknown): string[] {
         return null
       }
 
-      const name =
-        typeof typedBlock.name === 'string' ? typedBlock.name : 'unknown_tool'
-      return `调用工具 ${name}...`
+      return getToolUseFallbackLabel(undefined, typedBlock)
     })
     .filter((value): value is string => value !== null)
+}
+
+function parseAssistantToolUse(
+  tool: Tool | undefined,
+  block: Record<string, unknown>,
+): ParsedAssistantToolUse {
+  const toolName =
+    typeof block.name === 'string' ? block.name : 'unknown_tool'
+  if (!tool) {
+    return {
+      toolName,
+      parsedInput: undefined,
+      userFacingToolName: toolName,
+    }
+  }
+
+  const input = tool.inputSchema.safeParse(block.input)
+  const parsedInput = input.success
+    ? (input.data as Record<string, unknown>)
+    : undefined
+
+  return {
+    toolName,
+    parsedInput,
+    userFacingToolName: tool.userFacingName(parsedInput) || toolName,
+  }
+}
+
+function getToolUseFallbackLabel(
+  tool: Tool | undefined,
+  block: Record<string, unknown>,
+): string {
+  const { toolName, userFacingToolName } = parseAssistantToolUse(tool, block)
+  return userFacingToolName || toolName
+}
+
+function buildAssistantToolUseRenderItem(
+  tool: Tool | undefined,
+  block: Record<string, unknown>,
+): ToolUseRenderItem {
+  const parsedToolUse = parseAssistantToolUse(tool, block)
+  const renderedToolUseMessage = renderToolUseContent(
+    tool,
+    parsedToolUse.parsedInput,
+  )
+  const fallbackLabel = parsedToolUse.userFacingToolName
+
+  if (renderedToolUseMessage === null || renderedToolUseMessage === '') {
+    return {
+      text: fallbackLabel,
+      content: <Text bold>{fallbackLabel}</Text>,
+    }
+  }
+
+  const renderedToolUseText = renderNodeToPlainText(renderedToolUseMessage).trim()
+  return {
+    text: renderedToolUseText
+      ? `${parsedToolUse.userFacingToolName}(${renderedToolUseText})`
+      : fallbackLabel,
+    content: (
+      <Box flexDirection="row">
+        <Text bold>{parsedToolUse.userFacingToolName}</Text>
+        <Text>({renderedToolUseMessage})</Text>
+      </Box>
+    ),
+  }
+}
+
+function getAssistantToolUseViewportMessages(
+  message: MessageType,
+  fallbackId: number,
+  tools: readonly Tool[],
+): ViewportMessage[] {
+  if (!Array.isArray(message.message?.content)) {
+    return []
+  }
+
+  return message.message.content
+    .map((block, index): ViewportMessage | null => {
+      if (!block || typeof block !== 'object') {
+        return null
+      }
+
+      const typedBlock = block as Record<string, unknown>
+      if (typedBlock.type !== 'tool_use') {
+        return null
+      }
+
+      const toolName =
+        typeof typedBlock.name === 'string'
+          ? typedBlock.name
+          : 'unknown_tool'
+      const tool = findToolByName(tools, toolName)
+      const item = buildAssistantToolUseRenderItem(tool, typedBlock)
+      const toolUseId =
+        typeof typedBlock.id === 'string' ? typedBlock.id : undefined
+
+      return {
+        id: fallbackId * 100 + index + 1,
+        role: 'tool',
+        text: item.text,
+        content: item.content,
+        toolPhase: 'call',
+        toolDisplayStyle: 'use',
+        toolUseId,
+        animatePrefix: 'blink',
+      }
+    })
+    .filter((value): value is ViewportMessage => value !== null)
+}
+
+function updateAssistantToolUseViewportMessage(
+  message: ViewportMessage,
+  phase: 'done' | 'error',
+): void {
+  message.toolPhase = phase
+  message.animatePrefix = undefined
+}
+
+function buildViewportMessages(
+  messages: MessageType[],
+  tools: readonly Tool[],
+): ViewportMessage[] {
+  const viewportMessages: ViewportMessage[] = []
+  const toolUseMessagesById = new Map<string, ViewportMessage>()
+
+  messages.forEach((message, index) => {
+    const fallbackId = index + 1
+
+    if (message.type === 'assistant') {
+      const text = extractTextContent(message.message?.content)
+      if (text) {
+        viewportMessages.push({
+          id: fallbackId,
+          role: 'assistant',
+          text,
+        })
+      }
+
+      const toolUseMessages = getAssistantToolUseViewportMessages(
+        message,
+        fallbackId,
+        tools,
+      )
+      if (toolUseMessages.length > 0) {
+        toolUseMessages.forEach(viewportMessage => {
+          viewportMessages.push(viewportMessage)
+          if (viewportMessage.toolUseId) {
+            toolUseMessagesById.set(viewportMessage.toolUseId, viewportMessage)
+          }
+        })
+      }
+
+      if (text || toolUseMessages.length > 0) {
+        return
+      }
+    }
+
+    if (message.type === 'user' && isToolResultUserMessage(message)) {
+      const toolResultBlock = getToolResultBlock(message)
+      if (toolResultBlock) {
+        const existingToolUseMessage = toolUseMessagesById.get(
+          toolResultBlock.toolUseId,
+        )
+        if (existingToolUseMessage) {
+          updateAssistantToolUseViewportMessage(
+            existingToolUseMessage,
+            toolResultBlock.isError ? 'error' : 'done',
+          )
+        }
+      }
+
+      const viewportMessage = messageToViewport(
+        message,
+        fallbackId,
+        messages,
+        tools,
+      )
+      if (viewportMessage) {
+        viewportMessage.toolDisplayStyle = 'result'
+        viewportMessages.push(viewportMessage)
+      }
+      return
+    }
+
+    if (message.type === 'progress') {
+      const viewportMessage = messageToViewport(
+        message,
+        fallbackId,
+        messages,
+        tools,
+      )
+      if (viewportMessage) {
+        viewportMessage.toolDisplayStyle = 'progress'
+        viewportMessages.push(viewportMessage)
+      }
+      return
+    }
+
+    const viewportMessage = messageToViewport(
+      message,
+      fallbackId,
+      messages,
+      tools,
+    )
+    if (viewportMessage) {
+      viewportMessages.push(viewportMessage)
+    }
+  })
+
+  return viewportMessages
 }
 
 function renderNodeToPlainText(node: React.ReactNode): string {
@@ -350,6 +572,7 @@ function renderNodeToPlainText(node: React.ReactNode): string {
 function getToolResultBlock(message: MessageType): {
   toolUseId: string
   isError: boolean
+  content: unknown
 } | null {
   if (!Array.isArray(message.message?.content)) {
     return null
@@ -361,7 +584,7 @@ function getToolResultBlock(message: MessageType): {
     }
 
     return (contentBlock as Record<string, unknown>).type === 'tool_result'
-  }) as { tool_use_id?: unknown; is_error?: unknown } | undefined
+  }) as { tool_use_id?: unknown; is_error?: unknown; content?: unknown } | undefined
 
   if (!block || typeof block.tool_use_id !== 'string') {
     return null
@@ -370,6 +593,7 @@ function getToolResultBlock(message: MessageType): {
   return {
     toolUseId: block.tool_use_id,
     isError: Boolean(block.is_error),
+    content: block.content,
   }
 }
 
@@ -423,7 +647,7 @@ function buildStreamingPlaceholderText(
 
   if (streamingAssistant.pendingToolCalls.length > 0) {
     sections.push(
-      ['正在请求工具', ...streamingAssistant.pendingToolCalls.map(label => `- ${label}`)].join('\n'),
+      ['Requesting tools', ...streamingAssistant.pendingToolCalls.map(label => `- ${label}`)].join('\n'),
     )
   }
 
@@ -492,13 +716,12 @@ function messageToViewport(
   if (message.type === 'user') {
     if (isToolResultUserMessage(message)) {
       const toolResultBlock = getToolResultBlock(message)
+      const toolUse = toolResultBlock
+        ? findAssistantToolUse(messages, message, toolResultBlock.toolUseId)
+        : null
+      const tool = toolUse ? findToolByName(tools, toolUse.name) : undefined
+
       if (toolResultBlock && !toolResultBlock.isError) {
-        const toolUse = findAssistantToolUse(
-          messages,
-          message,
-          toolResultBlock.toolUseId,
-        )
-        const tool = toolUse ? findToolByName(tools, toolUse.name) : undefined
         const renderedContent = renderToolResultContent(
           tool,
           message.toolUseResult,
@@ -513,6 +736,24 @@ function messageToViewport(
             text: renderNodeToPlainText(renderedContent),
             content: renderedContent,
             toolPhase: 'done',
+          }
+        }
+      }
+
+      if (toolResultBlock?.isError) {
+        const renderedContent = renderToolErrorContent(
+          tool,
+          toolResultBlock.content,
+          tools,
+        )
+
+        if (renderedContent) {
+          return {
+            id: fallbackId,
+            role: 'tool',
+            text: renderNodeToPlainText(renderedContent),
+            content: renderedContent,
+            toolPhase: 'error',
           }
         }
       }
@@ -565,15 +806,7 @@ function messageToViewport(
                 ? typedBlock.name
                 : 'unknown_tool'
             const tool = findToolByName(tools, toolName)
-            const content = renderToolUseContent(tool, typedBlock.input)
-            const text =
-              content === null
-                ? `调用工具 ${toolName}...`
-                : renderNodeToPlainText(content)
-            return {
-              text: text.trim() || `调用工具 ${toolName}...`,
-              content: content ?? <Text>{`调用工具 ${toolName}...`}</Text>,
-            }
+            return buildAssistantToolUseRenderItem(tool, typedBlock)
           })
           .filter((value): value is ToolUseRenderItem => value !== null)
       : extractToolUseLabels(message.message?.content).map(label => ({
@@ -861,7 +1094,7 @@ export default function QueryApp(
         }))
       },
       onToolUseBlockStart: toolName => {
-        const toolLabel = `调用工具 ${toolName}...`
+        const toolLabel = toolName
         setStreamingAssistant(prev => ({
           ...prev,
           active: true,
@@ -1071,11 +1304,7 @@ export default function QueryApp(
   )
 
   const renderTools = initialTools.length > 0 ? initialTools : getAllBaseTools()
-  const viewportMessages = messages
-    .map((message, index) =>
-      messageToViewport(message, index + 1, messages, renderTools),
-    )
-    .filter(Boolean) as ViewportMessage[]
+  const viewportMessages = buildViewportMessages(messages, renderTools)
 
   if (loading && streamingAssistant.placeholderId !== null) {
     if (streamingAssistant.text.trim().length > 0) {
@@ -1091,6 +1320,7 @@ export default function QueryApp(
         role: 'tool',
         text: streamingAssistant.pendingToolCalls.join('\n'),
         toolPhase: 'call',
+        toolDisplayStyle: 'use',
         animatePrefix: 'blink',
       })
     }
@@ -1120,7 +1350,7 @@ export default function QueryApp(
   const statusPrefix = statusText ? (blinkVisible ? '•' : ' ') : null
 
   const statusMessageWidth = statusText ? stringWidth(statusText) : 0
-  const glimmerSpeed = statusMode === 'requesting' ? 50 : 200
+  const glimmerSpeed = statusMode === 'requesting' ? 55 : 50
   const elapsedMs = animationTick * 50
   const glimmerCycleLength = statusMessageWidth + GLIMMER_PAD_COLUMNS * 2
   const cyclePosition =
@@ -1163,7 +1393,7 @@ export default function QueryApp(
 
       <Box flexDirection="column" marginTop={1} flexShrink={0}>
         <Text color={loading ? 'blue' : 'gray'}>{inputRule}</Text>
-        <Box>
+        <Box flexDirection="row" flexWrap="nowrap" width={terminalColumns - 2}>
           <Text color={loading ? 'blueBright' : 'greenBright'}>› </Text>
           <PromptInput
             value={input}

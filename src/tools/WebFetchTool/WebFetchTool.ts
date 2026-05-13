@@ -5,6 +5,7 @@ import { lazySchema } from '../../utils/lazySchema.js'
 import { isPreapprovedHost } from './preapproved.js'
 import { getToolUseSummary } from './UI.js'
 import { DESCRIPTION, WEB_FETCH_TOOL_NAME } from './prompt.js'
+import { renderToolUseMessage,renderToolResultMessage } from './UI.js'
 import {
   applyPromptToMarkdown,
   type FetchedContent,
@@ -72,7 +73,9 @@ export const WebFetchTool = buildTool({
   userFacingName() {
     return 'Fetch'
   },
+  renderToolResultMessage,
   getToolUseSummary,
+  renderToolUseMessage,
   get inputSchema(): InputSchema {
     return inputSchema()
   },

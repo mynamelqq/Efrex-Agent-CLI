@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useContext } from 'react';
-import { Box, NoSelect, Text, Ratchet } from '@anthropic/ink';
+import { Box, NoSelect, Text } from '../ink.js';
 
 type Props = {
   children: React.ReactNode;
@@ -27,7 +27,7 @@ export function MessageResponse({ children, height }: Props): React.ReactNode {
   if (height !== undefined) {
     return content;
   }
-  return <Ratchet lock="offscreen">{content}</Ratchet>;
+  return content;
 }
 
 // This is a context that is used to determine if the message response

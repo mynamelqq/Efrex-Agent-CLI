@@ -230,7 +230,7 @@ export async function* queryModelOpenAI(
     })
 
     logForDebugging(
-      `[OpenAI] Calling model=${openaiModel}, messages=${openaiMessages.length}, tools=${openaiTools.length}, thinking=${enableThinking}`,
+      `[OpenAI] Calling model=${openaiModel}, messages=${openaiMessages}, tools=${openaiTools.length}, thinking=${enableThinking}`,
     )
 
     // 12. Call OpenAI API with streaming

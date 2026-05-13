@@ -13,6 +13,8 @@ export type ViewportMessage = {
   text: string;
   content?: React.ReactNode;
   toolPhase?: 'call' | 'done' | 'error';
+  toolDisplayStyle?: 'use' | 'result' | 'progress';
+  toolUseId?: string;
   animatePrefix?: 'blink';
 };
 
@@ -141,13 +143,7 @@ function renderMessageNode(message: ViewportMessage, width: number, blinkOn: boo
     );
   }
 
-  const toolPrefix =
-    message.animatePrefix === 'blink' && message.toolPhase === 'call'
-      ? blinkOn
-        ? '•  '
-        : '   '
-      : '↳  ';
-  const prefixColor = message.toolPhase === 'error' ? 'redBright' : 'cyanBright';
+  const { toolPrefix, prefixColor } = getToolPrefix(message, blinkOn);
 
   return (
     <Box key={message.id} flexDirection="row" width={width}>
@@ -175,12 +171,7 @@ function renderMessage(message: ViewportMessage, width: number, blinkOn: boolean
 
   if (message.role === 'tool') {
     const color = message.toolPhase === 'error' ? chalk.redBright : chalk.gray;
-    const toolPrefix =
-      message.animatePrefix === 'blink' && message.toolPhase === 'call'
-        ? blinkOn
-          ? chalk.cyanBright('•  ')
-          : '   '
-        : chalk.cyanBright('↳  ');
+    const { toolPrefix } = getToolPrefix(message, blinkOn, true);
 
     return wrapPlain(message.text, Math.max(1, width - 3)).map((line, index) =>
       `${index === 0 ? toolPrefix : '   '}${color(line)}`,
@@ -199,6 +190,41 @@ function renderMessage(message: ViewportMessage, width: number, blinkOn: boolean
     '',
     ...markdownLines.map((line, index) => `${index === 0 ? assistantPrefix : '   '}${line}`),
   ];
+}
+
+function getToolPrefix(
+  message: ViewportMessage,
+  blinkOn: boolean,
+  useChalk = false,
+): { toolPrefix: string; prefixColor: 'redBright' | 'cyanBright' | 'gray' } {
+  const prefixColor =
+    message.toolDisplayStyle === 'use'
+      ? message.toolPhase === 'error'
+        ? 'redBright'
+        : 'cyanBright'
+      : 'gray';
+  const cyan = (value: string) => useChalk ? chalk.cyanBright(value) : value;
+  const red = (value: string) => useChalk ? chalk.redBright(value) : value;
+  const gray = (value: string) => useChalk ? chalk.gray(value) : value;
+
+  if (message.toolDisplayStyle === 'use') {
+    if (message.toolPhase === 'call' && message.animatePrefix === 'blink') {
+      return {
+        toolPrefix: blinkOn ? cyan('•  ') : '   ',
+        prefixColor,
+      };
+    }
+
+    return {
+      toolPrefix: message.toolPhase === 'error' ? red('●  ') : cyan('●  '),
+      prefixColor,
+    };
+  }
+
+  return {
+    toolPrefix: gray('↳  '),
+    prefixColor,
+  };
 }
 
 function markdownToLines(markdown: string, width: number): string[] {

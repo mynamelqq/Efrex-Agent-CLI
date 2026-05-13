@@ -5,13 +5,14 @@ import {
   type Tools,
   type ToolUseContext,
 } from '../../Tool.js'
+import { normalizeToolInput } from 'src/utils/api.js'
 import { createChildAbortController } from 'src/utils/abortController.js'
 import { createUserMessage } from 'src/utils/messages.js'
 import { runToolUse } from './toolExecution.js'
 import { type MessageUpdate } from './toolOrchestration.js'
 import { loggerFor } from 'node_modules/openai/internal/utils/log.mjs'
 import { logError } from 'src/utils/logger.js'
-
+//Agent Tool Runtime  并发工具调度器
 type ToolStatus = 'queued' | 'executing' | 'completed' | 'yielded'//排队、执行中、已完成、已产出结果
 
 type TrackedTool = {//跟踪工具的状态和结果
@@ -76,7 +77,11 @@ export class StreamingToolExecutor {
       return
     }
 
-    const parsedInput = toolDefinition.inputSchema.safeParse(block.input)
+    const normalizedInput = normalizeToolInput(
+      toolDefinition,
+      block.input as never,
+    )
+    const parsedInput = toolDefinition.inputSchema.safeParse(normalizedInput)
     if(parsedInput.success===false){
       logError(`Error parsing input for tool '${block.name}': ${parsedInput.error.message}: ${JSON.stringify(block.input)}`)
     }
@@ -151,15 +156,15 @@ export class StreamingToolExecutor {
         if (this.discarded) break
         messages.push(update.message)
         if (update.contextModifier) {
-          contextModifiers.push(update.contextModifier.modifyContext)
+          contextModifiers.push(update.contextModifier.modifyContext)//加入contextModifiers数组，稍后用于修改工具使用上下文
         }
       }
 
-      tool.results = messages
+      tool.results = messages//将工具执行结果保存到工具对象中 数组
       tool.contextModifiers = contextModifiers
       tool.status = 'completed'
 
-      if (!tool.isConcurrencySafe && contextModifiers.length > 0) {
+      if (!tool.isConcurrencySafe && contextModifiers.length > 0) {//不支持并发且有上下文修改器，立即应用这些修改器
         for (const modifier of contextModifiers) {
           this.toolUseContext = modifier(this.toolUseContext)
         }
@@ -168,7 +173,7 @@ export class StreamingToolExecutor {
 
     const promise = collectResults()
     tool.promise = promise
-    void promise.finally(() => {
+    void promise.finally(() => {//处理完继续处理下一个
       void this.processQueue()
     })
   }
@@ -178,11 +183,11 @@ export class StreamingToolExecutor {
       return
     }
 
-    for (const tool of this.tools) {
+    for (const tool of this.tools) {//遍历工具列表，如果工具状态已完成，产出结果
       if (tool.status === 'yielded') continue
 
       if (tool.status === 'completed' && tool.results) {
-        tool.status = 'yielded'
+        tool.status = 'yielded'//标记工具为已产出结果，避免重复产出
         for (const message of tool.results) {
           yield { message, newContext: this.toolUseContext }
         }
@@ -197,17 +202,17 @@ export class StreamingToolExecutor {
       return
     }
 
-    while (this.hasUnfinishedTools()) {
-      await this.processQueue()
+    while (this.hasUnfinishedTools()) {//有未完成的工具
+      await this.processQueue()//继续处理工具队列，确保所有工具都得到执行
 
       for (const result of this.getCompletedResults()) {
         yield result
       }
 
-      if (this.hasExecutingTools() && !this.hasCompletedResults()) {
+      if (this.hasExecutingTools() && !this.hasCompletedResults()) {//producer-consumer 调度优化
         const executingPromises = this.tools
           .filter(t => t.status === 'executing' && t.promise)
-          .map(t => t.promise!)
+          .map(t => t.promise!)//获取所有正在执行的工具的Promise，等待其中任意一个完成，以便及时产出结果
 
         if (executingPromises.length > 0) {
           await Promise.race(executingPromises)

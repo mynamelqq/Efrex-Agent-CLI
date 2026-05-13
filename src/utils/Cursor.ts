@@ -191,13 +191,15 @@ export default class Cursor {
   }: RenderOptions): string[] {
     const sourceText = mask ? mask.repeat(this.text.length) : this.text;
     const lines = buildVisualLines(sourceText, width);
-    const rendered = lines.map(line => renderLine(line, this.offset, cursorChar, invert));
+    const currentLineIndex = findVisualLineIndex(lines, this.offset);
+    const rendered = lines.map((line, index) =>
+      renderLine(line, this.offset, index === currentLineIndex, cursorChar, invert),
+    );
 
     if (!maxVisibleLines || rendered.length <= maxVisibleLines) {
       return rendered;
     }
 
-    const currentLineIndex = findVisualLineIndex(lines, this.offset);
     const start = getViewportStartLine(lines, currentLineIndex, maxVisibleLines);
     return rendered.slice(start, start + maxVisibleLines);
   }
@@ -259,7 +261,17 @@ export default class Cursor {
   }
 }
 
-function renderLine(line: VisualLine, offset: number, cursorChar: string, invert: (text: string) => string): string {
+function renderLine(
+  line: VisualLine,
+  offset: number,
+  showCursor: boolean,
+  cursorChar: string,
+  invert: (text: string) => string,
+): string {
+  if (!showCursor) {
+    return line.text;
+  }
+
   if (line.text.length === 0) {
     return offset <= line.start ? invert(cursorChar) : cursorChar;
   }

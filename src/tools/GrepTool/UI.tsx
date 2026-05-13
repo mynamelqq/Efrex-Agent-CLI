@@ -2,9 +2,14 @@
 import { truncate } from '../../utils/format.js';
 import {Box} from "src/ink.js"
 import { Text } from 'src/ink.js';
+import type { ToolResultBlockParam } from '@anthropic-ai/sdk/resources/index.mjs';
+import React from 'react';
+import { FallbackToolUseErrorMessage } from 'src/components/FallbackToolUseErrorMessage.js';
 import { TOOL_SUMMARY_MAX_LENGTH } from '../../constants/toolLimits.js';
-import { getDisplayPath } from 'src/utils/file.js';
+import { FILE_NOT_FOUND_CWD_NOTE, getDisplayPath } from 'src/utils/file.js';
+import { extractTag } from 'src/utils/messages.js';
 import { MessageResponse } from 'src/components/MessageResponse.js';
+
 import type { ProgressMessage } from 'src/package/message.js';
 import type { ToolProgressData } from 'src/Tool.js';
 // Reusable component for search result summaries
@@ -127,4 +132,27 @@ export function renderToolResultMessage(
   // files_with_matches mode
   const fileListContent = filenames.map(filename => filename).join('\n');
   return <SearchResultSummary count={numFiles} countLabel="files" content={fileListContent} verbose={verbose} />;
+}
+
+
+export function renderToolUseErrorMessage(
+  result: ToolResultBlockParam['content'],
+  { verbose }: { verbose: boolean },
+): React.ReactNode {
+  if (!verbose && typeof result === 'string' && extractTag(result, 'tool_use_error')) {
+    const errorMessage = extractTag(result, 'tool_use_error');
+    if (errorMessage?.includes(FILE_NOT_FOUND_CWD_NOTE)) {
+      return (
+        <MessageResponse>
+          <Text color="error">File not found</Text>
+        </MessageResponse>
+      );
+    }
+    return (
+      <MessageResponse>
+        <Text color="error">Error searching files</Text>
+      </MessageResponse>
+    );
+  }
+  return <FallbackToolUseErrorMessage result={result} verbose={verbose} />;
 }
