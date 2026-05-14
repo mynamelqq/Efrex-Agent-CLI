@@ -456,9 +456,6 @@ export class LogUpdate {
       const damageInfo = damage
         ? `${damage.width}x${damage.height} at (${damage.x},${damage.y})`
         : 'none'
-      logForDebugging(
-        `Slow render: ${elapsed.toFixed(1)}ms, screen: ${next.screen.height}x${next.screen.width}, damage: ${damageInfo}, changes: ${screen.diff.length}`,
-      )
     }
 
     return scrollPatch.length > 0

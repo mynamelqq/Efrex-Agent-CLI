@@ -2,7 +2,7 @@ import { writeFile } from 'fs/promises'
 import { join } from 'path'
 import { formatFileSize } from './format.js'
 import { logError } from './logger.js'
-import { toError } from './error.js'
+import { toError } from './errors.js'
 
 /**
  * Generates instruction text for Claude to read from a saved output file.

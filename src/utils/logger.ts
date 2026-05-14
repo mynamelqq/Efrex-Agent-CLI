@@ -3,11 +3,7 @@ import { join } from 'path'
 import type { LogOption, SerializedMessage } from '../types/logs.js'
 import { sortLogs } from '../types/logs.js'
 import { LOG_PATHS, dateToFilename } from './logPaths.js'
-import {
-  getLastAPIRequest,
-  setLastAPIRequest,
-  setLastAPIRequestMessages,
-} from '../bootstrap/state.js'
+
 
 // ─── In-memory error log ───
 
@@ -91,26 +87,7 @@ export function getInMemoryErrors(): Array<{ error: string; timestamp: string }>
 
 // ─── API Request Capture ───
 
-/**
- * Captures the last API request params for debugging/bug reports.
- * Messages are stripped by default to avoid retaining full conversations.
- */
-export function captureAPIRequest(
-  params: Record<string, unknown>,
-  opts?: { includeMessages?: boolean; messages?: unknown[] },
-): void {
-  const { messages, ...paramsWithoutMessages } = params
-  setLastAPIRequest(paramsWithoutMessages)
-  if (opts?.includeMessages && opts.messages) {
-    setLastAPIRequestMessages(opts.messages)
-  } else {
-    setLastAPIRequestMessages(null)
-  }
-}
 
-export function getLastCapturedAPIRequest(): Record<string, unknown> | null {
-  return getLastAPIRequest()
-}
 
 // ─── Log Loading ───
 

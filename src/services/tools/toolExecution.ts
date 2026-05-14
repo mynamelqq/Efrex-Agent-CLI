@@ -1,10 +1,12 @@
 ﻿import type { ToolUseBlock } from 'src/package/message'
-import type { AssistantMessage, Message } from 'src/package/message.js'
+import type { AssistantMessage, Message,ToolResultBlockParam } from 'src/package/message.js'
+import { ContentBlockParam } from 'packages/@ant/model-provider/src/index.js'
 import { findToolByName, type ToolUseContext,Tool} from '../../Tool.js'
 import { createUserMessage } from 'src/utils/messages.js'
 import { logError } from 'src/utils/logger.js'
 import { normalizeToolInput } from 'src/utils/api.js'
 import type { z } from 'zod/v4'
+import {maybePersistLargeToolResult,getPersistenceThreshold} from 'src/utils/toolResultStorage.js'
 // import { Stream } from '../../utils/stream.js'
 import { createToolResultStopMessage,CANCEL_MESSAGE } from 'src/utils/messages.js'
 import { formatZodValidationError } from 'src/utils/toolErrors.js'
@@ -147,14 +149,11 @@ export async function* runToolUse(
 
   try {
     const result = await tool.call(parsedInput.data, toolUseContext)
-    const toolResultBlock = tool.mapToolResultToToolResultBlockParam(
-      result.data,
-      toolUse.id,
-    )
-
+    const toolResultBlock=await processToolResultBlock(tool,result.data,toolUse.id)
+    const contentBlocks: ContentBlockParam[] = [toolResultBlock]
     yield {
       message: createUserMessage({
-        content: [toolResultBlock],
+        content: contentBlocks,
         toolUseResult: result.data,
         sourceToolAssistantUUID: assistantMessage.uuid,
       }),
@@ -189,4 +188,30 @@ export async function* runToolUse(
       }),
     }
   }
+}
+/**
+ * Process a tool result for inclusion in a message.
+ * Maps the result to the API format and persists large results to disk.
+ */
+export async function processToolResultBlock<T>(
+  tool: {
+    name: string
+    maxResultSizeChars: number
+    mapToolResultToToolResultBlockParam: (
+      result: T,
+      toolUseID: string,
+    ) => ToolResultBlockParam
+  },
+  toolUseResult: T,
+  toolUseID: string,
+): Promise<ToolResultBlockParam> {
+  const toolResultBlock = tool.mapToolResultToToolResultBlockParam(
+    toolUseResult,
+    toolUseID,
+  )
+  return maybePersistLargeToolResult(
+    toolResultBlock,
+    tool.name,
+    getPersistenceThreshold(tool.name, tool.maxResultSizeChars),
+  )
 }

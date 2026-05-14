@@ -114,9 +114,6 @@ const wrappedRender = async (
   // write overwrites scrollback instead of appending below the logo.
   await Promise.resolve()
   const instance = renderSync(node, options)
-  logForDebugging(
-    `[render] first ink render: ${Math.round(process.uptime() * 1000)}ms since process start`,
-  )
   return instance
 }
 

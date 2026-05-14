@@ -362,7 +362,7 @@ export default function MarkdownText({text, width = 80, maxRows}: {text: string;
           case 'heading':
             return (
               <Text key={index} bold color={block.level <= 2 ? 'blueBright' : 'cyanBright'}>
-                {'#'.repeat(block.level)} {renderInline(block.text)}
+                {renderInline(block.text)}
               </Text>
             );
           case 'paragraph':

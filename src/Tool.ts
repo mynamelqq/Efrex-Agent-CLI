@@ -10,6 +10,7 @@ import { Message } from 'src/package/message';
 import { ToolResultBlockParam } from 'src/package/message';
 import { ThinkingConfig } from './queryEngine';
 import { ThemeName } from 'packages/@ant/ink/src';
+import { ContentReplacementState } from './utils/toolResultStorage';
 export type ToolResult<T> =
 {
   type?: string,
@@ -44,7 +45,7 @@ export type ToolUseContext = {
   readFileState: FileStateCache,
   abortController: AbortController,
   /** Custom system prompt that replaces the default system prompt */
-
+  contentReplacementState?: ContentReplacementState,
   updateFileHistoryState: (
     updater: (prev: FileHistoryState) => FileHistoryState,
   ) => void,
@@ -99,8 +100,8 @@ export type Tool<
       verbose: boolean
       isTranscriptMode?: boolean
     },
-  ): React.ReactNode
-
+  ): React.ReactNode,
+  
   renderToolResultMessage?(
     content: Output,
     progressMessagesForMessage: Message[],

@@ -2,7 +2,7 @@ import { z } from 'zod/v4';
 import { lazySchema } from '../../utils/lazySchema';
 import { semanticNumber } from '../../utils/semanticNumber';
 import { buildTool } from '../../Tool';
-import { AssistantMessage } from '../../types/message';
+import { AssistantMessage } from 'src/package/message';
 import { BASH_TOOL_NAME } from './toolName';
 import { detectFileEncoding } from '../../utils/file';
 import { TOOL_SUMMARY_MAX_LENGTH } from '../../constants/toolLimits';
@@ -10,7 +10,7 @@ import { copyFile, stat as fsStat, truncate as fsTruncate, link } from 'fs/promi
 import { ToolDef } from '../../Tool';
 import { ExecResult } from '../../utils/ShellCommand';
 import { getDefaultBashTimeoutMs, getMaxBashTimeoutMs } from '../../utils/timeouts';
-import { isENOENT } from '../../utils/error';
+import { isENOENT } from '../../utils/errors';
 import {readFile}from "fs/promises"
 import { ToolUseContext } from '../../Tool';
 import { truncate } from '../../utils/format.js';

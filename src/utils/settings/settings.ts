@@ -5,7 +5,7 @@ import { SAFE_ENV_VARS } from 'src/constants/env.js'
 import { getOriginalCwd } from 'src/bootstrap/state.js'
 import { logForDebugging } from '../debug.js'
 import { getClaudeConfigHomeDir } from '../envUtils.js'
-import { getErrnoCode } from '../error.js'
+import { getErrnoCode } from '../errors.js'
 import { safeParseJSON } from '../json.js'
 import { logError } from '../log.js'
 import {

@@ -1109,7 +1109,6 @@ export default class Ink {
     // correctly. One extra paint of this message, but correct > fast.
     dom.markDirty(el);
     const positions = scanPositions(rendered, this.searchHighlightQuery);
-    logForDebugging(`scanElementSubtree: q='${this.searchHighlightQuery}' ` + `el=${width}x${height}@(${elLeft},${elTop}) n=${positions.length} ` + `[${positions.slice(0, 10).map(p => `${p.row}:${p.col}`).join(',')}` + `${positions.length > 10 ? ',…' : ''}]`);
     return positions;
   }
 
@@ -1418,7 +1417,6 @@ export default class Ink {
         level: 'warn'
       });
     }
-    logForDebugging(`[stdin] resumeStdin: re-attaching ${this.stdinListeners.length} listener(s), wasRawMode=${this.wasRawMode}`);
     this.stdinListeners.forEach(({
       event,
       listener

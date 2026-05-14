@@ -21,12 +21,21 @@ export type MessageType =
   | 'progress'
   | 'grouped_tool_use'
   | 'collapsed_read_search'
+/**
+ * Response model for a file uploaded to the container.
+ */
+export interface TextBlock {
+
+  text: string;
+
+  type: 'text';
+}
 
 /** A single content element inside message.content arrays. */
 export type ContentItem = ContentBlockParam | ContentBlock
 
 export type MessageContent = string | ContentBlockParam[] | ContentBlock[]
-
+export {ContentBlockParam, ContentBlock} from '@anthropic-ai/sdk/resources/index.mjs'
 /**
  * Typed content array — used in narrowed message subtypes so that
  * `message.content[0]` resolves to `ContentItem` instead of

@@ -7,6 +7,6 @@ import { FileReadTool } from './tools/FileReadTool/FileReadTool'
 import { GrepTool } from './tools/GrepTool/GrepTool'
 import { WebFetchTool } from './tools/WebFetchTool/WebFetchTool'
 export function getAllBaseTools():Tools{
-    return [GlobTool,GrepTool,FileReadTool,]//WebSearchTool,WebFetchTool
+    return [GlobTool,GrepTool,FileReadTool,WebSearchTool,WebFetchTool]
 
 }

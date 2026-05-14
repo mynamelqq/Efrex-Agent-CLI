@@ -20,6 +20,7 @@ import type {
 import { asSystemPrompt, SystemPrompt } from './prompt.js'
 import { logForDebugging } from './utils/debug.js'
 import { createAttachmentMessage } from './utils/messages.js'
+import { applyToolResultBudget } from './utils/toolResultStorage.js'
 export type QueryParams = {
   messages: Message[]
   systemPrompt: SystemPrompt
@@ -98,7 +99,15 @@ async function* queryLoop(
     }
 
     let toolUseContext = state.toolUseContext
-    const messagesForQuery = [...messages]
+    const messagesForQuery = await applyToolResultBudget(state.messages,
+      toolUseContext.contentReplacementState,
+      undefined,
+      new Set(
+        toolUseContext.options.tools//从工具配置里提取出【没有设置最大字符限制】的工具名称，并存进 Set 去重。
+          .filter(t => !Number.isFinite(t.maxResultSizeChars))
+          .map(t => t.name),
+      ),
+    )
     toolUseContext = { ...toolUseContext, messages: messagesForQuery }
 
     yield { type: 'stream_request_start' }

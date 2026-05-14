@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import chalk from 'chalk'
 import { randomUUID } from 'node:crypto'
 import { Box, Text, useApp, useInput, useWindowSize } from './ink.js'

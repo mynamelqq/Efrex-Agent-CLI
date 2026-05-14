@@ -3,7 +3,7 @@ import { chmodSync, readFileSync, writeFileSync as fsWriteFileSync } from 'fs'
 import { realpath, stat } from 'fs/promises'
 import { homedir } from 'os'
 import { readdirSync,Dirent } from 'fs'
-import { isENOENT } from './error.js'
+import { isENOENT } from './errors.js'
 import {
   basename,
   dirname,

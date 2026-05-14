@@ -10,7 +10,7 @@ import {
   type SharpFunction,
   type SharpInstance,
 } from '../tools/FileReadTool/imageProcessor.js'
-import { errorMessage } from './error'
+import { errorMessage } from './errors'
 import { formatFileSize } from './format.js'
 
 

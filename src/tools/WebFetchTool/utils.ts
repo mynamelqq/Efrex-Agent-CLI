@@ -2,7 +2,7 @@ import axios, { type AxiosResponse } from 'axios'
 import { LRUCache } from 'lru-cache'
 import { asSystemPrompt } from 'src/prompt.js'
 import {  querySmallModel } from 'src/services/api/smallModel.js'
-import { AbortError } from '../../utils/error.js'
+import { AbortError } from '../../utils/errors.js'
 import { getChatUIWebFetchUserAgent } from '../../utils/http.js'
 import { logError } from '../../utils/logger.js'
 import {

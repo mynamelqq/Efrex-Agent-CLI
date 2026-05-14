@@ -14,7 +14,7 @@ import { createUserMessage } from '../../utils/messages'
 import { readFileInRange } from '../../utils/readFileInRange'
 // import {readFileBytes} from 'fs/promises'
 import * as path from 'path'
-import { isENOENT } from '../../utils/error'
+import { isENOENT } from '../../utils/errors'
 import { getEfrexConfigHomeDir } from '../../utils/envUtils'
 import {
   open
@@ -35,7 +35,7 @@ import {
   isPDFExtension,
   parsePDFPageRange,
 } from '../../utils/pdfUtils'
-import { getErrnoCode } from '../../utils/error'
+import { getErrnoCode } from '../../utils/errors'
 import { getFileModificationTimeAsync } from '../../utils/file'
 import { LOG_PATHS } from '../../utils/logPaths'
 import { logError } from '../../utils/logger'

@@ -7,7 +7,7 @@ import { isAbsolute, resolve } from 'path'
 import { realpathSync} from 'fs'
 import { ShellType,ShellProvider} from './shell/shellProvider.js'
 import { cwd } from 'process'
-import { isENOENT } from './error.js'
+import { isENOENT } from './errors.js'
 const DEFAULT_TIMEOUT = 30 * 60 * 1000 // 30 minutes
 export type ShellConfig = {
   provider: ShellProvider
