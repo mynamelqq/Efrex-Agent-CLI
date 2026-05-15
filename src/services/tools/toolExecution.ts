@@ -151,9 +151,15 @@ export async function* runToolUse(
     const result = await tool.call(parsedInput.data, toolUseContext)
     const toolResultBlock=await processToolResultBlock(tool,result.data,toolUse.id)
     const contentBlocks: ContentBlockParam[] = [toolResultBlock]
+
+    // const toolResultBlock = tool.mapToolResultToToolResultBlockParam(
+    //   result.data,
+    //   toolUse.id,
+    // )
+
     yield {
       message: createUserMessage({
-        content: contentBlocks,
+        content: [toolResultBlock],
         toolUseResult: result.data,
         sourceToolAssistantUUID: assistantMessage.uuid,
       }),

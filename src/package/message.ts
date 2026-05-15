@@ -3,6 +3,7 @@ import type {
   ContentBlock,
 } from '@anthropic-ai/sdk/resources/index.mjs'
 import type { UUID } from 'crypto'
+export type{ContentBlockParam, ContentBlock} from '@anthropic-ai/sdk/resources/index.mjs'
 import type {
   ChatCompletionAssistantMessageParam,
   ChatCompletionContentPart,
@@ -13,6 +14,7 @@ import type {
   ChatCompletionToolMessageParam,
 } from 'openai/resources/chat/completions'
 import type { CompletionUsage } from 'openai/resources'
+import { BetaCacheCreation, BetaIterationsUsage, BetaServerToolUsage } from 'src/types/message'
 export type MessageType =
   | 'user'
   | 'assistant'
@@ -23,6 +25,7 @@ export type MessageType =
   | 'tombstone'
   | 'grouped_tool_use'
   | 'collapsed_read_search'
+export type HookResultMessage = Message
 export type BetaTool = {
   name: string
   description: string
@@ -71,7 +74,7 @@ export type Message = {
     content?: MessageContent
     tool_calls?: ChatCompletionMessageToolCall[]
     tool_call_id?: string
-    usage?: CompletionUsage | Record<string, unknown>
+    usage?: CompletionUsage | Record<string, unknown> 
     refusal?: string | null
     finish_reason?: string | null
     [key: string]: unknown
@@ -157,4 +160,62 @@ export type ToolUseSummaryMessage = Message & {
   type: 'tool_use_summary'
   summary?: string
   precedingToolUseIds?: string[]
+}
+export interface BetaUsage {
+  /**
+   * Breakdown of cached tokens by TTL
+   */
+  cache_creation: BetaCacheCreation | null;
+
+  /**
+   * The number of input tokens used to create the cache entry.
+   */
+  cache_creation_input_tokens: number | null;
+
+  /**
+   * The number of input tokens read from the cache.
+   */
+  cache_read_input_tokens: number | null;
+
+  /**
+   * The geographic region where inference was performed for this request.
+   */
+  inference_geo: string | null;
+
+  /**
+   * The number of input tokens which were used.
+   */
+  input_tokens: number;
+
+  /**
+   * Per-iteration token usage breakdown.
+   *
+   * Each entry represents one sampling iteration, with its own input/output token
+   * counts and cache statistics. This allows you to:
+   *
+   * - Determine which iterations exceeded long context thresholds (>=200k tokens)
+   * - Calculate the true context window size from the last iteration
+   * - Understand token accumulation across server-side tool use loops
+   */
+  iterations: BetaIterationsUsage | null;
+
+  /**
+   * The number of output tokens which were used.
+   */
+  output_tokens: number;
+
+  /**
+   * The number of server tool requests.
+   */
+  server_tool_use: BetaServerToolUsage | null;
+
+  /**
+   * If the request used the priority, standard, or batch tier.
+   */
+  service_tier: 'standard' | 'priority' | 'batch' | null;
+
+  /**
+   * The inference speed mode used for this request.
+   */
+  speed: 'standard' | 'fast' | null;
 }

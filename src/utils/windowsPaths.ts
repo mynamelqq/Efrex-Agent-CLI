@@ -27,7 +27,7 @@ function checkPathExists(path: string): boolean {
  */
 function findExecutable(executable: string): string | null {
   // For git, check common installation locations first
-  if (executable === 'git') {
+  if (executable === 'git') {//寻找路径，看是否存在,不行就用命令
     const defaultLocations = [
       // check 64 bit before 32 bit
       'C:\\Program Files\\Git\\cmd\\git.exe',
@@ -45,7 +45,7 @@ function findExecutable(executable: string): string | null {
 
   // Fall back to where.exe
   try {
-    const result = execSync_DEPRECATED(`where.exe ${executable}`, {
+    const result = execSync_DEPRECATED(`where.exe ${executable}`, {//nodeExecSync
       stdio: 'pipe',
       encoding: 'utf8',
     }).trim()
@@ -55,12 +55,12 @@ function findExecutable(executable: string): string | null {
     const paths = result.split('\r\n').filter(Boolean)
     const cwd = getCwd().toLowerCase()
 
-    for (const candidatePath of paths) {
+    for (const candidatePath of paths) {//可能有很多路径
       // Normalize and compare paths to ensure we're not in current directory
       const normalizedPath = path.resolve(candidatePath).toLowerCase()
       const pathDir = path.dirname(normalizedPath).toLowerCase()
 
-      // Skip if the executable is in the current working directory
+      // Skip if the executable is in the current working directory 如果在当前目录下，就跳过，继续找下一个路径
       if (pathDir === cwd || normalizedPath.startsWith(cwd + path.sep)) {
         continue
       }
@@ -84,6 +84,7 @@ export function setShellIfWindows(): void {
   if (getPlatform() === 'windows') {
     const gitBashPath = findGitBashPath()
     process.env.SHELL = gitBashPath
+    process.env.GIT_BASH_PATH = gitBashPath
   }
 }
 
@@ -91,13 +92,13 @@ export function setShellIfWindows(): void {
  * Find the path where `bash.exe` included with git-bash exists, exiting the process if not found.
  */
 export const findGitBashPath = memoize((): string => {
-  if (process.env.CLAUDE_CODE_GIT_BASH_PATH) {
-    if (checkPathExists(process.env.CLAUDE_CODE_GIT_BASH_PATH)) {
-      return process.env.CLAUDE_CODE_GIT_BASH_PATH
+  if (process.env.GIT_BASH_PATH) {
+    if (checkPathExists(process.env.GIT_BASH_PATH)) {
+      return process.env.GIT_BASH_PATH
     }
     // biome-ignore lint/suspicious/noConsole:: intentional console output
     console.error(
-      `Claude Code was unable to find CLAUDE_CODE_GIT_BASH_PATH path "${process.env.CLAUDE_CODE_GIT_BASH_PATH}"`,
+      `Claude Code was unable to find GIT_BASH_PATH path "${process.env.GIT_BASH_PATH}"`,
     )
     // eslint-disable-next-line custom-rules/no-process-exit
     process.exit(1)
@@ -113,7 +114,7 @@ export const findGitBashPath = memoize((): string => {
 
   // biome-ignore lint/suspicious/noConsole:: intentional console output
   console.error(
-    'Claude Code on Windows requires git-bash (https://git-scm.com/downloads/win). If installed but not in PATH, set environment variable pointing to your bash.exe, similar to: CLAUDE_CODE_GIT_BASH_PATH=C:\\Program Files\\Git\\bin\\bash.exe',
+    'Claude Code on Windows requires git-bash (https://git-scm.com/downloads/win). If installed but not in PATH, set environment variable pointing to your bash.exe, similar to: GIT_BASH_PATH=C:\\Program Files\\Git\\bin\\bash.exe',
   )
   // eslint-disable-next-line custom-rules/no-process-exit
   process.exit(1)

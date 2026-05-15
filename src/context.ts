@@ -8,7 +8,9 @@ import { execFileNoThrow } from './utils/execFileNoThrow.js'
 // import { shouldIncludeGitInstructions } from './utils/gitSettings.js'
 import { logError } from './utils/log.js'
 import { getLocalISODate } from './constants/common'
-
+// Default max output tokens
+const MAX_OUTPUT_TOKENS_DEFAULT = 32_000
+const MAX_OUTPUT_TOKENS_UPPER_LIMIT = 64_000
 /**
  * This context is prepended to each conversation, and cached for the duration of the conversation.
  */
@@ -107,3 +109,154 @@ export const getUserContext = memoize(
 //     return null
 //   }
 // })
+
+
+function getOpenAICompatibleMaxOutputTokens(model: string): {
+  default: number
+  upperLimit: number
+} | undefined {
+  const m = normalizeModelName(model)
+
+  // OpenAI's GPT-5 family currently uses 128k output ceilings across the
+  // variants we support here. Keep the default aligned with the ceiling so the
+  // OpenAI-compatible path does not under-request tokens by default.
+  if (m.includes('gpt-5')) {
+    return { default: 128_000, upperLimit: 128_000 }
+  }
+
+  // GPT-4.1 / 4o / GPT-OSS models are still substantially larger than the
+  // Claude-style defaults, but not as large as GPT-5.
+  if (m.includes('gpt-4.1')) {
+    return { default: 32_768, upperLimit: 32_768 }
+  }
+  if (m.includes('gpt-4o')) {
+    return { default: 16_384, upperLimit: 16_384 }
+  }
+  if (m.includes('gpt-oss')) {
+    return { default: 32_768, upperLimit: 32_768 }
+  }
+
+  // Reasoning-style OpenAI models from the o3/o4 family typically allow much
+  // larger completions than the Claude defaults.
+  if (m === 'o3' || m.startsWith('o3-') || m.includes('/o3-')) {
+    return { default: 100_000, upperLimit: 100_000 }
+  }
+  if (m === 'o4-mini' || m.startsWith('o4-mini-') || m.includes('/o4-mini-')) {
+    return { default: 100_000, upperLimit: 100_000 }
+  }
+
+  return undefined
+}
+
+function getChineseCompatibleMaxOutputTokens(model: string): {
+  default: number
+  upperLimit: number
+} | undefined {
+  const m = normalizeModelName(model)
+
+  // DeepSeek's v4/pro variants support very large completions; keep a larger
+  // ceiling there and a more conservative default for the rest of the family.
+  if (m.includes('deepseek-v4-pro')) {
+    return { default: 64_000, upperLimit: 128_000 }
+  }
+  if (m.includes('deepseek')) {
+    return { default: 32_000, upperLimit: 64_000 }
+  }
+
+  if (modelMatchesFamily(m, 'qwen')) {
+    return { default: 32_000, upperLimit: 64_000 }
+  }
+  if (modelMatchesFamily(m, 'glm')) {
+    return { default: 32_000, upperLimit: 64_000 }
+  }
+  if (modelMatchesFamily(m, 'doubao')) {
+    return { default: 32_000, upperLimit: 64_000 }
+  }
+  if (modelMatchesFamily(m, 'moonshot') || modelMatchesFamily(m, 'kimi')) {
+    return { default: 32_000, upperLimit: 64_000 }
+  }
+  if (modelMatchesFamily(m, 'hunyuan')) {
+    return { default: 32_000, upperLimit: 64_000 }
+  }
+  if (
+    modelMatchesFamily(m, 'ernie') ||
+    modelMatchesFamily(m, 'spark') ||
+    modelMatchesFamily(m, 'baichuan') ||
+    modelMatchesFamily(m, 'minimax') ||
+    modelMatchesFamily(m, 'yi') ||
+    modelMatchesFamily(m, 'step')
+  ) {
+    return { default: 16_384, upperLimit: 32_768 }
+  }
+
+  return undefined
+}
+
+/**
+ * Returns the model's default and upper limit for max output tokens.
+ */
+export function getModelMaxOutputTokens(model: string): {
+  default: number
+  upperLimit: number
+} {
+  let defaultTokens: number
+  let upperLimit: number
+  const thirdPartyMaxTokens =
+    getOpenAICompatibleMaxOutputTokens(model) ??
+    getChineseCompatibleMaxOutputTokens(model)
+  if (thirdPartyMaxTokens) {
+    return thirdPartyMaxTokens
+  }
+
+  const m = normalizeModelName(model)
+  if (m.includes('opus-4-7')) {
+    defaultTokens = 64_000
+    upperLimit = 128_000
+  } else if (m.includes('opus-4-6')) {
+    defaultTokens = 64_000
+    upperLimit = 128_000
+  } else if (m.includes('sonnet-4-6')) {
+    defaultTokens = 32_000
+    upperLimit = 128_000
+  } else if (
+    m.includes('opus-4-5') ||
+    m.includes('sonnet-4') ||
+    m.includes('haiku-4')
+  ) {
+    defaultTokens = 32_000
+    upperLimit = 64_000
+  } else if (m.includes('opus-4-1') || m.includes('opus-4')) {
+    defaultTokens = 32_000
+    upperLimit = 32_000
+  } else if (m.includes('claude-3-opus')) {
+    defaultTokens = 4_096
+    upperLimit = 4_096
+  } else if (m.includes('claude-3-sonnet')) {
+    defaultTokens = 8_192
+    upperLimit = 8_192
+  } else if (m.includes('claude-3-haiku')) {
+    defaultTokens = 4_096
+    upperLimit = 4_096
+  } else if (m.includes('3-5-sonnet') || m.includes('3-5-haiku')) {
+    defaultTokens = 8_192
+    upperLimit = 8_192
+  } else if (m.includes('3-7-sonnet')) {
+    defaultTokens = 32_000
+    upperLimit = 64_000
+  } else {
+    defaultTokens = MAX_OUTPUT_TOKENS_DEFAULT
+    upperLimit = MAX_OUTPUT_TOKENS_UPPER_LIMIT
+  }
+
+  return { default: defaultTokens, upperLimit }
+}
+
+function normalizeModelName(model: string): string {
+  return model.toLowerCase().replace(/\[1m\]$/, '')
+}
+
+function modelMatchesFamily(model: string, family: string): boolean {
+  const escapedFamily = family.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(^|[./-])${escapedFamily}([./-]|$)`, 'i').test(model)
+}
+

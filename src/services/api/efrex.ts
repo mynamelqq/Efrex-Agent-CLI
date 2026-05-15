@@ -4,6 +4,7 @@ import {
   type StreamEvent,
   type SystemAPIErrorMessage,
 } from 'src/package/message'
+import { getModelMaxOutputTokens } from 'src/context.js'
 import type { SystemPrompt } from 'src/prompt'
 import type { ThinkingConfig } from 'src/queryEngine'
 import { toolMatchesName, type Tools } from 'src/Tool'
@@ -82,4 +83,8 @@ export async function* queryModelWithStreaming({
       })
       return
   }
+}
+export function getMaxOutputTokensForModel(model: string): number {
+  const maxOutputTokens = getModelMaxOutputTokens(model)
+  return maxOutputTokens.default
 }

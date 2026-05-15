@@ -546,6 +546,7 @@ export async function ensureToolResultsDir(): Promise<void> {
     // Directory may already exist
   }
 }
+
 /**
  * Generate a preview of content, truncating at a newline boundary when possible.
  */

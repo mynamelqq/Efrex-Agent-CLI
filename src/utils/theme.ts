@@ -1,3 +1,5 @@
+import { THEME_NAMES } from "packages/@ant/ink/src/theme/theme-types"
+
 export type Theme = {
   autoAccept: string
   bashBorder: string
@@ -250,3 +252,5 @@ export const lightAnsiTheme: Theme = {
 }
 
 export const defaultToolRenderTheme = lightAnsiTheme
+/** A renderable theme. Always resolvable to a concrete color palette. */
+export type ThemeName = (typeof THEME_NAMES)[number]

@@ -50,3 +50,14 @@ export function toError(e: unknown): Error {
 export function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
+export class ShellError extends Error {
+  constructor(
+    public readonly stdout: string,
+    public readonly stderr: string,
+    public readonly code: number,
+    public readonly interrupted: boolean,
+  ) {
+    super('Shell command failed')
+    this.name = 'ShellError'
+  }
+}

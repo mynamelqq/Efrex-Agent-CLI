@@ -326,13 +326,13 @@ export function markScrollActivity(): void {
 }
 
 export function getCwdState(): string | null {
-  return cwdState;
+  return STATE.cwd;
 }
 export function getOriginalCwd(): string {
   return STATE.originalCwd
 }
 export function setCwdState(cwd: string | null): void {
-  cwdState = cwd;
+  STATE.cwd = cwd as string;
 }
 export function getSessionId(): SessionId {
   return STATE.sessionId

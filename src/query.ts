@@ -108,6 +108,20 @@ async function* queryLoop(
           .map(t => t.name),
       ),
     )
+    // const { compactionResult, consecutiveFailures } = await autoCompactIfNeeded(
+    //   messagesForQuery,
+    //   toolUseContext,
+    //   {
+    //     systemPrompt,
+    //     userContext,
+    //     systemContext,
+    //     toolUseContext,
+    //     forkContextMessages: messagesForQuery,
+    //   },
+    //   querySource,
+    //   tracking,
+    //   snipTokensFreed,
+    // )
     toolUseContext = { ...toolUseContext, messages: messagesForQuery }
 
     yield { type: 'stream_request_start' }
