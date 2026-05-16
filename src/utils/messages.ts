@@ -152,6 +152,17 @@ export function createToolResultStopMessage(
     tool_use_id: toolUseID,
   }
 }
+export function isEmptyMessageText(text: string): boolean {
+  return (
+    stripPromptXMLTags(text).trim() === '' || text.trim() === NO_CONTENT_MESSAGE
+  )
+}
+const STRIPPED_TAGS_RE =
+  /<(commit_analysis|context|function_analysis|pr_analysis)>.*?<\/\1>\n?/gs
+
+export function stripPromptXMLTags(content: string): string {
+  return content.replace(STRIPPED_TAGS_RE, '').trim()
+}
 function baseCreateAssistantMessage({
   content,
   isApiErrorMessage = false,

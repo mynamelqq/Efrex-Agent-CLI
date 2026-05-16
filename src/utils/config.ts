@@ -573,3 +573,46 @@ export function createDefaultGlobalConfig(): GlobalConfig {
     copyFullResponse: false,
   }
 }
+
+// Cache for global config
+let globalConfigCache: { config: GlobalConfig | null; mtime: number } = {
+  config: null,
+  mtime: 0,
+}
+let configCacheHits = 0
+let configCacheMisses = 0
+let globalConfigWriteCount = 0
+// Tracking for config file operations (telemetry)
+let lastReadFileStats: { mtime: number; size: number } | null = null
+export const CONFIG_WRITE_DISPLAY_THRESHOLD = 20
+// Write-through: what we just wrote IS the new config. cache.mtime overshoots
+// the file's real mtime (Date.now() is recorded after the write) so the
+// freshness watcher skips re-reading our own write on its next tick.
+function writeThroughGlobalConfigCache(config: GlobalConfig): void {
+  globalConfigCache = { config, mtime: Date.now() }
+  lastReadFileStats = null
+}
+export function getGlobalConfig(): GlobalConfig {
+  if (globalConfigCache.config) {//缓存命中加1
+    configCacheHits++
+    return globalConfigCache.config
+  }
+  // Slow path: startup load. Sync I/O here is acceptable because it runs
+  // exactly once, before any UI is rendered. Stat before read so any race
+  // self-corrects (old mtime + new content → watcher re-reads next tick).
+  configCacheMisses++
+  try {
+    let stats: { mtimeMs: number; size: number } | null = null
+
+    const config = createDefaultGlobalConfig()
+    globalConfigCache = {
+      config,
+      mtime:  Date.now(),
+    }
+    lastReadFileStats = null
+    return config
+  } catch {
+    // If anything goes wrong, fall back to uncached behavior
+    return createDefaultGlobalConfig()
+  }
+}

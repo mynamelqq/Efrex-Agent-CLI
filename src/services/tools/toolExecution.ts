@@ -148,7 +148,7 @@ export async function* runToolUse(
   }
 
   try {
-    const result = await tool.call(parsedInput.data, toolUseContext)
+    const result = await tool.call(parsedInput.data, toolUseContext,assistantMessage)
     const toolResultBlock=await processToolResultBlock(tool,result.data,toolUse.id)
     const contentBlocks: ContentBlockParam[] = [toolResultBlock]
 

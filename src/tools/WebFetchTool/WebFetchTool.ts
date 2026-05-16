@@ -90,7 +90,7 @@ export const WebFetchTool = buildTool({
   },
   async call(
     { url, prompt },
-    { abortController, options: { isNonInteractiveSession } },
+    { abortController, options: { isNonInteractiveSession } },assistantMessage,
   ) {
     const start = Date.now()
 

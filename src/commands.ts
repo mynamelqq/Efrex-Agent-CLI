@@ -9,7 +9,7 @@ export interface CommandResult {
 }
 
 async function updateSetting(key: string, value: string): Promise<void> {
-  const settingPath = path.join(homedir(),"/.efrex", 'setting.json');
+  const settingPath = path.join(homedir(),"/.efrex", 'settings.json');
   const content = await fs.readFile(settingPath, 'utf-8');
   const settings = JSON.parse(content);
   if (!settings.env) {

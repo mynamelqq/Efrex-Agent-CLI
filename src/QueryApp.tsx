@@ -949,7 +949,13 @@ export default function QueryApp(
     return () => clearInterval(timer)
   }, [loading])
 
-  const blinkVisible = Math.floor(animationTick / 6) % 2 === 0
+  const blinkVisible = Math.floor(animationTick / 14) % 2 === 0
+  const breathingCycle = 24
+  const breathingPhase = animationTick % breathingCycle
+  const breathingStrength =
+    breathingPhase <= breathingCycle / 2
+      ? breathingPhase / (breathingCycle / 2)
+      : (breathingCycle - breathingPhase) / (breathingCycle / 2)
 
   const setMessages = useCallback((updater: React.SetStateAction<MessageType[]>) => {
     const next =
@@ -1347,7 +1353,9 @@ export default function QueryApp(
       : 'default'
     : null
 
-  const statusPrefix = statusText ? (blinkVisible ? '•' : ' ') : null
+  const statusPrefix = statusText ? '•' : null
+  const statusPrefixDim = breathingStrength < 0.35
+  const statusPrefixBold = breathingStrength > 0.7
 
   const statusMessageWidth = statusText ? stringWidth(statusText) : 0
   const glimmerSpeed = statusMode === 'requesting' ? 55 : 50
@@ -1380,7 +1388,9 @@ export default function QueryApp(
 
       {loading && statusText && statusPrefix && statusSegments ? (
         <Box marginTop={1} flexDirection="row" flexWrap="nowrap" flexShrink={0}>
-          <Text color="yellowBright">{statusPrefix} </Text>
+        <Text color="yellowBright" dim={statusPrefixDim} bold={statusPrefixBold}>
+          {statusPrefix} 
+        </Text>
           <Text color="gray">{statusSegments.before}</Text>
           {statusSegments.shimmer ? (
             <Text color="cyanBright" bold>

@@ -32,7 +32,20 @@ export type BetaTool = {
   input_schema: Record<string, unknown>
   defer_loading?: boolean
 }
-
+export type RenderableMessage =
+  | AssistantMessage
+  | UserMessage
+  | (import('@ant/model-provider').Message & { type: 'system' })
+  | (import('@ant/model-provider').Message & {
+      type: 'attachment'
+      attachment: {
+        type: string
+        memories?: { path: string; content: string; mtimeMs: number }[]
+        [key: string]: unknown
+      }
+    })
+  | (import('@ant/model-provider').Message & { type: 'progress' })
+  | import('@ant/model-provider').GroupedToolUseMessage
 export type BetaToolUnion = BetaTool
 export interface ToolResultBlockParam {
   tool_use_id: string;
@@ -58,7 +71,7 @@ export interface ToolUseBlock {
 }
 export type Message = {
   type: MessageType
-  uuid: UUID | string
+  uuid: UUID
   timestamp?: string
   isMeta?: boolean
   isVirtual?: boolean

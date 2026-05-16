@@ -1,11 +1,11 @@
 import { BetaMessageStreamParams } from "src/types/message";
-
 let pendingInteractionTime: number | null = null;
 let cwdState: string | null = null;
 import { cwd } from "process";
 import { SessionId } from "src/types/ids";
 import { realpathSync } from 'fs'
 import { randomUUID } from "crypto";
+
 type State = {
   originalCwd: string
   // Stable project root - set once at startup (including by --worktree flag),
@@ -309,7 +309,9 @@ function getInitialState(): State {
 
 // AND ESPECIALLY HERE
 const STATE: State = getInitialState()
-
+export function getSessionProjectDir(): string | null {
+  return STATE.sessionProjectDir
+}
 export function updateLastInteractionTime(immediate = false): void {
   pendingInteractionTime = Date.now();
   if (immediate) {
@@ -353,3 +355,8 @@ export function regenerateSessionId(
   STATE.sessionProjectDir = null
   return STATE.sessionId
 }
+export function addToTotalLinesChanged(added: number, removed: number): void {
+  STATE.totalLinesAdded += added
+  STATE.totalLinesRemoved += removed
+}
+

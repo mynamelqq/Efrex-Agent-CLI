@@ -1,8 +1,10 @@
 
 import { chmodSync, readFileSync, writeFileSync as fsWriteFileSync } from 'fs'
-import { realpath, stat } from 'fs/promises'
+import { realpath, stat} from 'fs/promises'
 import { homedir } from 'os'
-import { readdirSync,Dirent } from 'fs'
+import { lstatSync,realpathSync,openSync,readSync,closeSync,readlinkSync} from 'fs'
+
+import { readdirSync,Dirent,statSync,unlinkSync} from 'fs'
 import { isENOENT } from './errors.js'
 import {
   basename,
@@ -17,7 +19,7 @@ import {
 } from 'path'
 import { getCwd } from '../utils/cwd.js'
 import { expandPath } from './path.js'
-
+export type LineEndingType = 'CRLF' | 'LF'
 import { getPlatform } from './platform.js'
 export type File = {
   filename: string
@@ -39,7 +41,12 @@ export async function pathExists(path: string): Promise<boolean> {
     return false
   }
 }
-
+export function convertLeadingTabsToSpaces(content: string): string {
+  // The /gm regex scans every line even on no-match; skip it entirely
+  // for the common tab-free case.
+  if (!content.includes('\t')) return content
+  return content.replace(/^\t+/gm, _ => '  '.repeat(_.length))
+}
 export function detectFileEncoding(filePath: string): BufferEncoding {
   try {
     const sample = readFileSync(filePath, { flag: 'r' }).subarray(0, 4096)
@@ -134,6 +141,15 @@ export function findSimilarFile(filePath: string): string | undefined {
   }
 }
 /**
+ * Get the normalized modification time of a file in milliseconds.
+ * Uses Math.floor to ensure consistent timestamp comparisons across file operations,
+ * reducing false positives from sub-millisecond precision changes (e.g., from IDE
+ * file watchers that touch files without changing content).
+ */
+export function getFileModificationTime(filePath: string): number {
+  return Math.floor(statSync(filePath).mtimeMs)
+}
+/**
  * Suggests a corrected path under the current working directory when a file/directory
  * is not found. Detects the "dropped repo folder" pattern where the model constructs
  * an absolute path missing the repo directory component.
@@ -216,4 +232,176 @@ export function addLineNumbers({
   //     return `${numStr.padStart(6, ' ')}→${line}`
   //   })
   //   .join('\n')
+}
+export function safeResolvePath(
+  filePath: string,
+): { resolvedPath: string; isSymlink: boolean; isCanonical: boolean } {
+  // Block UNC paths before any filesystem access to prevent network
+  // requests (DNS/SMB) during validation on Windows
+  if (filePath.startsWith('//') || filePath.startsWith('\\\\')) {
+    return { resolvedPath: filePath, isSymlink: false, isCanonical: false }
+  }
+
+  try {
+    // Check for special file types (FIFOs, sockets, devices) before calling realpathSync.
+    // realpathSync can block on FIFOs waiting for a writer, causing hangs.
+    // If the file doesn't exist, lstatSync throws ENOENT which the catch
+    // below handles by returning the original path (allows file creation).
+    const stats = lstatSync(filePath)
+    if (
+      stats.isFIFO() ||
+      stats.isSocket() ||
+      stats.isCharacterDevice() ||
+      stats.isBlockDevice()
+    ) {
+      return { resolvedPath: filePath, isSymlink: false, isCanonical: false }
+    }
+
+    const resolvedPath = realpathSync(filePath)
+    return {
+      resolvedPath,
+      isSymlink: resolvedPath !== filePath,
+      // realpathSync returned: resolvedPath is canonical (all symlinks in
+      // all path components resolved). Callers can skip further symlink
+      // resolution on this path.
+      isCanonical: true,
+    }
+  } catch (_error) {
+    // If lstat/realpath fails for any reason (ENOENT, broken symlink,
+    // EACCES, ELOOP, etc.), return the original path to allow operations
+    // to proceed
+    return { resolvedPath: filePath, isSymlink: false, isCanonical: false }
+  }
+}
+export function fsReadSync(fsPath:string,  options: {
+      length: number
+    },)
+{
+  let fd: number | undefined
+  try {
+    fd = openSync(fsPath, 'r')
+    const buffer = Buffer.alloc(options.length)
+    const bytesRead = readSync(fd, buffer, 0, options.length, 0)
+    return { buffer, bytesRead }
+  } finally {
+    if (fd) closeSync(fd)
+  }
+}
+export function writeTextContent(
+  filePath: string,
+  content: string,
+  encoding: BufferEncoding,
+  endings: LineEndingType,
+): void {
+  let toWrite = content
+  if (endings === 'CRLF') {
+    // Normalize any existing CRLF to LF first so a new_string that already
+    // contains \r\n (raw model output) doesn't become \r\r\n after the join.
+    toWrite = content.replaceAll('\r\n', '\n').split('\n').join('\r\n')
+  }
+
+  writeFileSyncAndFlush_DEPRECATED(filePath, toWrite, { encoding })
+}
+
+/**
+ * Writes to a file and flushes the file to disk
+ * @param filePath The path to the file to write to
+ * @param content The content to write to the file
+ * @param options Options for writing the file, including encoding and mode
+ * @deprecated Use `fs.promises.writeFile` with flush option instead for non-blocking writes.
+ * Sync file writes block the event loop and cause performance issues.
+ */
+export function writeFileSyncAndFlush_DEPRECATED(
+  filePath: string,
+  content: string,
+  options: { encoding: BufferEncoding; mode?: number } = { encoding: 'utf-8' },
+): void {
+  // Check if the target file is a symlink to preserve it for all users
+  // Note: We don't use safeResolvePath here because we need to manually handle
+  // symlinks to ensure we write to the target while preserving the symlink itself
+  let targetPath = filePath
+  try {
+    // Try to read the symlink - if successful, it's a symlink
+    const linkTarget = readlinkSync(filePath)
+    // Resolve to absolute path
+    targetPath = isAbsolute(linkTarget)
+      ? linkTarget
+      : resolve(dirname(filePath), linkTarget)
+  } catch {
+    // ENOENT (doesn't exist) or EINVAL (not a symlink) — keep targetPath = filePath
+  }
+
+  // Try atomic write first
+  const tempPath = `${targetPath}.tmp.${process.pid}.${Date.now()}`
+
+  // Check if target file exists and get its permissions (single stat, reused in both atomic and fallback paths)
+  let targetMode: number | undefined
+  let targetExists = false
+  try {
+    targetMode = statSync(targetPath).mode
+    targetExists = true
+  } catch (e) {
+    if (!isENOENT(e)) throw e
+    if (options.mode !== undefined) {
+      // Use provided mode for new files
+      targetMode = options.mode
+    }
+  }
+
+  try {
+
+    // Write to temp file with flush and mode (if specified for new file)
+    const writeOptions: {
+      encoding: BufferEncoding
+      flush: boolean
+      mode?: number
+    } = {
+      encoding: options.encoding,
+      flush: true,
+    }
+    // Only set mode in writeFileSync for new files to ensure atomic permission setting
+    if (!targetExists && options.mode !== undefined) {
+      writeOptions.mode = options.mode
+    }
+
+    fsWriteFileSync(tempPath, content, writeOptions)
+
+    // For existing files or if mode was not set atomically, apply permissions
+    if (targetExists && targetMode !== undefined) {
+      chmodSync(tempPath, targetMode)
+    
+    }
+
+    // Atomic rename (on POSIX systems, this is atomic)
+    // On Windows, this will overwrite the destination if it exists
+  } catch (atomicError) {
+
+    // Clean up temp file on error
+    try {
+      unlinkSync(tempPath)
+    } catch (cleanupError) {
+
+    }
+
+    // Fallback to non-atomic write
+    try {
+      const fallbackOptions: {
+        encoding: BufferEncoding
+        flush: boolean
+        mode?: number
+      } = {
+        encoding: options.encoding,
+        flush: true,
+      }
+      // Only set mode for new files
+      if (!targetExists && options.mode !== undefined) {
+        fallbackOptions.mode = options.mode
+      }
+
+      fsWriteFileSync(targetPath, content, fallbackOptions)
+
+    } catch (fallbackError) {
+      throw fallbackError
+    }
+  }
 }

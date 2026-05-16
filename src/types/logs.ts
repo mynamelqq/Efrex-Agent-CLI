@@ -1,3 +1,9 @@
+import type { UUID } from 'crypto'
+import type { FileHistorySnapshot } from 'src/utils/fileHistory.js'
+import type { ContentReplacementRecord } from 'src/utils/toolResultStorage.js'
+import type { AgentId } from './ids.js'
+import type { Message } from 'src/package/message.js'
+
 export interface SerializedMessage {
   type: 'user' | 'assistant' | 'system'
   role?: 'user' | 'assistant' | 'system'
@@ -24,6 +30,16 @@ export interface LogOption {
   customTitle?: string
   summary?: string
 }
+
+export type FileHistorySnapshotMessage = {
+  type: 'file-history-snapshot'
+  messageId: UUID
+  snapshot: FileHistorySnapshot
+  isSnapshotUpdate: boolean
+}
+
+export type Entry =
+  | FileHistorySnapshotMessage
 
 /**
  * Sort logs by modified date (newest first)

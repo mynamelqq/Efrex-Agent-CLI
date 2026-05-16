@@ -215,7 +215,7 @@ export const WebSearchTool = buildTool({
   isReadOnly() {
     return true
   },
-  async call(input, { abortController }) {
+  async call(input, { abortController },assistantMessage,) {
     const startTime = performance.now()
     const results = await searchFirecrawl(input, abortController.signal)
     const durationSeconds = (performance.now() - startTime) / 1000

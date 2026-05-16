@@ -98,7 +98,7 @@ function parseBlocks(markdown: string): MarkdownBlock[] {
       continue;
     }
 
-    const heading = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+    const heading = /^\s{0,3}(#{1,6})\s*(.+?)\s*#*\s*$/.exec(line);
     if (heading) {
       blocks.push({type: 'heading', level: heading[1].length, text: heading[2]});
       index++;

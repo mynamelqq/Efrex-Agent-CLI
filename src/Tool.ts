@@ -79,6 +79,7 @@ export type Tool<
   call(
     args: z.infer<Input>,
     context: ToolUseContext,
+    parentMessage: AssistantMessage,
   ): Promise<ToolResult<Output>>
   getToolUseSummary?(input: Partial<z.infer<Input>> | undefined): string | null
   isEnabled(): boolean

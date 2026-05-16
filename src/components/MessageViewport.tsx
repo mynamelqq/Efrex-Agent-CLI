@@ -259,7 +259,7 @@ function markdownToLines(markdown: string, width: number): string[] {
       continue;
     }
 
-    const heading = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+    const heading = /^\s{0,3}(#{1,6})\s*(.+?)\s*#*\s*$/.exec(line);
     if (heading) {
       output.push(chalk.cyanBright.bold(`${heading[1]} ${heading[2]}`));
       index++;

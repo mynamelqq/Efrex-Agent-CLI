@@ -170,7 +170,7 @@ export const GrepTool = buildTool({
       offset = 0,
       multiline = false,
     },
-    { abortController },
+    { abortController },assistantMessage,
   ): Promise<ToolResult<Output>> {
     const absolutePath = path ? expandPath(path) : getCwd()
     const args = ['--hidden']

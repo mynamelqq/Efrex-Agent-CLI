@@ -342,7 +342,7 @@ export const FileReadTool = buildTool({
   },
   async call(
     { file_path, offset = 1, limit = undefined, pages },
-    context
+    context,assistantMessage,
   ) {
     const { readFileState, fileReadingLimits } = context
 

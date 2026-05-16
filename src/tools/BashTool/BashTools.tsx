@@ -10,80 +10,20 @@ import { copyFile, stat as fsStat, truncate as fsTruncate, link } from 'fs/promi
 import { ToolDef } from '../../Tool';
 import { ExecResult } from '../../utils/ShellCommand';
 import { getDefaultBashTimeoutMs, getMaxBashTimeoutMs } from '../../utils/timeouts';
-import { isENOENT } from '../../utils/errors';
-import { ShellError } from '../../utils/errors';
+import { isENOENT, ShellError } from '../../utils/errors';
+import {readFile}from "fs/promises"
 import { ToolUseContext } from '../../Tool';
-import { EndTruncatingAccumulator } from '../../utils/stringUtils';
+import { isEnvTruthy } from 'src/utils/envUtils';
 import { truncate } from '../../utils/format.js';
+import { renderToolUseErrorMessage,renderToolResultMessage,renderToolUseMessage } from './UI';
+import { expandPath } from '../../utils/path.js';
 import { DESCRIPTION } from '../GlobTool/prompt';
-import { runShellDemo } from '../../utils/shellDemo.js';
-import { interpretCommandResult } from './commandSemantics.js';
-import {
-  buildLargeToolResultMessage,
-  ensureToolResultsDir,
-  generatePreview,
-  getToolResultPath,
-  PREVIEW_SIZE_BYTES,
-} from '../../utils/toolResultStorage.js';
-import {
-	isImageOutput,
-	resizeShellImageOutput,
-	stdErrAppendShellResetMessage,
-	stripEmptyLines,
-} from './utils.js';
-import {
-  renderToolResultMessage,
-  renderToolUseErrorMessage,
-  renderToolUseMessage,
-} from './UI.js';
+import { exec } from 'src/utils/shell';
+import {interpretCommandResult}from "./commandSemantics"
 const EOL = '\n';
-
-const COMMAND_OPERATORS = new Set(['||', '&&', '|', ';', '>', '>>', '>&']);
-
-function splitCommandWithOperators(command: string): string[] {
-  return command
-    .split(/(\|\||&&|\||;|>>|>&|>)/)
-    .map(part => part.trim())
-    .filter(Boolean);
-}
-
-function splitCommand_DEPRECATED(command: string): string[] {
-  return splitCommandWithOperators(command).filter(
-    part => !COMMAND_OPERATORS.has(part),
-  );
-}
-
-function trackGitOperations(
-  _command: string,
-  _code: number,
-  _stdout: string,
-): void {}
-
-function resetCwdIfOutsideProject(_context: unknown): boolean {
-  return false;
-}
-
-const SandboxManager = {
-  annotateStderrWithSandboxFailures(
-    _command: string,
-    output: string,
-  ): string {
-    return output;
-  },
-};
-
-function detectCodeIndexingFromCommand(_command: string): null {
-  return null;
-}
-
-function extractClaudeCodeHints(
-  text: string,
-  _command: string,
-): { stripped: string; hints: string[] } {
-  return { stripped: text, hints: [] };
-}
-
-function maybeRecordPluginHint(_hint: string): void {}
+import { EndTruncatingAccumulator } from 'src/utils/stringUtils.js';
+import { ensureToolResultsDir,getToolResultPath } from 'src/utils/toolResultStorage';
+import { stripEmptyLines } from './utils';
 export function getDefaultTimeoutMs(): number {
   return getDefaultBashTimeoutMs()
 }
@@ -166,150 +106,150 @@ export type BashToolInput = z.infer<ReturnType<typeof fullInputSchema>>;
  * 因为它们是纯粹的输出/状态命令，不影响管道的读取/搜索性质
  *（例如 `ls dir && echo "---" && ls dir2` 仍然是读取操作）。
  */
-export function isSearchOrReadBashCommand(command: string): {//如果是搜索或者阅读，那么需要判断然后方便在前端展示
-  isSearch: boolean;
-  isRead: boolean;
-  isList: boolean;
-} {
-  let partsWithOperators: string[];
-  try {
-    partsWithOperators = splitCommandWithOperators(command);
-  } catch {
-    // 如果由于语法错误无法解析命令，
-    // 则它不是搜索/读取命令
-    return {
-      isSearch: false,
-      isRead: false,
-      isList: false
-    };
-  }
-  if (partsWithOperators.length === 0) {
-    return {
-      isSearch: false,
-      isRead: false,
-      isList: false
-    };
-  }
-  let hasSearch = false;
-  let hasRead = false;
-  let hasList = false;
-  let hasNonNeutralCommand = false;
-  let skipNextAsRedirectTarget = false;
-  for (const part of partsWithOperators) {
-    if (skipNextAsRedirectTarget) {
-      skipNextAsRedirectTarget = false;
-      continue;
-    }
-    if (part === '>' || part === '>>' || part === '>&') {
-      skipNextAsRedirectTarget = true;
-      continue;
-    }
-    if (part === '||' || part === '&&' || part === '|' || part === ';') {
-      continue;
-    }
-    const baseCommand = part.trim().split(/\s+/)[0];
-    if (!baseCommand) {
-      continue;
-    }
-    if (BASH_SEMANTIC_NEUTRAL_COMMANDS.has(baseCommand)) {
-      continue;
-    }
-    hasNonNeutralCommand = true;
-    const isPartSearch = BASH_SEARCH_COMMANDS.has(baseCommand);
-    const isPartRead = BASH_READ_COMMANDS.has(baseCommand);
-    const isPartList = BASH_LIST_COMMANDS.has(baseCommand);
-    if (!isPartSearch && !isPartRead && !isPartList) {
-      return {
-        isSearch: false,
-        isRead: false,
-        isList: false
-      };
-    }
-    if (isPartSearch) hasSearch = true;
-    if (isPartRead) hasRead = true;
-    if (isPartList) hasList = true;
-  }
+// export function isSearchOrReadBashCommand(command: string): {//如果是搜索或者阅读，那么需要判断然后方便在前端展示
+//   isSearch: boolean;
+//   isRead: boolean;
+//   isList: boolean;
+// } {
+//   let partsWithOperators: string[];
+//   try {
+//     partsWithOperators = splitCommandWithOperators(command);
+//   } catch {
+//     // 如果由于语法错误无法解析命令，
+//     // 则它不是搜索/读取命令
+//     return {
+//       isSearch: false,
+//       isRead: false,
+//       isList: false
+//     };
+//   }
+//   if (partsWithOperators.length === 0) {
+//     return {
+//       isSearch: false,
+//       isRead: false,
+//       isList: false
+//     };
+//   }
+//   let hasSearch = false;
+//   let hasRead = false;
+//   let hasList = false;
+//   let hasNonNeutralCommand = false;
+//   let skipNextAsRedirectTarget = false;
+//   for (const part of partsWithOperators) {
+//     if (skipNextAsRedirectTarget) {
+//       skipNextAsRedirectTarget = false;
+//       continue;
+//     }
+//     if (part === '>' || part === '>>' || part === '>&') {
+//       skipNextAsRedirectTarget = true;
+//       continue;
+//     }
+//     if (part === '||' || part === '&&' || part === '|' || part === ';') {
+//       continue;
+//     }
+//     const baseCommand = part.trim().split(/\s+/)[0];
+//     if (!baseCommand) {
+//       continue;
+//     }
+//     if (BASH_SEMANTIC_NEUTRAL_COMMANDS.has(baseCommand)) {
+//       continue;
+//     }
+//     hasNonNeutralCommand = true;
+//     const isPartSearch = BASH_SEARCH_COMMANDS.has(baseCommand);
+//     const isPartRead = BASH_READ_COMMANDS.has(baseCommand);
+//     const isPartList = BASH_LIST_COMMANDS.has(baseCommand);
+//     if (!isPartSearch && !isPartRead && !isPartList) {
+//       return {
+//         isSearch: false,
+//         isRead: false,
+//         isList: false
+//       };
+//     }
+//     if (isPartSearch) hasSearch = true;
+//     if (isPartRead) hasRead = true;
+//     if (isPartList) hasList = true;
+//   }
 
-  // 仅包含中性命令（例如，只有 "echo foo"）——不可折叠
-  if (!hasNonNeutralCommand) {
-    return {
-      isSearch: false,
-      isRead: false,
-      isList: false
-    };
-  }
-  return {
-    isSearch: hasSearch,
-    isRead: hasRead,
-    isList: hasList
-  };
-}
+//   // 仅包含中性命令（例如，只有 "echo foo"）——不可折叠
+//   if (!hasNonNeutralCommand) {
+//     return {
+//       isSearch: false,
+//       isRead: false,
+//       isList: false
+//     };
+//   }
+//   return {
+//     isSearch: hasSearch,
+//     isRead: hasRead,
+//     isList: hasList
+//   };
+// }
 
-/**
- * 检查 bash 命令在成功时是否预期不产生 stdout。
- * 用于在 UI 中显示"完成"而不是"（无输出）"。
- */
-function isSilentBashCommand(command: string): boolean {
-  let partsWithOperators: string[];
-  try {
-    partsWithOperators = splitCommandWithOperators(command);
-  } catch {
-    return false;
-  }
-  if (partsWithOperators.length === 0) {
-    return false;
-  }
-  let hasNonFallbackCommand = false;
-  let lastOperator: string | null = null;
-  let skipNextAsRedirectTarget = false;
-  for (const part of partsWithOperators) {
-    if (skipNextAsRedirectTarget) {
-      skipNextAsRedirectTarget = false;
-      continue;
-    }
-    if (part === '>' || part === '>>' || part === '>&') {
-      skipNextAsRedirectTarget = true;
-      continue;
-    }
-    if (part === '||' || part === '&&' || part === '|' || part === ';') {
-      lastOperator = part;
-      continue;
-    }
-    const baseCommand = part.trim().split(/\s+/)[0];
-    if (!baseCommand) {
-      continue;
-    }
-    if (lastOperator === '||' && BASH_SEMANTIC_NEUTRAL_COMMANDS.has(baseCommand)) {
-      continue;
-    }
-    hasNonFallbackCommand = true;
-    if (!BASH_SILENT_COMMANDS.has(baseCommand)) {
-      return false;
-    }
-  }
-  return hasNonFallbackCommand;
-}
+// /**
+//  * 检查 bash 命令在成功时是否预期不产生 stdout。
+//  * 用于在 UI 中显示"完成"而不是"（无输出）"。
+//  */
+// function isSilentBashCommand(command: string): boolean {
+//   let partsWithOperators: string[];
+//   try {
+//     partsWithOperators = splitCommandWithOperators(command);
+//   } catch {
+//     return false;
+//   }
+//   if (partsWithOperators.length === 0) {
+//     return false;
+//   }
+//   let hasNonFallbackCommand = false;
+//   let lastOperator: string | null = null;
+//   let skipNextAsRedirectTarget = false;
+//   for (const part of partsWithOperators) {
+//     if (skipNextAsRedirectTarget) {
+//       skipNextAsRedirectTarget = false;
+//       continue;
+//     }
+//     if (part === '>' || part === '>>' || part === '>&') {
+//       skipNextAsRedirectTarget = true;
+//       continue;
+//     }
+//     if (part === '||' || part === '&&' || part === '|' || part === ';') {
+//       lastOperator = part;
+//       continue;
+//     }
+//     const baseCommand = part.trim().split(/\s+/)[0];
+//     if (!baseCommand) {
+//       continue;
+//     }
+//     if (lastOperator === '||' && BASH_SEMANTIC_NEUTRAL_COMMANDS.has(baseCommand)) {
+//       continue;
+//     }
+//     hasNonFallbackCommand = true;
+//     if (!BASH_SILENT_COMMANDS.has(baseCommand)) {
+//       return false;
+//     }
+//   }
+//   return hasNonFallbackCommand;
+// }
 /**
  * 检测应改用 Monitor 的独立或前置 `sleep N` 模式。
  * 捕获 `sleep 5`、`sleep 5 && check`、`sleep 5; check`——但不捕获
  * 管道、子 shell 或脚本内部的 sleep（那些是正常的）。
  */
-export function detectBlockedSleepPattern(command: string): string | null {
-  const parts = splitCommand_DEPRECATED(command);
-  if (parts.length === 0) return null;
-  const first = parts[0]?.trim() ?? '';
-  // 作为第一个子命令的裸 `sleep N` 或 `sleep N.N`。
-  // 允许浮点时长（sleep 0.5）——那些是合法的 pacing，不是轮询。
-  const m = /^sleep\s+(\d+)\s*$/.exec(first);
-  if (!m) return null;
-  const secs = parseInt(m[1]!, 10);
-  if (secs < 2) return null; // 2秒以下的 sleep 没问题（速率限制、pacing）
+// export function detectBlockedSleepPattern(command: string): string | null {
+//   const parts = splitCommand_DEPRECATED(command);
+//   if (parts.length === 0) return null;
+//   const first = parts[0]?.trim() ?? '';
+//   // 作为第一个子命令的裸 `sleep N` 或 `sleep N.N`。
+//   // 允许浮点时长（sleep 0.5）——那些是合法的 pacing，不是轮询。
+//   const m = /^sleep\s+(\d+)\s*$/.exec(first);
+//   if (!m) return null;
+//   const secs = parseInt(m[1]!, 10);
+//   if (secs < 2) return null; // 2秒以下的 sleep 没问题（速率限制、pacing）
 
-  // 单独的 `sleep N` → "你在等什么？"
-  // `sleep N && check` → "使用 Monitor { command: check }"
-  const rest = parts.slice(1).join(' ').trim();
-  return rest ? `sleep ${secs} followed by: ${rest}` : `standalone sleep ${secs}`;
-}
+//   // 单独的 `sleep N` → "你在等什么？"
+//   // `sleep N && check` → "使用 Monitor { command: check }"
+//   const rest = parts.slice(1).join(' ').trim();
+//   return rest ? `sleep ${secs} followed by: ${rest}` : `standalone sleep ${secs}`;
+// }
 
 /**
  * 检查命令是否包含不应在沙箱中运行的工具
@@ -350,9 +290,9 @@ export const BashTool = buildTool({
   get outputSchema(): OutputSchema {
     return outputSchema();
   },
-  renderToolUseMessage,
   renderToolResultMessage,
   renderToolUseErrorMessage,
+  renderToolUseMessage,
   userFacingName(input) {
     if (!input) {
       return 'Bash';
@@ -386,24 +326,21 @@ export const BashTool = buildTool({
     }
     return truncate(command, TOOL_SUMMARY_MAX_LENGTH);
   },
-  async call(input: BashToolInput, toolUseContext: ToolUseContext) {
+  async call(input: BashToolInput, toolUseContext: ToolUseContext,assistantMessage,) {
     // 处理模拟的 sed 编辑——直接应用而不是运行 sed
     // 这确保用户预览的内容就是实际写入的内容
     const {
       abortController,
       getAppState,
     } = toolUseContext;
-    const onProgress = (toolUseContext as ToolUseContext & {
-      onProgress?: (message: unknown) => void;
-    }).onProgress;
-    const stdoutAccumulator = new EndTruncatingAccumulator();
+    const stdoutAccumulator = new EndTruncatingAccumulator();//很简单的字符串累加，超出限制了就截断
     let stderrForShellReset = '';
     let interpretationResult: ReturnType<typeof interpretCommandResult> | undefined;
     let progressCounter = 0;
     let wasInterrupted = false;
     let result: ExecResult;
-    const isMainThread = !toolUseContext.agentId;
-    const preventCwdChanges = !isMainThread;
+    const isMainThread = true//toolUseContext.agentId;
+    const preventCwdChanges = !isMainThread;//防止cwd变化
     try {
       // 使用新的 runShellCommand 异步生成器版本
       const commandGenerator = runShellCommand({
@@ -415,28 +352,28 @@ export const BashTool = buildTool({
       // 消费生成器并捕获返回值
       let generatorResult;
       do {
-        generatorResult = await commandGenerator.next();
-        if (!generatorResult.done && onProgress) {
-          const progress = generatorResult.value;
-          onProgress({
-            toolUseID: `bash-progress-${progressCounter++}`,
-            data: {
-              type: 'bash_progress',
-              output: progress.output,
-              fullOutput: progress.fullOutput,
-              elapsedTimeSeconds: progress.elapsedTimeSeconds,
-              totalLines: progress.totalLines,
-              totalBytes: progress.totalBytes,
-              taskId: progress.taskId,
-              timeoutMs: progress.timeoutMs
-            }
-          });
-        }
+        generatorResult = await commandGenerator.next();//等待下一次结果
+        // if (!generatorResult.done && onProgress) {
+        //   const progress = generatorResult.value;
+        //   onProgress({
+        //     toolUseID: `bash-progress-${progressCounter++}`,
+        //     data: {
+        //       type: 'bash_progress',
+        //       output: progress.output,
+        //       fullOutput: progress.fullOutput,
+        //       elapsedTimeSeconds: progress.elapsedTimeSeconds,
+        //       totalLines: progress.totalLines,
+        //       totalBytes: progress.totalBytes,
+        //       taskId: progress.taskId,
+        //       timeoutMs: progress.timeoutMs
+        //     }
+        //   });
+        // }
       } while (!generatorResult.done);
 
       // 从生成器的返回值获取最终结果
       result = generatorResult.value;
-      trackGitOperations(input.command, result.code, result.stdout);
+      // trackGitOperations(input.command, result.code, result.stdout);
       const isInterrupt = result.interrupted && abortController.signal.reason === 'interrupt';
 
       // stderr 与 stdout 交错（合并的 fd）——result.stdout 包含两者
@@ -453,34 +390,32 @@ export const BashTool = buildTool({
       }
       if (!preventCwdChanges) {
         const appState = getAppState();
-        if (resetCwdIfOutsideProject(appState.toolPermissionContext)) {
-          stderrForShellReset = stdErrAppendShellResetMessage('');
-        }
+
       }
 
-      // 如有沙箱违规，为输出添加注释（stderr 在 stdout 中）
-      const outputWithSbFailures = SandboxManager.annotateStderrWithSandboxFailures(input.command, result.stdout || '');
+      // Annotate output with sandbox violations if any (stderr is in stdout)
+      // const outputWithSbFailures = SandboxManager.annotateStderrWithSandboxFailures(input.command, result.stdout || '');
       if (result.preSpawnError) {
         throw new Error(result.preSpawnError);
       }
       if (interpretationResult.isError && !isInterrupt) {
-        // stderr 合并到 stdout 中（合并的 fd）；outputWithSbFailures
-        // 已包含完整输出。stdout 传 '' 以避免
-        // getErrorParts() 和 processBashCommand 中的重复。
-        throw new ShellError('', outputWithSbFailures, result.code, result.interrupted);
+        // stderr is merged into stdout (merged fd); outputWithSbFailures
+        // already has the full output. Pass '' for stdout to avoid
+        // duplication in getErrorParts() and processBashCommand.
+        throw new ShellError('',"" , result.code, result.interrupted);
       }
       wasInterrupted = result.interrupted;
     } finally {
       // if (setToolJSX) setToolJSX(null);
     }
 
-    // 从累加器获取最终字符串
+    // Get final string from accumulator
     const stdout = stdoutAccumulator.toString();
 
-    // 大输出：磁盘上的文件大小超过 getMaxOutputLength() 字节。
-    // stdout 已包含第一块（来自 getStdout()）。将
-    // 输出文件复制到 tool-results 目录，以便模型可以通过
-    // FileRead 读取。如果大于 64 MB，复制后截断。
+    // Large output: the file on disk has more than getMaxOutputLength() bytes.
+    // stdout already contains the first chunk (from getStdout()). Copy the
+    // output file to the tool-results dir so the model can read it via
+    // FileRead. If > 64 MB, truncate after copying.
     const MAX_PERSISTED_SIZE = 64 * 1024 * 1024;
     let persistedOutputPath: string | undefined;
     let persistedOutputSize: number | undefined;
@@ -500,50 +435,38 @@ export const BashTool = buildTool({
         }
         persistedOutputPath = dest;
       } catch {
-        // 文件可能已消失——stdout 预览已足够
+        // File may already be gone — stdout preview is sufficient
       }
     }
     const commandType = input.command.split(' ')[0];
-    // 记录代码索引工具使用情况
-    const codeIndexingTool = detectCodeIndexingFromCommand(input.command);
+    // Log code indexing tool usage
+    // const codeIndexingTool = detectCodeIndexingFromCommand(input.command);
     let strippedStdout = stripEmptyLines(stdout);
 
-    // Claude Code 提示协议：基于 CLAUDECODE=1 的 CLI/SDK 会发出
-    // `<claude-code-hint />` 标签到 stderr（在此合并到 stdout）。扫描、
-    // 记录以供 useClaudeCodeHintRecommendation 展示，然后剥离
-    // 以便模型永远看不到该标签——一个零令牌的旁信道。
-    // 剥离无条件运行（子代理输出也必须保持干净）；
-    // 仅对话记录仅限主线程。
-    const extracted = extractClaudeCodeHints(strippedStdout, input.command);
-    strippedStdout = extracted.stripped;
-    if (isMainThread && extracted.hints.length > 0) {
-      for (const hint of extracted.hints) maybeRecordPluginHint(hint);
-    }
-    let isImage = isImageOutput(strippedStdout);
+    // Claude Code hints protocol: CLIs/SDKs gated on CLAUDECODE=1 emit a
+    // `<claude-code-hint />` tag to stderr (merged into stdout here). Scan,
+    // record for useClaudeCodeHintRecommendation to surface, then strip
+    // so the model never sees the tag — a zero-token side channel.
+    // Stripping runs unconditionally (subagent output must stay clean too);
+    // only the dialog recording is main-thread-only.
+    // const extracted = extractClaudeCodeHints(strippedStdout, input.command);
+    // strippedStdout = extracted.stripped;
+    // if (isMainThread && extracted.hints.length > 0) {
+      // for (const hint of extracted.hints) maybeRecordPluginHint(hint);
+    // }
+    // let isImage = isImageOutput(strippedStdout);
 
-    // 如有图片则限制尺寸 + 大小（CC-304——参见
-    // resizeShellImageOutput）。限定解码缓冲区的范围以便
-    // 在构建输出 Out 对象之前回收。
+    // Cap image dimensions + size if present (CC-304 — see
+    // resizeShellImageOutput). Scope the decoded buffer so it can be reclaimed
+    // before we build the output Out object.
     let compressedStdout = strippedStdout;
-    if (isImage) {
-      const resized = await resizeShellImageOutput(strippedStdout, result.outputFilePath, persistedOutputSize);
-      if (resized) {
-        compressedStdout = resized;
-      } else {
-        // 解析失败或文件太大（例如超过 MAX_IMAGE_FILE_SIZE）。
-        // 保持 isImage 与我们实际发送的内容同步，以便 UI 标签保持
-        // 准确——mapToolResultToToolResultBlockParam 的防御性
-        // 降级将发送文本，而不是图片块。
-        isImage = false;
-      }
-    }
     const data: Out = {
       stdout: compressedStdout,
       stderr: stderrForShellReset,
       interrupted: wasInterrupted,
-      isImage,
+      isImage: false,
       returnCodeInterpretation: interpretationResult?.message,
-      noOutputExpected: isSilentBashCommand(input.command),
+      // noOutputExpected: isSilentBashCommand(input.command),
       persistedOutputPath,
       persistedOutputSize
     };
@@ -563,7 +486,7 @@ export const BashTool = buildTool({
     },
     toolUseID,
   ): ToolResultBlockParam {
-    // 处理结构化内容
+    // Handle structured content
     if (structuredContent && structuredContent.length > 0) {
       return {
         tool_use_id: toolUseID,
@@ -572,7 +495,7 @@ export const BashTool = buildTool({
       };
     }
 
-    // // 对于图片数据，格式化为 Claude 的图片内容块
+    // // For image data, format as image content block for Claude
     // if (isImage) {
     //   const block = buildImageToolResult(stdout, toolUseID);
     //   if (block) return block;
@@ -580,24 +503,28 @@ export const BashTool = buildTool({
 
     let processedStdout = stdout;
     if (stdout) {
-      // 替换任何前导换行符或仅包含空白字符的行
+      // Replace any leading newlines or lines with only whitespace
       processedStdout = stdout.replace(/^(\s*\n)+/, '');
-      // 仍像以前一样修剪末尾
+      // Still trim the end as before
       processedStdout = processedStdout.trimEnd();
     }
 
-    // 对于已持久化到磁盘的大输出，构建 <persisted-output>
-    // 消息给模型。UI 永远不会看到它——它使用 data.stdout。
-    if (persistedOutputPath) {
-      const preview = generatePreview(processedStdout, PREVIEW_SIZE_BYTES);
-      processedStdout = buildLargeToolResultMessage({
-        filepath: persistedOutputPath,
-        originalSize: persistedOutputSize ?? 0,
-        isJson: false,
-        preview: preview.preview,
-        hasMore: preview.hasMore,
-      });
-    }
+    // // 注释：如果是持久化到磁盘的超大输出内容，为模型构建<persisted-output>（持久化输出）消息
+    // // 关键：UI（前端界面）永远不会直接看到这个结构化消息 —— 前端只使用 data.stdout 字段
+    // if (persistedOutputPath) {
+    //   // 1. 生成预览内容：截取指定大小的输出作为预览，避免展示全部超大文本
+    //   // processedStdout：处理后的完整输出文本；PREVIEW_SIZE_BYTES：预览的字节大小限制（常量）
+    //   const preview = generatePreview(processedStdout, PREVIEW_SIZE_BYTES);
+      
+    //   // 2. 替换原始输出：把超大文本替换成「结构化的大结果消息」，不再携带完整文本
+    //   processedStdout = buildLargeToolResultMessage({
+    //     filepath: persistedOutputPath,    // 超大内容在磁盘上的文件路径
+    //     originalSize: persistedOutputSize ?? 0,  // 原始文件大小（空则默认0）
+    //     isJson: false,                    // 标记内容不是JSON格式
+    //     preview: preview.preview,         // 截取的预览文本
+    //     hasMore: preview.hasMore          // 标记：是否有未展示的剩余内容（true=内容被截断）
+    //   });
+    // }
 
     let errorMessage = stderr.trim();
     if (interrupted) {
@@ -640,11 +567,21 @@ async function* runShellCommand({
 }, ExecResult, void> {
   const { command, timeout } = input;
   const timeoutMs = timeout || getDefaultTimeoutMs();
-  return await runShellDemo({
-    command,
-    shellType: 'bash',
-    timeout: timeoutMs,
-    preventCwdChanges,
-    abortSignal: abortController.signal,
-  });
+  const shellCommand = await exec(command, abortController.signal, 'bash', {
+      timeout: timeoutMs,
+      preventCwdChanges,
+      // 去掉: shouldUseSandbox, shouldAutoBackground
+    });
+  const result = await shellCommand.result;
+  shellCommand.cleanup();
+/*   具体删除 runShellCommand 内的：
+  - spawnBackgroundTask() 函数
+  - startBackgrounding() 函数
+  - shellCommand.onTimeout 处理
+  - run_in_background === true 分支
+  - TaskOutput.startPolling() / stopPolling()
+  - foregroundTaskId 注册/注销
+  - BackgroundHint JSX 设置
+  - backgroundShellId 跟踪 */
+  return result;
 }

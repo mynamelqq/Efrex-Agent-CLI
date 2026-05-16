@@ -221,7 +221,7 @@ export function getAutocompactBufferTokens(model: string): number {
 export function getEffectiveContextWindowSize(model: string): number {
   // 1. 计算需要预留的输出 Token（取较小值，避免预留过多）
   // 取：模型最大输出Token 和 固定上限值 里的较小者
-  const reservedTokensForSummary = Math.min(//保留的摘要用的token
+  const reservedTokensForSummary = Math.min(//保留的摘要用的
     getModelMaxOutputToken(model), // 模型支持的最大回答长度
     MAX_OUTPUT_TOKENS_FOR_SUMMARY,    // 代码写死的安全上限（比如 4096）
   )

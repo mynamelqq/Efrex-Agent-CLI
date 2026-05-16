@@ -3,6 +3,7 @@ import { Store } from './store'
 import { SettingsJson } from 'src/utils/settings/types'
 import { getInitialSettings } from 'src/utils/settings/settings'
 import { EffortValue } from '../utils/effort'
+import { FileHistoryState } from 'src/utils/fileHistory'
 export type FooterItem =
   | 'tasks'
   | 'tmux'
@@ -28,7 +29,7 @@ export type AppState = DeepImmutable<{
     },
     // Effort value
     effortValue?: EffortValue,
-
+    fileHistory: FileHistoryState
 }>
 
 export type AppStateStore = Store<AppState>
@@ -40,6 +41,11 @@ export function getDefaultAppState(): AppState {
       messages: [],
     },
     effortValue: undefined,
+    fileHistory: {//文件历史备份生命周期
+      snapshots: [],
+      trackedFiles: new Set(),
+      snapshotSequence: 0,
+    },
 
    }
 }

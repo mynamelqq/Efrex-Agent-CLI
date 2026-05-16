@@ -3,7 +3,7 @@ import type { RefObject } from 'react';
 import React, { useCallback, useMemo, useRef } from 'react';
 import { Box, Text } from '@anthropic/ink';
 // import { useKeybindings } from '../keybindings/useKeybinding.js';
-import type { NormalizedUserMessage, RenderableMessage } from '../types/message.js';
+import type { NormalizedUserMessage, RenderableMessage } from 'src/package/message.js';
 import { isEmptyMessageText, SYNTHETIC_MESSAGES } from '../utils/messages.js';
 
 // Helper type: narrow the first element of MessageContent to a block with known shape.
@@ -73,8 +73,6 @@ export function isNavigableMessage(msg: NavigableMessage): boolean {
       }
       return true;
     case 'grouped_tool_use':
-    case 'collapsed_read_search':
-      return true;
     case 'attachment':
       switch (msg.attachment.type) {
         case 'queued_command':
@@ -335,13 +333,6 @@ export function copyTextOf(msg: NavigableMessage): string {
     }
     case 'grouped_tool_use':
       return msg.results.map(toolResultText).filter(Boolean).join('\n\n');
-    case 'collapsed_read_search':
-      return msg.messages
-        .flatMap(m =>
-          m.type === 'user' ? [toolResultText(m)] : m.type === 'grouped_tool_use' ? m.results.map(toolResultText) : [],
-        )
-        .filter(Boolean)
-        .join('\n\n');
     case 'system':
       if ('content' in msg) return String(msg.content);
       if ('error' in msg) return String(msg.error);

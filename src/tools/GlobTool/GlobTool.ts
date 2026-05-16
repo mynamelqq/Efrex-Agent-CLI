@@ -60,7 +60,7 @@ export const GlobTool = buildTool({
     renderToolUseErrorMessage,
     isConcurrencySafe: () => true,
     isReadOnly: () => true,
-    async call(input, context) {
+    async call(input, context,assistantMessage,) {
       const start = Date.now()
       const searchPath = input.path ? expandPath(input.path) : getCwd()
       const limit = context.globLimits?.maxResults ?? 100

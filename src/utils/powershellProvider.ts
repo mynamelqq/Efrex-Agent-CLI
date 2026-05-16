@@ -5,19 +5,17 @@ import { join as posixJoin } from 'path/posix'
 import { ShellProvider } from "./shell/shellProvider"
 
 /**
- * PowerShell invocation flags + command. Shared by the provider's getSpawnArgs
- * and the hook spawn path in hooks.ts so the flag set stays in one place.
+使用 PowerShell 的调用标志与命令。由提供程序的 getSpawnArgs 
+方法以及 hooks.ts 中的钩子启动路径共同共享，这样标志设置就能集中在一个地方进行管理。
  */
 export function buildPowerShellArgs(cmd: string): string[] {
   return ['-NoProfile', '-NonInteractive', '-Command', cmd]
 }
 /**
- * Base64-encode a string as UTF-16LE for PowerShell's -EncodedCommand.
- * Same encoding the parser uses (parser.ts toUtf16LeBase64). The output
- * is [A-Za-z0-9+/=] only — survives ANY shell-quoting layer, including
- * @anthropic-ai/sandbox-runtime's shellquote.quote() which would otherwise
- * corrupt !$? to \!$? when re-wrapping a single-quoted string in double
- * quotes. Review 2964609818.
+ 将字符串进行 Base64 编码，使其符合 PowerShell 的 -EncodedCommand 所需的 UTF-16LE 格式。
+  * 这与解析器所使用的相同编码方式（parser.ts 中的 toUtf16LeBase64 方法）。 
+ 输出内容仅为 [A-Za-z0-9+/=] 字符串 —— 能够通过任何 shell 命令括号层（包括 anthropic-ai/sandbox-runtime 的 shellquote.quote() 方法）正常运行
+ ，否则该方法在将单引号字符串重新包裹为双引号时会将 ！$？ 污染为 \！$？ 。 查看 2964609818 号问题。
  */
 function encodePowerShellCommand(psCommand: string): string {
   return Buffer.from(psCommand, 'utf16le').toString('base64')
@@ -42,15 +40,13 @@ export function createPowerShellProvider(shellPath: string): ShellProvider {
       // Stash sandboxTmpDir for getEnvironmentOverrides (mirrors bashProvider)
       currentSandboxTmpDir =  undefined
 
-      // When sandboxed, tmpdir() is not writable — the sandbox only allows
-      // writes to sandboxTmpDir. Put the cwd tracking file there so the
-      // inner pwsh can actually write it. Only applies on Linux/macOS/WSL2;
-      // on Windows native, sandbox is never enabled so this branch is dead.
+// 在沙盒模式下，tmpdir() 不可写入——沙盒仅允许对 sandboxTmpDir 进行写入操作。将工作目录跟踪文件放置在该目录中
+// ，以便内部的 pwsh 能够实际进行写入操作。此规则仅适用于 Linux、macOS 和 WSL2 系统；在 Windows 本机系统中，沙盒从未启用，因此此分支已失效。
       const cwdFilePath =
         opts.useSandbox && opts.sandboxTmpDir
           ? posixJoin(opts.sandboxTmpDir, `claude-pwd-ps-${opts.id}`)
           : join(tmpdir(), `claude-pwd-ps-${opts.id}`)
-      const escapedCwdFilePath = cwdFilePath.replace(/'/g, "''")
+      const escapedCwdFilePath = cwdFilePath.replace(/'/g, "''")//如果路径包含 C:\User's\Folder，不转义会变成：-FilePath 'C:\User's\Folder'
       // Exit-code capture: prefer $LASTEXITCODE when a native exe ran.
       // On PS 5.1, a native command that writes to stderr while the stream
       // is PS-redirected (e.g. `git push 2>&1`) sets $? = $false even when
@@ -62,7 +58,7 @@ export function createPowerShellProvider(shellPath: string): ShellProvider {
       // exit code (was 0 — old logic only looked at $? which the trailing
       // cmdlet set true). Both rarer than the git/npm/curl stderr case.
       const cwdTracking = `\n; $_ec = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } elseif ($?) { 0 } else { 1 }\n; (Get-Location).Path | Out-File -FilePath '${escapedCwdFilePath}' -Encoding utf8 -NoNewline\n; exit $_ec`
-      const psCommand = command + cwdTracking
+      const psCommand = command + cwdTracking//跨 session 维护 CWD
 
       // Sandbox wraps the returned commandString as `<binShell> -c '<cmd>'` —
       // hardcoded `-c`, no way to inject -NoProfile -NonInteractive. So for
@@ -82,15 +78,7 @@ export function createPowerShellProvider(shellPath: string): ShellProvider {
       // shellPath is POSIX-single-quoted so a space-containing install path
       // (e.g. /opt/my tools/pwsh) survives the inner `/bin/sh -c` word-split.
       // Flags and base64 are [A-Za-z0-9+/=-] only — no quoting needed.
-      const commandString = opts.useSandbox
-        ? [
-            `'${shellPath.replace(/'/g, `'\\''`)}'`,
-            '-NoProfile',
-            '-NonInteractive',
-            '-EncodedCommand',
-            encodePowerShellCommand(psCommand),
-          ].join(' ')
-        : psCommand
+      const commandString =  psCommand
 
       return { commandString, cwdFilePath }
     },
@@ -111,11 +99,11 @@ export function createPowerShellProvider(shellPath: string): ShellProvider {
     //   for (const [key, value] of getSessionEnvVars()) {
     //     env[key] = value
     //   }
-      if (currentSandboxTmpDir) {
-        // PowerShell on Linux/macOS honors TMPDIR for [System.IO.Path]::GetTempPath()
-        env.TMPDIR = currentSandboxTmpDir
-        env.CLAUDE_CODE_TMPDIR = currentSandboxTmpDir
-      }
+      // if (currentSandboxTmpDir) {
+      //   // PowerShell on Linux/macOS honors TMPDIR for [System.IO.Path]::GetTempPath()
+      //   env.TMPDIR = currentSandboxTmpDir
+      //   env.CLAUDE_CODE_TMPDIR = currentSandboxTmpDir
+      // }
       return env
     },
   }
