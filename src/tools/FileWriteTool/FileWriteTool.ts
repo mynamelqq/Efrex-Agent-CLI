@@ -3,8 +3,10 @@ import { z } from 'zod/v4'
 import type { ToolUseContext } from 'src/Tool.js'
 import { writeTextContent } from 'src/utils/file'
 import { buildTool, type ToolDef } from 'src/Tool.js'
+import { countLinesChanged } from 'src/utils/diff'
 import { getCwd } from 'src/utils/cwd.js'
 import { logForDebugging } from 'src/utils/debug.js'
+import { getPatchForDisplay } from 'src/utils/diff'
 import { isEnvTruthy } from 'src/utils/envUtils.js'
 import { ToolUseDiff } from 'src/utils/gitDiff'
 import { mkdir } from 'fs'
@@ -82,6 +84,9 @@ export const FileWriteTool = buildTool({
   },
   get outputSchema(): OutputSchema {
     return outputSchema()
+  },
+  isConcurrencySafe() {
+    return true
   },
   renderToolResultMessage,
    async call(
@@ -201,7 +206,7 @@ export const FileWriteTool = buildTool({
       }
     }
 
-    const data = {
+    const data = {//创建文件
       type: 'create' as const,
       filePath: file_path,
       content,

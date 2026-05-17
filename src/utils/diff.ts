@@ -5,6 +5,7 @@ import { count } from './array'
 import { convertLeadingTabsToSpaces } from './file.js'
 import { addToTotalLinesChanged } from '../bootstrap/state.js'
 export const CONTEXT_LINES = 3
+import { FileEdit } from 'src/tools/FileEditTool/types'
 export const DIFF_TIMEOUT_MS = 5_000
 
 // For some reason, & confuses the diff library, so we replace it with a token,
@@ -48,7 +49,7 @@ export function countLinesChanged(
   let numAdditions = 0
   let numRemovals = 0
 
-  if (patch.length === 0 && newFileContent) {
+  if (patch.length === 0 && newFileContent) {//写入新文件
     // For new files, count all lines as additions
     numAdditions = newFileContent.split(/\r?\n/).length
   } else {
@@ -67,4 +68,68 @@ export function countLinesChanged(
 //   getLocCounter()?.add(numAdditions, { type: 'added' })
 //   getLocCounter()?.add(numRemovals, { type: 'removed' })
 
+}
+
+
+/**
+ * Get a patch for display with edits applied
+ * @param filePath The path to the file
+ * @param fileContents The contents of the file
+ * @param edits An array of edits to apply to the file
+ * @param ignoreWhitespace Whether to ignore whitespace changes
+ * @returns An array of hunks representing the diff
+ *
+ * NOTE: This function will return the diff with all leading tabs
+ * rendered as spaces for display
+ */
+
+export function getPatchForDisplay({
+  filePath,
+  fileContents,
+  edits,
+  ignoreWhitespace = false,
+}: {
+  filePath: string
+  fileContents: string
+  edits: FileEdit[]
+  ignoreWhitespace?: boolean
+}): StructuredPatchHunk[] {
+  const preparedFileContents = escapeForDiff(
+    convertLeadingTabsToSpaces(fileContents),
+  )
+  const result = structuredPatch(
+    filePath,
+    filePath,
+    preparedFileContents,
+    edits.reduce((p, edit) => {
+      const { old_string, new_string } = edit
+      const replace_all = 'replace_all' in edit ? edit.replace_all : false
+      const escapedOldString = escapeForDiff(
+        convertLeadingTabsToSpaces(old_string),
+      )
+      const escapedNewString = escapeForDiff(
+        convertLeadingTabsToSpaces(new_string),
+      )
+
+      if (replace_all) {
+        return p.replaceAll(escapedOldString, () => escapedNewString)
+      } else {
+        return p.replace(escapedOldString, () => escapedNewString)
+      }
+    }, preparedFileContents),
+    undefined,
+    undefined,
+    {
+      context: CONTEXT_LINES,
+      ignoreWhitespace,
+      timeout: DIFF_TIMEOUT_MS,
+    },
+  )
+  if (!result) {
+    return []
+  }
+  return result.hunks.map(_ => ({
+    ..._,
+    lines: _.lines.map(unescapeFromDiff),
+  }))
 }

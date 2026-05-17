@@ -7,6 +7,7 @@ import { countCharInString } from '../utils/stringUtils.js';
 import { HighlightedCodeFallback } from './HighlightedCode/Fallback.js';
 import { expectColorFile } from './StructuredDiff/colorDiff.js';
 import type { ColorFile as ColorFileType } from 'color-diff-napi';
+// import { useSettings } from 'src/hooks/useSettings.js';
 
 // Module-level LRU cache for ColorFile instances to avoid recreating
 // them for the same (filePath, code) across component instances.
@@ -34,8 +35,8 @@ export const HighlightedCode = memo(function HighlightedCode({
   const ref = useRef<DOMElement>(null);
   const [measuredWidth, setMeasuredWidth] = useState(width || DEFAULT_WIDTH);
   const [theme] = useTheme();
-  const settings = useSettings(React.createContext<TerminalSize | null>(null));
-  const syntaxHighlightingDisabled = settings.syntaxHighlightingDisabled ?? false;
+  // const settings = useSettings();
+  const syntaxHighlightingDisabled = false
 
   const colorFile = useMemo(() => {
     if (syntaxHighlightingDisabled) {

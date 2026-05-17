@@ -1,5 +1,5 @@
 
-import { chmodSync, readFileSync, writeFileSync as fsWriteFileSync } from 'fs'
+import { chmodSync, readFileSync, renameSync, writeFileSync as fsWriteFileSync } from 'fs'
 import { realpath, stat} from 'fs/promises'
 import { homedir } from 'os'
 import { lstatSync,realpathSync,openSync,readSync,closeSync,readlinkSync} from 'fs'
@@ -374,6 +374,7 @@ export function writeFileSyncAndFlush_DEPRECATED(
 
     // Atomic rename (on POSIX systems, this is atomic)
     // On Windows, this will overwrite the destination if it exists
+    renameSync(tempPath, targetPath)
   } catch (atomicError) {
 
     // Clean up temp file on error
