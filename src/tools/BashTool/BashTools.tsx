@@ -9,6 +9,7 @@ import { TOOL_SUMMARY_MAX_LENGTH } from '../../constants/toolLimits';
 import { copyFile, stat as fsStat, truncate as fsTruncate, link } from 'fs/promises';
 import { ToolDef } from '../../Tool';
 import { ExecResult } from '../../utils/ShellCommand';
+import { ValidationResult } from '../../Tool';
 import { getDefaultBashTimeoutMs, getMaxBashTimeoutMs } from '../../utils/timeouts';
 import { isENOENT, ShellError } from '../../utils/errors';
 import {readFile}from "fs/promises"
@@ -325,6 +326,9 @@ export const BashTool = buildTool({
       return description;
     }
     return truncate(command, TOOL_SUMMARY_MAX_LENGTH);
+  },
+  async validateInput(input: BashToolInput): Promise<ValidationResult> {
+    return { result: true };
   },
   async call(input: BashToolInput, toolUseContext: ToolUseContext,assistantMessage,) {
     // 处理模拟的 sed 编辑——直接应用而不是运行 sed

@@ -133,3 +133,37 @@ export function getPatchForDisplay({
     lines: _.lines.map(unescapeFromDiff),
   }))
 }
+export function getPatchFromContents({
+  filePath,
+  oldContent,
+  newContent,
+  ignoreWhitespace = false,
+  singleHunk = false,
+}: {
+  filePath: string
+  oldContent: string
+  newContent: string
+  ignoreWhitespace?: boolean
+  singleHunk?: boolean
+}): StructuredPatchHunk[] {
+  const result = structuredPatch(
+    filePath,
+    filePath,
+    escapeForDiff(oldContent),
+    escapeForDiff(newContent),
+    undefined,
+    undefined,
+    {
+      ignoreWhitespace,
+      context: singleHunk ? 100_000 : CONTEXT_LINES,
+      timeout: DIFF_TIMEOUT_MS,
+    },
+  )
+  if (!result) {
+    return []
+  }
+  return result.hunks.map(_ => ({
+    ..._,
+    lines: _.lines.map(unescapeFromDiff),
+  }))
+}

@@ -3,7 +3,7 @@ import { chmodSync, readFileSync, renameSync, writeFileSync as fsWriteFileSync }
 import { realpath, stat} from 'fs/promises'
 import { homedir } from 'os'
 import { lstatSync,realpathSync,openSync,readSync,closeSync,readlinkSync} from 'fs'
-
+import { fileReadCache } from './fileReadCache'
 import { readdirSync,Dirent,statSync,unlinkSync} from 'fs'
 import { isENOENT } from './errors.js'
 import {
@@ -26,10 +26,124 @@ export type File = {
   content: string
 }
 /**
+ * Binary file extensions to skip for text-based operations.
+ * These files can't be meaningfully compared as text and are often large.
+ */
+export const BINARY_EXTENSIONS = new Set([
+  // Images
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.bmp',
+  '.ico',
+  '.webp',
+  '.tiff',
+  '.tif',
+  // Videos
+  '.mp4',
+  '.mov',
+  '.avi',
+  '.mkv',
+  '.webm',
+  '.wmv',
+  '.flv',
+  '.m4v',
+  '.mpeg',
+  '.mpg',
+  // Audio
+  '.mp3',
+  '.wav',
+  '.ogg',
+  '.flac',
+  '.aac',
+  '.m4a',
+  '.wma',
+  '.aiff',
+  '.opus',
+  // Archives
+  '.zip',
+  '.tar',
+  '.gz',
+  '.bz2',
+  '.7z',
+  '.rar',
+  '.xz',
+  '.z',
+  '.tgz',
+  '.iso',
+  // Executables/binaries
+  '.exe',
+  '.dll',
+  '.so',
+  '.dylib',
+  '.bin',
+  '.o',
+  '.a',
+  '.obj',
+  '.lib',
+  '.app',
+  '.msi',
+  '.deb',
+  '.rpm',
+  // Documents (PDF is here; FileReadTool excludes it at the call site)
+  '.pdf',
+  '.doc',
+  '.docx',
+  '.xls',
+  '.xlsx',
+  '.ppt',
+  '.pptx',
+  '.odt',
+  '.ods',
+  '.odp',
+  // Fonts
+  '.ttf',
+  '.otf',
+  '.woff',
+  '.woff2',
+  '.eot',
+  // Bytecode / VM artifacts
+  '.pyc',
+  '.pyo',
+  '.class',
+  '.jar',
+  '.war',
+  '.ear',
+  '.node',
+  '.wasm',
+  '.rlib',
+  // Database files
+  '.sqlite',
+  '.sqlite3',
+  '.db',
+  '.mdb',
+  '.idx',
+  // Design / 3D
+  '.psd',
+  '.ai',
+  '.eps',
+  '.sketch',
+  '.fig',
+  '.xd',
+  '.blend',
+  '.3ds',
+  '.max',
+  // Flash
+  '.swf',
+  '.fla',
+  // Lock/profiling data
+  '.lockb',
+  '.dat',
+  '.data',
+])
+
+/**
  * Marker included in file-not-found error messages that contain a cwd note.
  * UI renderers check for this to show a short "File not found" message.
  */
 export const FILE_NOT_FOUND_CWD_NOTE = 'Note: your current working directory is'
+
 /**
  * Check if a path exists asynchronously.
  */
@@ -140,6 +254,15 @@ export function findSimilarFile(filePath: string): string | undefined {
     return undefined
   }
 }
+
+/**
+ * Check if a file path has a binary extension.
+ */
+export function hasBinaryExtension(filePath: string): boolean {
+  const ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase()
+  return BINARY_EXTENSIONS.has(ext)
+}
+
 /**
  * Get the normalized modification time of a file in milliseconds.
  * Uses Math.floor to ensure consistent timestamp comparisons across file operations,
@@ -364,9 +487,9 @@ export function writeFileSyncAndFlush_DEPRECATED(
       writeOptions.mode = options.mode
     }
 
-    fsWriteFileSync(tempPath, content, writeOptions)
+    fsWriteFileSync(tempPath, content, writeOptions)//直接同步写入文件
 
-    // For existing files or if mode was not set atomically, apply permissions
+    // For existing files or if mode was not set atomically, apply permissions 对于存在的文件，更改文件权限
     if (targetExists && targetMode !== undefined) {
       chmodSync(tempPath, targetMode)
     
@@ -374,19 +497,18 @@ export function writeFileSyncAndFlush_DEPRECATED(
 
     // Atomic rename (on POSIX systems, this is atomic)
     // On Windows, this will overwrite the destination if it exists
-    renameSync(tempPath, targetPath)
-  } catch (atomicError) {
-
+    renameSync(tempPath, targetPath)//原子的重命名
+  } catch (atomicError) {//原子错误
+    //回退到非原子写入
     // Clean up temp file on error
     try {
-      unlinkSync(tempPath)
+      unlinkSync(tempPath)//先删除临时文件
     } catch (cleanupError) {
-
     }
 
     // Fallback to non-atomic write
     try {
-      const fallbackOptions: {
+      const fallbackOptions: {//回退
         encoding: BufferEncoding
         flush: boolean
         mode?: number
@@ -405,4 +527,12 @@ export function writeFileSyncAndFlush_DEPRECATED(
       throw fallbackError
     }
   }
+}
+/**
+ * Reads a file with caching to avoid redundant I/O operations.
+ * This is the preferred method for FileEditTool operations.
+ */
+export function readFileSyncCached(filePath: string): string {
+  const { content } = fileReadCache.readFile(filePath)
+  return content
 }

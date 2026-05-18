@@ -5,11 +5,13 @@ import { DESCRIPTION } from './prompt'
 import { expandPath, toRelativePath } from '../../utils/path.js'
 import { buildTool } from '../../Tool'
 import { ToolDef } from '../../Tool'
-
+import {stat}from "fs/promises"
 import { getCwd } from '../../utils/cwd'
 import { glob } from '../../utils/glob.js'
+import { suggestPathUnderCwd,FILE_NOT_FOUND_CWD_NOTE } from 'src/utils/file'
+import {isENOENT}from "src/utils/errors"
 import { renderToolResultMessage, renderToolUseMessage,renderToolUseErrorMessage } from './UI'
-
+import { ValidationResult } from '../../Tool'
 const inputSchema = lazySchema(() =>
   z.strictObject({
     pattern: z.string().describe('The glob pattern to match files against'),
@@ -56,7 +58,46 @@ export const GlobTool = buildTool({
     get outputSchema():OutputSchema{
       return outputSchema()
     },
-    
+     async validateInput({ path }): Promise<ValidationResult> {
+    // If path is provided, validate that it exists and is a directory
+    if (path) {
+      const absolutePath = expandPath(path)
+
+      // SECURITY: Skip filesystem operations for UNC paths to prevent NTLM credential leaks.
+      if (absolutePath.startsWith('\\\\') || absolutePath.startsWith('//')) {
+        return { result: true }
+      }
+
+      let stats
+      try {
+        stats = await stat(absolutePath)
+      } catch (e: unknown) {
+        if (isENOENT(e)) {
+          const cwdSuggestion = await suggestPathUnderCwd(absolutePath)
+          let message = `Directory does not exist: ${path}. ${FILE_NOT_FOUND_CWD_NOTE} ${getCwd()}.`
+          if (cwdSuggestion) {
+            message += ` Did you mean ${cwdSuggestion}?`
+          }
+          return {
+            result: false,
+            message,
+            errorCode: 1,
+          }
+        }
+        throw e
+      }
+
+      if (!stats.isDirectory()) {
+        return {
+          result: false,
+          message: `Path is not a directory: ${path}`,
+          errorCode: 2,
+        }
+      }
+    }
+
+    return { result: true }
+  },
     renderToolUseErrorMessage,
     isConcurrencySafe: () => true,
     isReadOnly: () => true,

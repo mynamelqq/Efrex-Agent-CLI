@@ -11,6 +11,31 @@ import { ToolResultBlockParam } from 'src/package/message';
 import { ThinkingConfig } from './queryEngine';
 import { ThemeName } from 'packages/@ant/ink/src';
 import { ContentReplacementState } from './utils/toolResultStorage';
+import { DeepImmutable } from './types/utils';
+import { PermissionMode,ToolPermissionRulesBySource } from './types/permissions';
+export type ValidationResult =
+  | { result: true }
+  | {
+      result: false
+      message: string
+      errorCode: number
+    }
+// Apply DeepImmutable to the imported type
+export type ToolPermissionContext = DeepImmutable<{
+  mode: PermissionMode
+  alwaysAllowRules: ToolPermissionRulesBySource
+  alwaysDenyRules: ToolPermissionRulesBySource
+  alwaysAskRules: ToolPermissionRulesBySource
+  isBypassPermissionsModeAvailable: boolean
+  isAutoModeAvailable?: boolean
+  strippedDangerousRules?: ToolPermissionRulesBySource
+  /** When true, permission prompts are auto-denied (e.g., background agents that can't show UI) */
+  shouldAvoidPermissionPrompts?: boolean
+  /** When true, automated checks (classifier, hooks) are awaited before showing the permission dialog (coordinator workers) */
+  awaitAutomatedChecksBeforeDialog?: boolean
+  /** Stores the permission mode before model-initiated plan mode entry, so it can be restored on exit */
+  prePlanMode?: PermissionMode
+}>
 export type ToolResult<T> =
 {
   type?: string,
@@ -46,6 +71,7 @@ export type ToolUseContext = {
   abortController: AbortController,
   /** Custom system prompt that replaces the default system prompt */
   contentReplacementState?: ContentReplacementState,
+  userModified?: boolean,
   updateFileHistoryState: (
     updater: (prev: FileHistoryState) => FileHistoryState,
   ) => void,
@@ -70,12 +96,23 @@ export type Tool<
 > = {
   name: string,
   searchHint:string,//搜索提示
+  inputsEquivalent?(a: z.infer<Input>, b: z.infer<Input>): boolean
   maxResultSizeChars: number,//工具结果在持久化到磁盘之前允许的最大字符数
   description(
     input: z.infer<Input>
   ): Promise<string>
   readonly inputSchema: Input
   outputSchema?: z.ZodType<unknown>
+    /**
+   * Determines if this tool is allowed to run with this input in the current context.
+   * It informs the model of why the tool use failed, and does not directly display any UI.
+   * @param input
+   * @param context
+   */
+  validateInput?(
+    input: z.infer<Input>,
+    context: ToolUseContext,
+  ): Promise<ValidationResult>
   call(
     args: z.infer<Input>,
     context: ToolUseContext,
@@ -144,3 +181,13 @@ export function toolMatchesName(
   return tool.name === name || (tool.aliases?.includes(name) ?? false)
 }
 export type ToolProgressData = any
+
+export const getEmptyToolPermissionContext: () => ToolPermissionContext =
+  () => ({
+    mode: 'default',
+    additionalWorkingDirectories: new Map(),
+    alwaysAllowRules: {},
+    alwaysDenyRules: {},
+    alwaysAskRules: {},
+    isBypassPermissionsModeAvailable: true,
+  })

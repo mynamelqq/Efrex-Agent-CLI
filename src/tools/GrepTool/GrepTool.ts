@@ -5,9 +5,12 @@ import { lazySchema } from '../../utils/lazySchema.js'
 import { plural } from 'src/utils/stringUtils.js'
 import { expandPath, toRelativePath } from '../../utils/path.js'
 import { ripGrep } from '../../utils/ripgrep.js'
+import { isENOENT } from 'src/utils/errors.js'
 import { semanticBoolean } from '../../utils/semanticBoolean.js'
 import {stat}from "fs/promises"
 import { semanticNumber } from '../../utils/semanticNumber.js'
+import { ValidationResult } from '../../Tool.js'
+import { suggestPathUnderCwd,FILE_NOT_FOUND_CWD_NOTE } from 'src/utils/file.js'
 import { GREP_TOOL_NAME,getDescription } from './prompt'
 import {
   getToolUseSummary,
@@ -152,6 +155,37 @@ export const GrepTool = buildTool({
   },
   isReadOnly() {
     return true
+  },
+   async validateInput({ path }): Promise<ValidationResult> {
+    // If path is provided, validate that it exists
+    if (path) {
+      const absolutePath = expandPath(path)
+
+      // SECURITY: Skip filesystem operations for UNC paths to prevent NTLM credential leaks.
+      if (absolutePath.startsWith('\\\\') || absolutePath.startsWith('//')) {
+        return { result: true }
+      }
+
+      try {
+        await stat(absolutePath)
+      } catch (e: unknown) {
+        if (isENOENT(e)) {
+          const cwdSuggestion = await suggestPathUnderCwd(absolutePath)
+          let message = `Path does not exist: ${path}. ${FILE_NOT_FOUND_CWD_NOTE} ${getCwd()}.`
+          if (cwdSuggestion) {
+            message += ` Did you mean ${cwdSuggestion}?`
+          }
+          return {
+            result: false,
+            message,
+            errorCode: 1,
+          }
+        }
+        throw e
+      }
+    }
+
+    return { result: true }
   },
   async call(
     {

@@ -4,6 +4,8 @@ import { SettingsJson } from 'src/utils/settings/types'
 import { getInitialSettings } from 'src/utils/settings/settings'
 import { EffortValue } from '../utils/effort'
 import { FileHistoryState } from 'src/utils/fileHistory'
+import { PermissionMode } from 'src/types/permissions'
+import { ToolPermissionContext,getEmptyToolPermissionContext} from 'src/Tool'
 export type FooterItem =
   | 'tasks'
   | 'tmux'
@@ -29,11 +31,13 @@ export type AppState = DeepImmutable<{
     },
     // Effort value
     effortValue?: EffortValue,
-    fileHistory: FileHistoryState
+    fileHistory: FileHistoryState,
+    toolPermissionContext: ToolPermissionContext
 }>
 
 export type AppStateStore = Store<AppState>
 export function getDefaultAppState(): AppState {
+  const initialMode: PermissionMode ='default'
    return {
     mainLoopModel: "",
     settings: getInitialSettings(),
@@ -46,6 +50,9 @@ export function getDefaultAppState(): AppState {
       trackedFiles: new Set(),
       snapshotSequence: 0,
     },
-
+    toolPermissionContext: {
+      ...getEmptyToolPermissionContext(),
+      mode: initialMode,
+    },
    }
 }

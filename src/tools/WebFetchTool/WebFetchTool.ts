@@ -88,6 +88,20 @@ export const WebFetchTool = buildTool({
   isReadOnly() {
     return true
   },
+  async validateInput(input) {
+    const { url } = input
+    try {
+      new URL(url)
+    } catch {
+      return {
+        result: false,
+        message: `Error: Invalid URL "${url}". The URL provided could not be parsed.`,
+        meta: { reason: 'invalid_url' },
+        errorCode: 1,
+      }
+    }
+    return { result: true }
+  },
   async call(
     { url, prompt },
     { abortController, options: { isNonInteractiveSession } },assistantMessage,

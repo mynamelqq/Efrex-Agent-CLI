@@ -30,6 +30,7 @@ import {
   ImageResizeError,
   maybeResizeAndDownsampleImageBuffer,
 } from '../../utils/imageResizer.js'
+import { hasBinaryExtension } from '../../utils/file'
 import { findSimilarFile ,suggestPathUnderCwd} from '../../utils/file'
 import {
   isPDFExtension,
@@ -336,6 +337,68 @@ export const FileReadTool = buildTool({
   getToolUseSummary,
   isConcurrencySafe() {
     return true
+  },
+  async validateInput({ file_path, pages }, toolUseContext: ToolUseContext) {
+    // Validate pages parameter (pure string parsing, no I/O)
+    if (pages !== undefined) {
+      const parsed = parsePDFPageRange(pages)
+      if (!parsed) {
+        return {
+          result: false,
+          message: `Invalid pages parameter: "${pages}". Use formats like "1-5", "3", or "10-20". Pages are 1-indexed.`,
+          errorCode: 7,
+        }
+      }
+      const rangeSize =
+        parsed.lastPage === Infinity
+          ? PDF_MAX_PAGES_PER_READ + 1
+          : parsed.lastPage - parsed.firstPage + 1
+      if (rangeSize > PDF_MAX_PAGES_PER_READ) {
+        return {
+          result: false,
+          message: `Page range "${pages}" exceeds maximum of ${PDF_MAX_PAGES_PER_READ} pages per request. Please use a smaller range.`,
+          errorCode: 8,
+        }
+      }
+    }
+
+    // Path expansion + deny rule check (no I/O)
+    const fullFilePath = expandPath(file_path)
+
+    // SECURITY: UNC path check (no I/O) — defer filesystem operations
+    // until after user grants permission to prevent NTLM credential leaks
+    const isUncPath =
+      fullFilePath.startsWith('\\\\') || fullFilePath.startsWith('//')
+    if (isUncPath) {
+      return { result: true }
+    }
+
+    // Binary extension check (string check on extension only, no I/O).
+    // PDF, images, and SVG are excluded - this tool renders them natively.
+    const ext = path.extname(fullFilePath).toLowerCase()
+    if (
+      hasBinaryExtension(fullFilePath) &&
+      !isPDFExtension(ext) &&
+      !IMAGE_EXTENSIONS.has(ext.slice(1))
+    ) {
+      return {
+        result: false,
+        message: `This tool cannot read binary files. The file appears to be a binary ${ext} file. Please use appropriate tools for binary file analysis.`,
+        errorCode: 4,
+      }
+    }
+
+    // Block specific device files that would hang (infinite output or blocking input).
+    // This is a path-based check with no I/O — safe special files like /dev/null are allowed.
+    if (isBlockedDevicePath(fullFilePath)) {
+      return {
+        result: false,
+        message: `Cannot read '${file_path}': this device file would block or produce infinite output.`,
+        errorCode: 9,
+      }
+    }
+
+    return { result: true }
   },
   isReadOnly() {
     return true

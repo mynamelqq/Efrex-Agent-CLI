@@ -8,8 +8,9 @@ import { GrepTool } from './tools/GrepTool/GrepTool'
 import { WebFetchTool } from './tools/WebFetchTool/WebFetchTool'
 import { BashTool } from './tools/BashTool/BashTools'
 import { FileWriteTool } from './tools/FileWriteTool/FileWriteTool'
+import { FileEditTool } from './tools/FileEditTool/FileEditTool'
 export function getAllBaseTools():Tools{
-    return [GlobTool,GrepTool,FileReadTool,FileWriteTool]
+    return [GlobTool,GrepTool,FileReadTool,FileEditTool]
 
 }
 export type BashProgress = any

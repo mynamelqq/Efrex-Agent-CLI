@@ -146,7 +146,27 @@ export async function* runToolUse(
     }
     return
   }
-
+  // Validate input values. Each tool has its own validation logic
+  const isValidCall = await tool.validateInput?.(//验证输入 不然直接返回 关卡
+    parsedInput.data,
+    toolUseContext,
+  )
+   if (isValidCall?.result === false) {
+    yield {
+        message: createUserMessage({
+          content: [
+            {
+              type: 'tool_result',
+              content: `<tool_use_error>${isValidCall.message}</tool_use_error>`,
+              is_error: true,
+              tool_use_id: toolUse.id,
+            },
+          ],
+          toolUseResult: `Error: ${isValidCall.message}`,
+          sourceToolAssistantUUID: assistantMessage.uuid,
+        }),
+      }
+  }
   try {
     const result = await tool.call(parsedInput.data, toolUseContext,assistantMessage)
     const toolResultBlock=await processToolResultBlock(tool,result.data,toolUse.id)

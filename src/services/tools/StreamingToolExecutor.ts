@@ -6,6 +6,7 @@ import {
   type ToolUseContext,
 } from '../../Tool.js'
 import { normalizeToolInput } from 'src/utils/api.js'
+
 import { createChildAbortController } from 'src/utils/abortController.js'
 import { createUserMessage } from 'src/utils/messages.js'
 import { runToolUse } from './toolExecution.js'
@@ -14,7 +15,7 @@ import { loggerFor } from 'node_modules/openai/internal/utils/log.mjs'
 import { logError } from 'src/utils/logger.js'
 //Agent Tool Runtime  并发工具调度器
 type ToolStatus = 'queued' | 'executing' | 'completed' | 'yielded'//排队、执行中、已完成、已产出结果
-
+import { CanUseToolFn } from 'src/hooks/useCanUseTool.js'
 type TrackedTool = {//跟踪工具的状态和结果
   id: string
   block: ToolUseBlock
@@ -36,6 +37,7 @@ export class StreamingToolExecutor {
   constructor(
     private readonly toolDefinitions: Tools,
     toolUseContext: ToolUseContext,
+    private readonly canUseTool: CanUseToolFn,
   ) {
     this.toolUseContext = toolUseContext
     this.siblingAbortController = createChildAbortController(
@@ -85,10 +87,15 @@ export class StreamingToolExecutor {
     if(parsedInput.success===false){
       logError(`Error parsing input for tool '${block.name}': ${parsedInput.error.message}: ${JSON.stringify(block.input)}`)
     }
-    const isConcurrencySafe = parsedInput.success
-      ? Boolean(toolDefinition.isConcurrencySafe(parsedInput.data))
+    const isConcurrencySafe = parsedInput?.success
+      ? (() => {
+          try {
+            return Boolean(toolDefinition.isConcurrencySafe(parsedInput.data))
+          } catch {
+            return false
+          }
+        })()
       : false
-
     this.tools.push({
       id: block.id,
       block,
