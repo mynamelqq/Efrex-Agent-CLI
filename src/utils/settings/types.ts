@@ -1,9 +1,9 @@
-import { feature } from 'bun:bundle'
+
 import { z } from 'zod/v4'
 import { isEnvTruthy } from '../envUtils.js'
 import { lazySchema } from '../lazySchema.js'
-
-
+import { PermissionRuleSchema } from './permissionValidation.js'
+import { PERMISSION_MODES } from 'src/types/permissions.js'
 // Also import for use within this file
 
 /**
@@ -24,14 +24,47 @@ export const CUSTOMIZATION_SURFACES = [
   'hooks',
   'mcp',
 ] as const
-
+/**
+ * Schema for permissions section
+ */
+export const PermissionsSchema = lazySchema(() =>
+  z
+    .object({
+      allow: z
+        .array(PermissionRuleSchema())
+        .optional()
+        .describe('List of permission rules for allowed operations'),
+      deny: z
+        .array(PermissionRuleSchema())
+        .optional()
+        .describe('List of permission rules for denied operations'),
+      ask: z
+        .array(PermissionRuleSchema())
+        .optional()
+        .describe(
+          'List of permission rules that should always prompt for confirmation',
+        ),
+      defaultMode: z
+        .enum(PERMISSION_MODES)
+        .optional()
+        .describe('Default permission mode when Claude Code needs access'),
+      disableBypassPermissionsMode: z
+        .enum(['disable'])
+        .optional()
+        .describe('Disable the ability to bypass permission prompts'),
+      additionalDirectories: z
+        .array(z.string())
+        .optional()
+        .describe('Additional directories to include in the permission scope'),
+    })
+    .passthrough(),
+)
 export const SettingsSchema = lazySchema(() =>
   z
     .object({
-      // $schema: z
-      //   .literal(CLAUDE_CODE_SETTINGS_SCHEMA_URL)
-      //   .optional()
-      //   .describe('JSON Schema reference for Claude Code settings'),
+      permissions: PermissionsSchema()
+        .optional()
+        .describe('Tool usage permissions configuration'),
       apiKeyHelper: z
         .string()
         .optional()
@@ -136,6 +169,7 @@ export const SettingsSchema = lazySchema(() =>
           'Deprecated: Use attribution instead. ' +
             "Whether to include Claude's co-authored by attribution in commits and PRs (defaults to true)",
         ),
+        
       includeGitInstructions: z
         .boolean()
         .optional()
@@ -481,20 +515,6 @@ export const SettingsSchema = lazySchema(() =>
         })
         .optional()
         .describe('Remote session configuration'),
-      autoUpdatesChannel: z
-        .enum(['latest', 'stable'])
-        .optional()
-        .describe('Release channel for auto-updates (latest or stable)'),
-      ...(feature('LODESTONE')
-        ? {
-            disableDeepLinkRegistration: z
-              .enum(['disable'])
-              .optional()
-              .describe(
-                'Prevent claude-cli:// protocol handler registration with the OS',
-              ),
-          }
-        : {}),
       minimumVersion: z
         .string()
         .optional()
@@ -515,59 +535,6 @@ export const SettingsSchema = lazySchema(() =>
               .optional()
               .describe(
                 'Enable AI-based classification for Bash(prompt:...) permission rules',
-              ),
-          }
-        : {}),
-      ...(feature('PROACTIVE') || feature('KAIROS')
-        ? {
-            minSleepDurationMs: z
-              .number()
-              .nonnegative()
-              .int()
-              .optional()
-              .describe(
-                'Minimum duration in milliseconds that the Sleep tool must sleep for. ' +
-                  'Useful for throttling proactive tick frequency.',
-              ),
-            maxSleepDurationMs: z
-              .number()
-              .int()
-              .min(-1)
-              .optional()
-              .describe(
-                'Maximum duration in milliseconds that the Sleep tool can sleep for. ' +
-                  'Set to -1 for indefinite sleep (waits for user input). ' +
-                  'Useful for limiting idle time in remote/managed environments.',
-              ),
-          }
-        : {}),
-      ...(feature('VOICE_MODE')
-        ? {
-            voiceEnabled: z
-              .boolean()
-              .optional()
-              .describe('Enable voice mode (hold-to-talk dictation)'),
-            voiceProvider: z
-              .enum(['anthropic', 'doubao'])
-              .optional()
-              .describe(
-                'Voice STT backend: "anthropic" (default) or "doubao" (Doubao ASR)',
-              ),
-          }
-        : {}),
-      ...(feature('KAIROS')
-        ? {
-            assistant: z
-              .boolean()
-              .optional()
-              .describe(
-                'Start Claude in assistant mode (custom system prompt, brief view, scheduled check-in skills)',
-              ),
-            assistantName: z
-              .string()
-              .optional()
-              .describe(
-                'Display name for the assistant, shown in the claude.ai session list',
               ),
           }
         : {}),
@@ -605,16 +572,6 @@ export const SettingsSchema = lazySchema(() =>
             'plugins may push inbound messages. Undefined falls back to the default. ' +
             'Requires channelsEnabled: true.',
         ),
-      ...(feature('KAIROS') || feature('KAIROS_BRIEF')
-        ? {
-            defaultView: z
-              .enum(['chat', 'transcript'])
-              .optional()
-              .describe(
-                'Default transcript view: chat (SendUserMessage checkpoints only) or transcript (full)',
-              ),
-          }
-        : {}),
       prefersReducedMotion: z
         .boolean()
         .optional()
@@ -651,47 +608,6 @@ export const SettingsSchema = lazySchema(() =>
         .describe(
           'Whether the user has accepted the bypass permissions mode dialog',
         ),
-      ...(feature('TRANSCRIPT_CLASSIFIER')
-        ? {
-            skipAutoPermissionPrompt: z
-              .boolean()
-              .optional()
-              .describe(
-                'Whether the user has accepted the auto mode opt-in dialog',
-              ),
-            useAutoModeDuringPlan: z
-              .boolean()
-              .optional()
-              .describe(
-                'Whether plan mode uses auto mode semantics when auto mode is available (default: true)',
-              ),
-            autoMode: z
-              .object({
-                allow: z
-                  .array(z.string())
-                  .optional()
-                  .describe('Rules for the auto mode classifier allow section'),
-                soft_deny: z
-                  .array(z.string())
-                  .optional()
-                  .describe('Rules for the auto mode classifier deny section'),
-                ...(process.env.USER_TYPE === 'ant'
-                  ? {
-                      // Back-compat alias for ant users; external users use soft_deny
-                      deny: z.array(z.string()).optional(),
-                    }
-                  : {}),
-                environment: z
-                  .array(z.string())
-                  .optional()
-                  .describe(
-                    'Entries for the auto mode classifier environment section',
-                  ),
-              })
-              .optional()
-              .describe('Auto mode classifier prompt customization'),
-          }
-        : {}),
       disableAutoMode: z
         .enum(['disable'])
         .optional()

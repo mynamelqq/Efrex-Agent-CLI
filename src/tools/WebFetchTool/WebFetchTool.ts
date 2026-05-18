@@ -104,7 +104,8 @@ export const WebFetchTool = buildTool({
   },
   async call(
     { url, prompt },
-    { abortController, options: { isNonInteractiveSession } },assistantMessage,
+    { abortController, options: { isNonInteractiveSession } },    _canUseTool?,
+    assistantMessage?
   ) {
     const start = Date.now()
 
@@ -199,6 +200,83 @@ To complete your request, I need to fetch content from the redirected URL. Pleas
       tool_use_id: toolUseID,
       type: 'tool_result',
       content: result,
+    }
+  },
+    async checkPermissions(input, context): Promise<PermissionDecision> {
+    const appState = context.getAppState()
+    const permissionContext = appState.toolPermissionContext
+
+    // Check if the hostname is in the preapproved list
+    try {
+      const { url } = input as { url: string }
+      const parsedUrl = new URL(url)
+      if (isPreapprovedHost(parsedUrl.hostname, parsedUrl.pathname)) {
+        return {
+          behavior: 'allow',
+          updatedInput: input,
+          decisionReason: { type: 'other', reason: 'Preapproved host' },
+        }
+      }
+    } catch {
+      // If URL parsing fails, continue with normal permission checks
+    }
+
+    // Check for a rule specific to the tool input (matching hostname)
+    const ruleContent = webFetchToolInputToPermissionRuleContent(input)
+
+    const denyRule = getRuleByContentsForTool(
+      permissionContext,
+      WebFetchTool,
+      'deny',
+    ).get(ruleContent)
+    if (denyRule) {
+      return {
+        behavior: 'deny',
+        message: `${WebFetchTool.name} denied access to ${ruleContent}.`,
+        decisionReason: {
+          type: 'rule',
+          rule: denyRule,
+        },
+      }
+    }
+
+    const askRule = getRuleByContentsForTool(
+      permissionContext,
+      WebFetchTool,
+      'ask',
+    ).get(ruleContent)
+    if (askRule) {
+      return {
+        behavior: 'ask',
+        message: `Claude requested permissions to use ${WebFetchTool.name}, but you haven't granted it yet.`,
+        decisionReason: {
+          type: 'rule',
+          rule: askRule,
+        },
+        suggestions: buildSuggestions(ruleContent),
+      }
+    }
+
+    const allowRule = getRuleByContentsForTool(
+      permissionContext,
+      WebFetchTool,
+      'allow',
+    ).get(ruleContent)
+    if (allowRule) {
+      return {
+        behavior: 'allow',
+        updatedInput: input,
+        decisionReason: {
+          type: 'rule',
+          rule: allowRule,
+        },
+      }
+    }
+
+    return {
+      behavior: 'ask',
+      message: `Claude requested permissions to use ${WebFetchTool.name}, but you haven't granted it yet.`,
+      suggestions: buildSuggestions(ruleContent),
     }
   },
 } satisfies ToolDef<InputSchema, Output>)

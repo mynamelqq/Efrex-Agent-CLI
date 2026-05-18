@@ -51,8 +51,24 @@ export const NO_CONTENT_MESSAGE = '(no content)'
 export const INTERRUPT_MESSAGE_FOR_TOOL_USE =
   '[Request interrupted by user for tool use]'
 export const INTERRUPT_MESSAGE = '[Request interrupted by user]'
+export function AUTO_REJECT_MESSAGE(toolName: string): string {
+  return `Permission to use ${toolName} has been denied. ${DENIAL_WORKAROUND_GUIDANCE}`
+}
 export const CANCEL_MESSAGE =
   "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed."
+/**
+ * Shared guidance for permission denials, instructing the model on appropriate workarounds.
+ */
+export const DENIAL_WORKAROUND_GUIDANCE =
+`IMPORTANT: You *may* attempt to accomplish this action using other tools that might naturally be used to accomplish this goal, ` +
+`e.g. using head instead of cat. But you *should not* attempt to work around this denial in malicious ways, ` +
+`e.g. do not use your ability to run tests to execute non-test actions. ` +
+`You should only try to work around this restriction in reasonable ways that do not attempt to bypass the intent behind this denial. ` +
+`If you believe this capability is essential to complete the user's request, STOP and explain to the user ` +
+`what you were trying to do and why you need this permission. Let the user decide how to proceed.`
+export function DONT_ASK_REJECT_MESSAGE(toolName: string): string {
+  return `Permission to use ${toolName} has been denied because Claude Code is running in don't ask mode. ${DENIAL_WORKAROUND_GUIDANCE}`
+}
 export type SDKAssistantMessageError =
   | 'authentication_failed'
   | 'billing_error'

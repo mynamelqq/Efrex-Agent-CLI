@@ -25,6 +25,7 @@ import { formatFileSize } from 'src/utils/format.js'
 import { type ToolUseDiff } from 'src/utils/gitDiff.js'
 import { logError } from 'src/utils/log.js'
 import { expandPath } from 'src/utils/path.js'
+import { PermissionDecision } from 'src/types/permissions.js'
 import {
   type FileEditInput,
   type FileEditOutput,
@@ -248,7 +249,8 @@ export const FileEditTool = buildTool({
       userModified,
       updateFileHistoryState,
     },
-    parentMessage,
+    _canUseTool?,
+    assistantMessage?,
   ) {
     const { file_path, old_string, new_string, replace_all = false } = input
 
@@ -378,8 +380,17 @@ export const FileEditTool = buildTool({
       content: `The file ${filePath} has been updated successfully${modifiedNote}.`,
     }
   },
-
-
+  async checkPermissions(input, context): Promise<PermissionDecision> {
+    const appState = context.getAppState()
+    return checkWritePermissionForTool(
+      FileEditTool,
+      input,
+      appState.toolPermissionContext,
+    )
+  },
+  getPath(input): string {
+    return input.file_path
+  },
 } satisfies ToolDef<ReturnType<typeof inputSchema>, FileEditOutput>)
 
 

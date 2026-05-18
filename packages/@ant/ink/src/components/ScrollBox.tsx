@@ -138,13 +138,44 @@ function ScrollBox({ children, ref, stickyScroll, ...style }: PropsWithChildren<
       scrollBy(dy: number) {
         const el = domRef.current;
         if (!el) return;
+        const delta = Math.floor(dy);
+        if (delta === 0) return;
         el.stickyScroll = false;
         // Wheel input cancels any in-flight anchor seek — user override.
         el.scrollAnchor = undefined;
+        const cur = el.scrollTop ?? 0;
+        const maxScroll = Math.max(
+          0,
+          (el.scrollHeight ?? 0) - (el.scrollViewportHeight ?? 0),
+        );
+        const atTop = cur <= 0;
+        const atBottom = cur >= maxScroll;
+        const pending = el.pendingScrollDelta ?? 0;
+        let nextPending = pending;
+
+        // Once we're pinned at an edge, any leftover outward delta is stale.
+        // Keep it around and the user's first reverse wheel notch gets spent
+        // canceling that residual instead of moving immediately.
+        if ((atTop && nextPending < 0) || (atBottom && nextPending > 0)) {
+          nextPending = 0;
+        }
+
+        nextPending += delta;
+
+        // Don't accumulate more outward residual at the boundary. This turns
+        // edge over-scroll into a true no-op instead of a sticky direction
+        // debt that must be paid off by the next reverse scroll.
+        if ((atTop && nextPending < 0) || (atBottom && nextPending > 0)) {
+          if (el.pendingScrollDelta !== undefined) {
+            el.pendingScrollDelta = undefined;
+            scrollMutated(el);
+          }
+          return;
+        }
         // Accumulate in pendingScrollDelta; renderer drains it at a capped
         // rate so fast flicks show intermediate frames. Pure accumulator:
         // scroll-up followed by scroll-down naturally cancels.
-        el.pendingScrollDelta = (el.pendingScrollDelta ?? 0) + Math.floor(dy);
+        el.pendingScrollDelta = nextPending === 0 ? undefined : nextPending;
         scrollMutated(el);
       },
       scrollToBottom() {

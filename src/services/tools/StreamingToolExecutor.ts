@@ -154,10 +154,13 @@ export class StreamingToolExecutor {
         this.siblingAbortController,//创建一个新的AbortController，用于控制工具执行的取消
       )
 
-      const generator = runToolUse(tool.block, tool.assistantMessage, {
+      const generator = runToolUse(tool.block, tool.assistantMessage, 
+        this.canUseTool,
+        {
         ...this.toolUseContext,
         abortController: toolAbortController,
-      })
+      }
+    )
 
       for await (const update of generator) {
         if (this.discarded) break

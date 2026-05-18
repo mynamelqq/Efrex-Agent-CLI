@@ -12,6 +12,7 @@ import { semanticNumber } from '../../utils/semanticNumber.js'
 import { ValidationResult } from '../../Tool.js'
 import { suggestPathUnderCwd,FILE_NOT_FOUND_CWD_NOTE } from 'src/utils/file.js'
 import { GREP_TOOL_NAME,getDescription } from './prompt'
+import { PermissionDecision } from 'src/types/permissions.js'
 import {
   getToolUseSummary,
   renderToolResultMessage,
@@ -204,7 +205,8 @@ export const GrepTool = buildTool({
       offset = 0,
       multiline = false,
     },
-    { abortController },assistantMessage,
+    { abortController },_canUseTool?,
+    assistantMessage?,
   ): Promise<ToolResult<Output>> {
     const absolutePath = path ? expandPath(path) : getCwd()
     const args = ['--hidden']
@@ -485,6 +487,17 @@ export const GrepTool = buildTool({
       type: 'tool_result',
       content: result,
     }
+  },
+  async checkPermissions(input, context): Promise<PermissionDecision> {
+    const appState = context.getAppState()
+    return checkReadPermissionForTool(
+      GrepTool,
+      input,
+      appState.toolPermissionContext,
+    )
+  },
+  getPath({ path }): string {
+    return path || getCwd()
   },
 } satisfies ToolDef<InputSchema, Output>)
 // 格式化用于工具结果显示的 limit/offset 信息。

@@ -12,6 +12,7 @@ import { suggestPathUnderCwd,FILE_NOT_FOUND_CWD_NOTE } from 'src/utils/file'
 import {isENOENT}from "src/utils/errors"
 import { renderToolResultMessage, renderToolUseMessage,renderToolUseErrorMessage } from './UI'
 import { ValidationResult } from '../../Tool'
+import { PermissionDecision } from 'src/types/permissions'
 const inputSchema = lazySchema(() =>
   z.strictObject({
     pattern: z.string().describe('The glob pattern to match files against'),
@@ -101,7 +102,9 @@ export const GlobTool = buildTool({
     renderToolUseErrorMessage,
     isConcurrencySafe: () => true,
     isReadOnly: () => true,
-    async call(input, context,assistantMessage,) {
+    async call(input, context,
+    _canUseTool?,
+    assistantMessage?,) {
       const start = Date.now()
       const searchPath = input.path ? expandPath(input.path) : getCwd()
       const limit = context.globLimits?.maxResults ?? 100
@@ -143,6 +146,17 @@ export const GlobTool = buildTool({
         ].join('\n'),
       }
     },
+  async checkPermissions(input, context): Promise<PermissionDecision> {
+    const appState = context.getAppState()
+    return checkReadPermissionForTool(
+      GlobTool,
+      input,
+      appState.toolPermissionContext,
+    )
+  },
+  getPath({ path }): string {
+    return path ? expandPath(path) : getCwd()
+  },
     renderToolResultMessage:renderToolResultMessage,
     renderToolUseMessage:renderToolUseMessage
   } satisfies ToolDef<InputSchema, Output>)

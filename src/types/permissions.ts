@@ -4,7 +4,6 @@
 
 
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
-
 /**
  * The value of a permission rule - specifies which tool and optional content
  */
@@ -20,6 +19,7 @@ export type PermissionBehavior = 'allow' | 'deny' | 'ask'
 export type PermissionRuleSource =
   | 'userSettings'
   | 'projectSettings'
+  | 'localSettings'
   | 'cliArg'
   | 'command'
   | 'session'
@@ -36,7 +36,16 @@ export const EXTERNAL_PERMISSION_MODES = [
   'dontAsk',
   'plan',
 ] as const
+// Runtime validation set: modes that are user-addressable (settings.json
+// defaultMode, --permission-mode CLI flag, conversation recovery).
+// 'auto' is always available — when TRANSCRIPT_CLASSIFIER is off, the
+// classifier is unavailable and auto mode falls back to prompting.
+export const INTERNAL_PERMISSION_MODES = [
+  ...EXTERNAL_PERMISSION_MODES,
+  'auto' as const,
+] as const satisfies readonly PermissionMode[]
 
+export const PERMISSION_MODES = INTERNAL_PERMISSION_MODES
 export type ExternalPermissionMode = (typeof EXTERNAL_PERMISSION_MODES)[number]
 export type InternalPermissionMode = ExternalPermissionMode | 'auto' | 'bubble'
 export type PermissionMode = InternalPermissionMode

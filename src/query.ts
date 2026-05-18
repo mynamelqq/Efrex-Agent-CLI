@@ -20,6 +20,7 @@ import type {
 import { asSystemPrompt, SystemPrompt } from './prompt.js'
 import { logForDebugging } from './utils/debug.js'
 import { createAttachmentMessage } from './utils/messages.js'
+import { CanUseToolFn } from './hooks/useCanUseTool.js'
 import { applyToolResultBudget } from './utils/toolResultStorage.js'
 export type QueryParams = {
   messages: Message[]
@@ -27,6 +28,7 @@ export type QueryParams = {
   userContext: { [k: string]: string }
   systemContext: { [k: string]: string }
   toolUseContext: ToolUseContext
+  canUseTool: CanUseToolFn
   fallbackModel?: string
   querySource: string
   maxTurns?: number
@@ -68,12 +70,15 @@ async function* queryLoop(
   Terminal
 > {
   void consumedCommandUuids
-  const { fallbackModel, maxTurns,
+  const {
     systemPrompt,
     userContext,
     systemContext,
+    canUseTool,
+    fallbackModel,
     querySource,
-   } = params
+    maxTurns,
+  } = params
   const queryModelWithStreamingImpl =
     params.queryModelWithStreamingImpl ?? queryModelWithStreaming
   const config = buildQueryConfig()
@@ -138,7 +143,7 @@ async function* queryLoop(
 
     const useStreamingToolExecution = config.gates.streamingToolExecution
     const streamingToolExecutor = useStreamingToolExecution
-      ? new StreamingToolExecutor(toolUseContext.options.tools, toolUseContext)
+      ? new StreamingToolExecutor(toolUseContext.options.tools, toolUseContext,canUseTool)
       : null
 
     try {

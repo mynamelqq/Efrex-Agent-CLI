@@ -15,6 +15,7 @@ import { readFileInRange } from '../../utils/readFileInRange'
 // import {readFileBytes} from 'fs/promises'
 import * as path from 'path'
 import { isENOENT } from '../../utils/errors'
+import { PermissionDecision } from 'src/types/permissions'
 import { getEfrexConfigHomeDir } from '../../utils/envUtils'
 import {
   open
@@ -405,7 +406,9 @@ export const FileReadTool = buildTool({
   },
   async call(
     { file_path, offset = 1, limit = undefined, pages },
-    context,assistantMessage,
+    context,
+    _canUseTool?,
+    assistantMessage?,
   ) {
     const { readFileState, fileReadingLimits } = context
 
@@ -624,6 +627,17 @@ export const FileReadTool = buildTool({
         }
       }
     }
+  },
+  async checkPermissions(input, context): Promise<PermissionDecision> {
+    const appState = context.getAppState()
+    return checkReadPermissionForTool(
+      FileReadTool,
+      input,
+      appState.toolPermissionContext,
+    )
+  },
+  getPath(input): string {
+    return input.file_path
   },
 } satisfies ToolDef<InputSchema, Output>)
 

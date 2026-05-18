@@ -23,6 +23,7 @@ import { exec } from 'src/utils/shell';
 import {interpretCommandResult}from "./commandSemantics"
 const EOL = '\n';
 import { EndTruncatingAccumulator } from 'src/utils/stringUtils.js';
+import { PermissionResult } from 'src/types/permissions';
 import { ensureToolResultsDir,getToolResultPath } from 'src/utils/toolResultStorage';
 import { stripEmptyLines } from './utils';
 export function getDefaultTimeoutMs(): number {
@@ -330,7 +331,8 @@ export const BashTool = buildTool({
   async validateInput(input: BashToolInput): Promise<ValidationResult> {
     return { result: true };
   },
-  async call(input: BashToolInput, toolUseContext: ToolUseContext,assistantMessage,) {
+  async call(input: BashToolInput, toolUseContext: ToolUseContext,_canUseTool?,
+    assistantMessage?) {
     // 处理模拟的 sed 编辑——直接应用而不是运行 sed
     // 这确保用户预览的内容就是实际写入的内容
     const {
@@ -544,6 +546,9 @@ export const BashTool = buildTool({
       content: [processedStdout, errorMessage].filter(Boolean).join('\n'),
       is_error: interrupted,
     };
+  },
+  async checkPermissions(input, context): Promise<PermissionResult> {
+    return bashToolHasPermission(input, context);
   },
 } satisfies ToolDef<InputSchema, Out>);
 

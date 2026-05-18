@@ -801,7 +801,11 @@ function renderNodeToOutput(
         // startup) the probe has resolved — same timing guarantee the
         // wheel-accel curve relies on.
         let cur = node.scrollTop ?? 0
-        const pending = node.pendingScrollDelta
+        let pending = node.pendingScrollDelta
+        if ((cur <= 0 && (pending ?? 0) < 0) || (cur >= maxScroll && (pending ?? 0) > 0)) {
+          node.pendingScrollDelta = undefined
+          pending = undefined
+        }
         const cMin = node.scrollClampMin
         const cMax = node.scrollClampMax
         const haveClamp = cMin !== undefined && cMax !== undefined

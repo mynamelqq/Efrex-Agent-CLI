@@ -1,4 +1,3 @@
-
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
 import type { ToolUseConfirm } from '../../components/permissions/PermissionRequest.js'
 import type {
@@ -6,6 +5,7 @@ import type {
   Tool as ToolType,
   ToolUseContext,
 } from '../../Tool.js'
+import { persistPermissionUpdates } from 'src/utils/permissions/PermissionUpdate.js'
 import { BASH_TOOL_NAME } from 'src/tools/BashTool/toolName.js'
 import type { AssistantMessage } from 'src/package/message.js'
 import type {
@@ -36,7 +36,7 @@ type PermissionQueueOps = {
   remove(toolUseID: string): void
   update(toolUseID: string, patch: Partial<ToolUseConfirm>): void
 }
-function createPermissionContext(
+function createPermissionContext(//权限上下文
   tool: ToolType,
   input: Record<string, unknown>,
   toolUseContext: ToolUseContext,
@@ -66,12 +66,12 @@ function createPermissionContext(
     },
     async persistPermissions(updates: PermissionUpdate[]) {
       if (updates.length === 0) return false
-      persistPermissionUpdates(updates)
+      persistPermissionUpdates(updates)//持久化权限文件
       const appState = toolUseContext.getAppState()
-      setToolPermissionContext(
-        applyPermissionUpdates(appState.toolPermissionContext, updates),
-      )
-      return updates.some(update => supportsPersistence(update.destination))
+      // setToolPermissionContext(//设置上下文
+        // applyPermissionUpdates(appState.toolPermissionContext, updates),
+      // )
+      return true
     },
     resolveIfAborted(resolve: (decision: PermissionDecision) => void) {
       if (!toolUseContext.abortController.signal.aborted) return false
@@ -92,51 +92,6 @@ function createPermissionContext(
         toolUseContext.abortController.abort()
       }
       return { behavior: 'ask', message, contentBlocks }
-    },
-    async runHooks(
-      permissionMode: string | undefined,
-      suggestions: PermissionUpdate[] | undefined,
-      updatedInput?: Record<string, unknown>,
-      permissionPromptStartTimeMs?: number,
-    ): Promise<PermissionDecision | null> {
-      for await (const hookResult of executePermissionRequestHooks(
-        tool.name,
-        toolUseID,
-        input,
-        toolUseContext,
-        permissionMode,
-        suggestions as any,
-        toolUseContext.abortController.signal,
-      )) {
-        if (hookResult.permissionRequestResult) {
-          const decision = hookResult.permissionRequestResult
-          if (decision.behavior === 'allow') {
-            const finalInput = decision.updatedInput ?? updatedInput ?? input
-            return await this.handleHookAllow(
-              finalInput,
-              (decision.updatedPermissions ??
-                []) as unknown as import('../../types/permissions.js').PermissionUpdate[],
-              permissionPromptStartTimeMs,
-            )
-          } else if (decision.behavior === 'deny') {
-            if (decision.interrupt) {
-              logForDebugging(
-                `Hook interrupt: tool=${tool.name} hookMessage=${decision.message}`,
-              )
-              toolUseContext.abortController.abort()
-            }
-            return this.buildDeny(
-              decision.message || 'Permission denied by hook',
-              {
-                type: 'hook',
-                hookName: 'PermissionRequest',
-                reason: decision.message,
-              },
-            )
-          }
-        }
-      }
-      return null
     },
     buildAllow(
       updatedInput: Record<string, unknown>,
@@ -186,17 +141,6 @@ function createPermissionContext(
         contentBlocks,
       })
     },
-    async handleHookAllow(
-      finalInput: Record<string, unknown>,
-      permissionUpdates: PermissionUpdate[],
-      permissionPromptStartTimeMs?: number,
-    ): Promise<PermissionAllowDecision> {
-      const acceptedPermanentUpdates =
-        await this.persistPermissions(permissionUpdates)
-      return this.buildAllow(finalInput, {
-        decisionReason: { type: 'hook', hookName: 'PermissionRequest' },
-      })
-    },
     pushToQueue(item: ToolUseConfirm) {
       queueOps?.push(item)
     },
@@ -212,11 +156,8 @@ function createPermissionContext(
 
 type PermissionContext = ReturnType<typeof createPermissionContext>
 
-/**
- * Create a PermissionQueueOps backed by a React state setter.
- * This is the bridge between React's `setToolUseConfirmQueue` and the
- * generic queue interface used by PermissionContext.
- */
+/** * 创建一个由 React 状态设置器支持的权限队列操作类。 
+  这是连接 React 的 `setToolUseConfirmQueue` 方法与权限上下文所使用的通用队列接口的桥梁。 */
 function createPermissionQueueOps(
   setToolUseConfirmQueue: React.Dispatch<
     React.SetStateAction<ToolUseConfirm[]>
@@ -247,4 +188,35 @@ export type {
   PermissionApprovalSource,
   PermissionQueueOps,
   PermissionRejectionSource,
+}
+type ResolveOnce<T> = {
+  resolve(value: T): void
+  isResolved(): boolean
+  /**
+   * Atomically check-and-mark as resolved. Returns true if this caller
+   * won the race (nobody else has resolved yet), false otherwise.
+   * Use this in async callbacks BEFORE awaiting, to close the window
+   * between the `isResolved()` check and the actual `resolve()` call.
+   */
+  claim(): boolean
+}
+export function createResolveOnce<T>(resolve: (value: T) => void): ResolveOnce<T> {
+  let claimed = false
+  let delivered = false
+  return {
+    resolve(value: T) {
+      if (delivered) return
+      delivered = true
+      claimed = true
+      resolve(value)
+    },
+    isResolved() {
+      return claimed
+    },
+    claim() {
+      if (claimed) return false
+      claimed = true
+      return true
+    },
+  }
 }

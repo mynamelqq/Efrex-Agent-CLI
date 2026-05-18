@@ -9,7 +9,7 @@ import {
   renderToolUseErrorMessage,
   renderToolUseMessage,
 } from './UI.js'
-
+import { PermissionResult } from 'src/types/permissions.js'
 const FIRECRAWL_SEARCH_URL =
   process.env.FIRECRAWL_SEARCH_URL ?? 'https://api.firecrawl.dev/v2/search'
 const DEFAULT_LIMIT = 8
@@ -215,7 +215,8 @@ export const WebSearchTool = buildTool({
   isReadOnly() {
     return true
   },
-  async call(input, { abortController },assistantMessage,) {
+  async call(input, { abortController },_canUseTool?,
+    assistantMessage?,) {
     const startTime = performance.now()
     const results = await searchFirecrawl(input, abortController.signal)
     const durationSeconds = (performance.now() - startTime) / 1000
@@ -254,6 +255,20 @@ export const WebSearchTool = buildTool({
       tool_use_id: toolUseID,
       type: 'tool_result',
       content: formattedOutput.trim(),
+    }
+  },
+   async checkPermissions(_input): Promise<PermissionResult> {
+    return {
+      behavior: 'passthrough',
+      message: 'WebSearchTool requires permission.',
+      suggestions: [
+        {
+          type: 'addRules',
+          rules: [{ toolName: WEB_SEARCH_TOOL_NAME }],
+          behavior: 'allow',
+          destination: 'localSettings',
+        },
+      ],
     }
   },
 } satisfies ToolDef<InputSchema, Output>)

@@ -11,6 +11,7 @@ import { getPatchForDisplay } from 'src/utils/diff'
 import { isEnvTruthy } from 'src/utils/envUtils.js'
 import { ToolUseDiff } from 'src/utils/gitDiff'
 import { mkdir } from 'fs'
+import { PermissionDecision } from 'src/types/permissions'
 import { getFileModificationTime } from 'src/utils/file'
 import { isENOENT } from 'src/utils/errors.js'
 import { fileHistoryEnabled } from 'src/utils/fileHistory'
@@ -131,7 +132,8 @@ export const FileWriteTool = buildTool({
    async call(
     { file_path, content },
     { readFileState, updateFileHistoryState },
-    assistantMessage,
+    _canUseTool?,
+    assistantMessage?,
   ) {
     const fullFilePath = expandPath(file_path)
     const dir = dirname(fullFilePath)
@@ -282,5 +284,16 @@ export const FileWriteTool = buildTool({
           content: `The file ${filePath} has been updated successfully.`,
         }as ToolResultBlockParam
     }
+  },
+  async checkPermissions(input, context): Promise<PermissionDecision> {
+    const appState = context.getAppState()
+    return checkWritePermissionForTool(
+      FileWriteTool,
+      input,
+      appState.toolPermissionContext,
+    )
+  },
+  getPath(input): string {
+    return input.file_path
   },
 })
