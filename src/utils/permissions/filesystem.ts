@@ -1,10 +1,14 @@
 
 import { randomBytes } from 'crypto'
 import ignore from 'ignore'
+import { PermissionRule } from 'src/types/permissions.js'
 import memoize from 'lodash/memoize.js'
+import { FILE_EDIT_TOOL_NAME } from 'src/tools/FileEditTool/constants.js'
+import { FILE_WRITE_TOOL_NAME } from 'src/tools/FileWriteTool/prompt.js'
+import { FILE_READ_TOOL_NAME } from 'src/tools/FileReadTool/prompt.js'
 import { homedir, tmpdir } from 'os'
 import { join, normalize, posix, sep } from 'path'
-
+import { getPathsForPermissionCheck } from '../file.js'
 import type { z } from 'zod/v4'
 import { getOriginalCwd, getSessionId } from '../../bootstrap/state.js'
 import type { AnyObject, Tool, ToolPermissionContext } from '../../Tool.js'
@@ -44,7 +48,7 @@ export function checkReadPermissionForTool(
   if (typeof tool.getPath !== 'function') {
     return {
       behavior: 'ask',
-      message: `Claude requested permissions to use ${tool.name}, but you haven't granted it yet.`,
+      message: `requested permissions to use ${tool.name}, but you haven't granted it yet.`,
     }
   }
   const path = tool.getPath(input)//一般是glob、grep、file工具
@@ -54,11 +58,10 @@ export function checkReadPermissionForTool(
   // checkPathSafetyForAutoEdit → pathInAllowedWorkingPath to avoid redundant
   // existsSync/lstatSync/realpathSync syscalls on the same path (previously
   // 6× = 30 syscalls per Read permission check).
-  const pathsToCheck = getPathsForPermissionCheck(path)
+  const pathsToCheck = getPathsForPermissionCheck(path)//找到需要检查的所有路径 由于软链接
 
-  // 1. Defense-in-depth: Block UNC paths early (before other checks)
-  // This catches paths starting with \\ or // that could access network resources
-  // This may catch some UNC patterns not detected by containsVulnerableUncPath
+ // 1. 安全纵深防御：尽早阻止UNC路径的访问（在其他检查之前） 
+ // 这能拦截以“\\”或“//”开头的路径，以及那些可能访问网络资源的路径 // 这种方式可能会捕获一些“containsVulnerableUncPath”函数未能检测到的UNC模式
   for (const pathToCheck of pathsToCheck) {
     if (pathToCheck.startsWith('\\\\') || pathToCheck.startsWith('//')) {
       return {
@@ -72,7 +75,7 @@ export function checkReadPermissionForTool(
     }
   }
 
-  // 2. Check for suspicious Windows path patterns (defense in depth)
+  // 2. 检查可疑的 Windows 路径模式（深度防御措施）
   for (const pathToCheck of pathsToCheck) {
     if (hasSuspiciousWindowsPathPattern(pathToCheck)) {
       return {
@@ -87,9 +90,8 @@ export function checkReadPermissionForTool(
     }
   }
 
-  // 3. Check for READ-SPECIFIC deny rules first - check both the original path and resolved symlink path
-  // SECURITY: This must come before any allow checks (including "edit access implies read access")
-  // to prevent bypassing explicit read deny rules
+// 3.首先检查与读取操作相关的拒绝规则——同时检查原始路径和解析后的符号链接路径
+ // 安全性：此操作必须在任何允许检查（包括“编辑权限意味着读取权限”）之前进行 // 以防止绕过明确的读取拒绝规则
   for (const pathToCheck of pathsToCheck) {
     const denyRule = matchingRuleForInput(
       pathToCheck,
@@ -109,8 +111,7 @@ export function checkReadPermissionForTool(
     }
   }
 
-  // 4. Check for READ-SPECIFIC ask rules - check both the original path and resolved symlink path
-  // SECURITY: This must come before implicit allow checks to ensure explicit ask rules are honored
+// 4. 检查与读取特定操作相关的请求规则 - 既要检查原始路径，也要检查已解析的符号链接路径 // 安全性：此步骤必须置于隐式允许检查之前，以确保明确的请求规则得到遵守
   for (const pathToCheck of pathsToCheck) {
     const askRule = matchingRuleForInput(
       pathToCheck,
@@ -142,7 +143,7 @@ export function checkReadPermissionForTool(
     return editResult
   }
 
-  // 6. Allow reads in working directories
+// 6. 允许读取工作目录中的内容
   const isInWorkingDir = pathInAllowedWorkingPath(
     path,
     toolPermissionContext,
@@ -483,4 +484,222 @@ function hasSuspiciousWindowsPathPattern(path: string): boolean {
   }
 
   return false
+}
+function getPatternsByRoot(
+  toolPermissionContext: ToolPermissionContext,
+  toolType: 'edit' | 'read',
+  behavior: 'allow' | 'deny' | 'ask',
+): Map<string | null, Map<string, PermissionRule>> {
+  const toolName = (() => {
+    switch (toolType) {
+      case 'edit':
+        // Apply Edit tool rules to any tool editing files
+        return FILE_EDIT_TOOL_NAME
+      case 'read':
+        // Apply Read tool rules to any tool reading files
+        return FILE_READ_TOOL_NAME
+    }
+  })()
+
+  const rules = getRuleByContentsForToolName(
+    toolPermissionContext,
+    toolName,
+    behavior,
+  )
+  // Resolve rules relative to path based on source
+  const patternsByRoot = new Map<string | null, Map<string, PermissionRule>>()
+  for (const [pattern, rule] of rules.entries()) {
+    const { relativePattern, root } = patternWithRoot(pattern, rule.source)
+    let patternsForRoot = patternsByRoot.get(root)
+    if (patternsForRoot === undefined) {
+      patternsForRoot = new Map<string, PermissionRule>()
+      patternsByRoot.set(root, patternsForRoot)
+    }
+    // Store the rule keyed by the root
+    patternsForRoot.set(relativePattern, rule)
+  }
+  return patternsByRoot
+}
+
+const DIR_SEP = posix.sep
+export function matchingRuleForInput(
+  path: string,
+  toolPermissionContext: ToolPermissionContext,
+  toolType: 'edit' | 'read',
+  behavior: 'allow' | 'deny' | 'ask',
+): PermissionRule | null {
+  let fileAbsolutePath = expandPath(path)
+
+  // On Windows, convert to POSIX format to match against permission patterns
+  if (getPlatform() === 'windows' && fileAbsolutePath.includes('\\')) {
+    fileAbsolutePath = windowsPathToPosixPath(fileAbsolutePath)
+  }
+
+  const patternsByRoot = getPatternsByRoot(
+    toolPermissionContext,
+    toolType,
+    behavior,
+  )
+
+  // Check each root for a matching pattern
+  for (const [root, patternMap] of patternsByRoot.entries()) {
+    // Transform patterns for the ignore library
+    const patterns = Array.from(patternMap.keys()).map(pattern => {
+      let adjustedPattern = pattern
+
+      // Remove /** suffix - ignore library treats 'path' as matching both
+      // the path itself and everything inside it
+      if (adjustedPattern.endsWith('/**')) {
+        adjustedPattern = adjustedPattern.slice(0, -3)
+      }
+
+      return adjustedPattern
+    })
+
+    const ig = ignore().add(patterns)
+
+    // Use cross-platform relative path helper for POSIX-style patterns
+    const relativePathStr = relativePath(
+      root ?? getCwd(),
+      fileAbsolutePath ?? getCwd(),
+    )
+
+    if (relativePathStr.startsWith(`..${DIR_SEP}`)) {
+      // The path is outside the root, so ignore it
+      continue
+    }
+
+    // Important: ig.test throws if you give it an empty string
+    if (!relativePathStr) {
+      continue
+    }
+
+    const igResult = ig.test(relativePathStr)
+
+    if (igResult.ignored && igResult.rule) {
+      // Map the matched pattern back to the original rule
+      const originalPattern = igResult.rule.pattern
+
+      // Check if this was a /** pattern we simplified
+      const withWildcard = originalPattern + '/**'
+      if (patternMap.has(withWildcard)) {
+        return patternMap.get(withWildcard) ?? null
+      }
+
+      return patternMap.get(originalPattern) ?? null
+    }
+  }
+
+  // No matching rule found
+  return null
+}
+/**
+ * Cross-platform relative path calculation that returns POSIX-style paths.
+ * Handles Windows path conversion internally.
+ * @param from The base path
+ * @param to The target path
+ * @returns A POSIX-style relative path
+ */
+export function relativePath(from: string, to: string): string {
+  if (getPlatform() === 'windows') {
+    // Convert Windows paths to POSIX for consistent comparison
+    const posixFrom = windowsPathToPosixPath(from)
+    const posixTo = windowsPathToPosixPath(to)
+    return posix.relative(posixFrom, posixTo)
+  }
+  // Use POSIX paths directly
+  return posix.relative(from, to)
+}
+export function generateSuggestions(
+  filePath: string,
+  operationType: 'read' | 'write' | 'create',
+  toolPermissionContext: ToolPermissionContext,
+  precomputedPathsToCheck?: readonly string[],
+): PermissionUpdate[] {
+  const isOutsideWorkingDir = !pathInAllowedWorkingPath(
+    filePath,
+    toolPermissionContext,
+    precomputedPathsToCheck,
+  )
+
+  if (operationType === 'read' && isOutsideWorkingDir) {
+    // For read operations outside working directories, add Read rules
+    // IMPORTANT: Include both the symlink path and resolved path so subsequent checks pass
+    const dirPath = getDirectoryForPath(filePath)
+    const dirsToAdd = getPathsForPermissionCheck(dirPath)
+
+    const suggestions = dirsToAdd
+      .map(dir => createReadRuleSuggestion(dir, 'session'))
+      .filter((s): s is PermissionUpdate => s !== undefined)
+
+    return suggestions
+  }
+
+  // Only suggest setMode:acceptEdits when it would be an upgrade. In auto
+  // mode the classifier already auto-approves edits; in bypassPermissions
+  // everything is allowed; in acceptEdits it's a no-op. Suggesting it
+  // anyway and having the SDK host apply it on "Always allow" silently
+  // downgrades auto → acceptEdits, which then prompts for MCP/Bash.
+  const shouldSuggestAcceptEdits =
+    toolPermissionContext.mode === 'default' ||
+    toolPermissionContext.mode === 'plan'
+
+  if (operationType === 'write' || operationType === 'create') {
+    const updates: PermissionUpdate[] = shouldSuggestAcceptEdits
+      ? [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }]
+      : []
+
+    if (isOutsideWorkingDir) {
+      // For write operations outside working directories, also add the directory
+      // IMPORTANT: Include both the symlink path and resolved path so subsequent checks pass
+      const dirPath = getDirectoryForPath(filePath)
+      const dirsToAdd = getPathsForPermissionCheck(dirPath)
+
+      updates.push({
+        type: 'addDirectories',
+        directories: dirsToAdd,
+        destination: 'session',
+      })
+    }
+
+    return updates
+  }
+
+  // For read operations inside working directories, just change mode
+  return shouldSuggestAcceptEdits
+    ? [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }]
+    : []
+}
+export function pathInAllowedWorkingPath(
+  path: string,
+  toolPermissionContext: ToolPermissionContext,
+  precomputedPathsToCheck?: readonly string[],
+): boolean {
+  // Check both the original path and the resolved symlink path
+  const pathsToCheck =
+    precomputedPathsToCheck ?? getPathsForPermissionCheck(path)
+
+  // Resolve working directories the same way we resolve input paths so
+  // comparisons are symmetric. Without this, a resolved input path
+  // (e.g. /System/Volumes/Data/home/... on macOS) would not match an
+  // unresolved working directory (/home/...), causing false denials.
+  const workingPaths = Array.from(
+    allWorkingDirectories(toolPermissionContext),
+  ).flatMap(wp => getResolvedWorkingDirPaths(wp))
+
+  // All paths must be within allowed working paths
+  // If any resolved path is outside, deny access
+  return pathsToCheck.every(pathToCheck =>
+    workingPaths.some(workingPath =>
+      pathInWorkingPath(pathToCheck, workingPath),
+    ),
+  )
+}
+export function allWorkingDirectories(
+  context: ToolPermissionContext,
+): Set<string> {
+  return new Set([
+    getOriginalCwd(),
+    ...context.additionalWorkingDirectories.keys(),
+  ])
 }

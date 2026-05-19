@@ -82,6 +82,16 @@ type PermissionOption = {
 	help?: string;
 };
 
+type ResolutionState = {
+	kind: 'allow' | 'reject';
+	label: string;
+	color: PermissionColor;
+	symbol: string;
+};
+
+const RESOLUTION_ANIMATION_MS = 50;
+const RESOLUTION_FRAMES = ['.', '..', '...'] as const;
+
 function stringifyPermissionInput(input: unknown): string {
 	if (typeof input === 'string') {
 		return input;
@@ -342,20 +352,80 @@ export function PermissionRequest({
 	const [selectedIndex, setSelectedIndex] = React.useState(
 		presentation.isDangerous ? 1 : 0
 	);
+	const [resolution, setResolution] = React.useState<ResolutionState | null>(
+		null
+	);
+	const [resolutionFrame, setResolutionFrame] = React.useState(0);
+	const onDoneRef = React.useRef(onDone);
+
+	React.useEffect(() => {
+		onDoneRef.current = onDone;
+	}, [onDone]);
+
+	React.useEffect(() => {
+		if (!resolution) {
+			return;
+		}
+
+		const frameTimer = setInterval(() => {
+			setResolutionFrame(current => current + 1);
+		}, 70);
+		const doneTimer = setTimeout(() => {
+			onDoneRef.current();
+		}, RESOLUTION_ANIMATION_MS);
+
+		return () => {
+			clearInterval(frameTimer);
+			clearTimeout(doneTimer);
+		};
+	}, [resolution]);
+
+	const startResolution = React.useCallback(
+		(nextResolution: ResolutionState, action: () => void) => {
+			if (resolution) {
+				return;
+			}
+
+			action();
+			setResolutionFrame(0);
+			setResolution(nextResolution);
+		},
+		[resolution]
+	);
 
 	const reject = React.useCallback(() => {
-		onDone();
 		onReject();
-		toolUseConfirm.onReject();
-
-	}, [onDone, onReject, toolUseConfirm]);
+		startResolution(
+			{
+				kind: 'reject',
+				label: 'Denied',
+				color: 'ansi:redBright',
+				symbol: 'x'
+			},
+			() => {
+				toolUseConfirm.onReject();
+			}
+		);
+	}, [onReject, startResolution, toolUseConfirm]);
 
 	const allow = React.useCallback(
 		(permissionUpdates: PermissionUpdate[] = []) => {
-			toolUseConfirm.onAllow(toolUseConfirm.input, permissionUpdates);
-			onDone();
+			startResolution(
+				{
+					kind: 'allow',
+					label: 'Allowed',
+					color: 'ansi:greenBright',
+					symbol: 'check'
+				},
+				() => {
+					toolUseConfirm.onAllow(
+						toolUseConfirm.input,
+						permissionUpdates
+					);
+				}
+			);
 		},
-		[onDone, toolUseConfirm]
+		[startResolution, toolUseConfirm]
 	);
 
 	const alwaysCopy = React.useMemo(
@@ -400,6 +470,11 @@ export function PermissionRequest({
 
 	useInput(
 		(input, key, event) => {
+			if (resolution) {
+				event.stopImmediatePropagation();
+				return;
+			}
+
 			event.stopImmediatePropagation();
 			toolUseConfirm.onUserInteraction();
 
@@ -449,11 +524,15 @@ export function PermissionRequest({
 	);
 	const headerTitleWidth = 20;
 	const headerIntentWidth = Math.max(0, contentWidth - headerTitleWidth - 2);
+	const resolutionSuffix = resolution
+		? RESOLUTION_FRAMES[resolutionFrame % RESOLUTION_FRAMES.length]
+		: '';
+	const isResolving = resolution !== null;
 
 	return (
 		<Box
 			borderStyle="round"
-			borderColor={presentation.border}
+			borderColor={resolution?.color ?? presentation.border}
 			flexDirection="column"
 			alignSelf="flex-start"
 			width={panelWidth}
@@ -462,14 +541,28 @@ export function PermissionRequest({
 			marginTop={1}
 		>
 			<Box flexDirection="row">
-				<Text color={presentation.accent} bold>
-					?{' '}
+				<Text color={resolution?.color ?? presentation.accent} bold>
+					{resolution ? `${resolution.symbol} ` : '? '}
 				</Text>
 				<Text color="ansi:whiteBright">
-					{fitDisplay('Permission required', headerTitleWidth)}
+					{fitDisplay(
+						isResolving
+							? `${resolution.label}${resolutionSuffix}`
+							: 'Permission required',
+						headerTitleWidth
+					)}
 				</Text>
 				<Text color="ansi:blackBright">
-					{fitDisplay(`  ${presentation.intent}`, headerIntentWidth)}
+					{fitDisplay(
+						`  ${
+							isResolving
+								? resolution.kind === 'allow'
+									? 'continuing to the next step'
+									: 'tool call was cancelled'
+								: presentation.intent
+						}`,
+						headerIntentWidth
+					)}
 				</Text>
 			</Box>
 
@@ -510,38 +603,57 @@ export function PermissionRequest({
 				</Box>
 			</Box>
 
-			<Box flexDirection="row">
-				{options.map((option, index) => {
-					const selected = selectedIndex === index;
+			{isResolving ? (
+				<Box flexDirection="row">
+					<Text color={resolution.color} bold>
+						{fitDisplay(
+							resolution.kind === 'allow'
+								? `Accepted${resolutionSuffix}`
+								: `Rejected${resolutionSuffix}`,
+							contentWidth
+						)}
+					</Text>
+				</Box>
+			) : (
+				<Box flexDirection="row">
+					{options.map((option, index) => {
+						const selected = selectedIndex === index;
 
-					return (
-						<Box
-							key={option.key}
-							width={optionWidth}
-							marginRight={index === options.length - 1 ? 0 : 2}
-						>
-							<Text
-								color={selected ? option.color : 'ansi:whiteBright'}
-								bold={selected}
+						return (
+							<Box
+								key={option.key}
+								width={optionWidth}
+								marginRight={index === options.length - 1 ? 0 : 2}
 							>
-								{fitDisplay(
-									`${selected ? '›' : ' '}[${option.hotkey}] ${
-										option.label
-									}`,
-									optionWidth
-								)}
-							</Text>
-						</Box>
-					);
-				})}
-			</Box>
+								<Text
+									color={
+										selected ? option.color : 'ansi:whiteBright'
+									}
+									bold={selected}
+								>
+									{fitDisplay(
+										`${selected ? '›' : ' '}[${option.hotkey}] ${
+											option.label
+										}`,
+										optionWidth
+									)}
+								</Text>
+							</Box>
+						);
+					})}
+				</Box>
+			)}
 
 			<Box marginTop={0}>
-				<Text color="ansi:blackBright">
+				<Text color={isResolving ? 'ansi:blackBright' : 'ansi:blackBright'}>
 					{fitDisplay(
-						selectedOption?.help
-							? `${selectedOption.help} · Enter confirm`
-							: 'A/D/S select · ←→ navigate · Enter confirm',
+						isResolving
+							? resolution.kind === 'allow'
+								? 'Applying your decision'
+								: 'Returning to the conversation'
+							: selectedOption?.help
+								? `${selectedOption.help} · Enter confirm`
+								: 'A/D/S select · ←→ navigate · Enter confirm',
 						contentWidth
 					)}
 				</Text>

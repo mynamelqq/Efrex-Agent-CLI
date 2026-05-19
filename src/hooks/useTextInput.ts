@@ -40,6 +40,11 @@ export default function useTextInput({
   const initialOffset = Math.min(cursorOffset ?? value.length, value.length);
   const [cursor, setCursor] = useState(() => new Cursor(value, initialOffset));
 
+  const applyCursor = (nextCursor: Cursor) => {
+    setCursor(nextCursor);
+    onCursorOffsetChange?.(nextCursor.offset);
+  };
+
   useEffect(() => {
     setCursor(new Cursor(value, Math.min(cursorOffset ?? value.length, value.length)));
   }, [cursorSyncKey]);
@@ -50,10 +55,6 @@ export default function useTextInput({
       return previous.sync(value, nextOffset);
     });
   }, [value, cursorOffset]);
-
-  useEffect(() => {
-    onCursorOffsetChange?.(cursor.offset);
-  }, [cursor.offset, onCursorOffsetChange]);
 
   useInput(
     (input, key, event) => {
@@ -87,7 +88,7 @@ export default function useTextInput({
         }
         event.stopImmediatePropagation();
         if (cursor.text.includes('\n')) {
-          setCursor(previous => previous.up(width));
+          applyCursor(cursor.up(width));
         } else {
           onHistoryPrev?.();
         }
@@ -100,7 +101,7 @@ export default function useTextInput({
         }
         event.stopImmediatePropagation();
         if (cursor.text.includes('\n')) {
-          setCursor(previous => previous.down(width));
+          applyCursor(cursor.down(width));
         } else {
           onHistoryNext?.();
         }
@@ -123,7 +124,7 @@ export default function useTextInput({
         const nextCursor = handleCtrl(textInput, cursor, width);
         if (nextCursor !== cursor) {
           event.stopImmediatePropagation();
-          setCursor(nextCursor);
+          applyCursor(nextCursor);
           if (nextCursor.text !== cursor.text) {
             onChange(nextCursor.text);
           }
@@ -165,7 +166,7 @@ export default function useTextInput({
       }
 
       event.stopImmediatePropagation();
-      setCursor(nextCursor);
+      applyCursor(nextCursor);
       if (nextCursor.text !== cursor.text) {
         onChange(nextCursor.text);
       }

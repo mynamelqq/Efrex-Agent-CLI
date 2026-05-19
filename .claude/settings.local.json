@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(bun test *)",
-      "Bash(bun add *)"
+      "Bash(bun add *)",
+      "Bash(awk '/^[\\\\t ]*<PromptInput$/{found=1} found && /onSubmit=\\\\{onSubmit\\\\}/ && !done{print; print \"\\\\t\\\\t\\\\t\\\\t\\\\t\\\\tonHistoryPrev={onHistoryUp}\"; print \"\\\\t\\\\t\\\\t\\\\t\\\\t\\\\tonHistoryNext={onHistoryDown}\"; done=1; next} 1' src/QueryApp.tsx)",
+      "Bash(mv src/QueryApp.tsx.tmp src/QueryApp.tsx)",
+      "Bash(git *)"
     ]
   }
 }

@@ -2,9 +2,11 @@ import { PastedContent } from "./utils/config"
 import { hashPastedText } from "./utils/pasteStore"
 import { writeFile,appendFile } from "fs"
 import { sleep } from "bun"
+import { readLinesReverse } from "./utils/file"
 import { storePastedText } from "./utils/pasteStore"
 import { registerCleanup } from "./utils/cleanupRegistry"
 import { logForDebugging } from "./utils/debug"
+import { retrievePastedText } from "./utils/pasteStore"
 import { getProjectRoot } from "./bootstrap/state"
 import { getErrnoCode } from "./utils/errors"
 import { lock } from "./utils/lockfile"
@@ -99,44 +101,44 @@ let currentFlushPromise: Promise<void> | null = null
 // reading. Used by removeLastFromHistory when the entry has raced past the
 // pending buffer. Session-scoped (module state resets on process restart).
 const skippedTimestamps = new Set<number>()
-// async function* makeLogEntryReader(): AsyncGenerator<LogEntry> {
-//   const currentSession = getSessionId()
+async function* makeLogEntryReader(): AsyncGenerator<LogEntry> {
+  const currentSession = getSessionId()
 
-//   // Start with entries that have yet to be flushed to disk
-//   for (let i = pendingEntries.length - 1; i >= 0; i--) {
-//     yield pendingEntries[i]!
-//   }
+  // Start with entries that have yet to be flushed to disk
+  for (let i = pendingEntries.length - 1; i >= 0; i--) {
+    yield pendingEntries[i]!
+  }
 
-//   // Read from global history file (shared across all projects)
-//   const historyPath = join(getEfrexConfigHomeDir(), 'history.jsonl')
+  // Read from global history file (shared across all projects)
+  const historyPath = join(getEfrexConfigHomeDir(), 'history.jsonl')
 
-//   try {
-//     for await (const line of readLinesReverse(historyPath)) {
-//       try {
-//         const entry = deserializeLogEntry(line)
-//         // removeLastFromHistory slow path: entry was flushed before removal,
-//         // so filter here so both getHistory (Up-arrow) and makeHistoryReader
-//         // (ctrl+r search) skip it consistently.
-//         if (
-//           entry.sessionId === currentSession &&
-//           skippedTimestamps.has(entry.timestamp)
-//         ) {
-//           continue
-//         }
-//         yield entry
-//       } catch (error) {
-//         // Not a critical error - just skip malformed lines
-//         logForDebugging(`Failed to parse history line: ${error}`)
-//       }
-//     }
-//   } catch (e: unknown) {
-//     const code = getErrnoCode(e)
-//     if (code === 'ENOENT') {
-//       return
-//     }
-//     throw e
-//   }
-// }
+  try {
+    for await (const line of readLinesReverse(historyPath)) {
+      try {
+        const entry = deserializeLogEntry(line)
+        // removeLastFromHistory slow path: entry was flushed before removal,
+        // so filter here so both getHistory (Up-arrow) and makeHistoryReader
+        // (ctrl+r search) skip it consistently.
+        if (
+          entry.sessionId === currentSession &&
+          skippedTimestamps.has(entry.timestamp)
+        ) {
+          continue
+        }
+        yield entry
+      } catch (error) {
+        // Not a critical error - just skip malformed lines
+        logForDebugging(`Failed to parse history line: ${error}`)
+      }
+    }
+  } catch (e: unknown) {
+    const code = getErrnoCode(e)
+    if (code === 'ENOENT') {
+      return
+    }
+    throw e
+  }
+}
 
 // Core flush logic - writes pending entries to disk
 async function immediateFlushHistory(): Promise<void> {
@@ -283,4 +285,94 @@ async function flushPromptHistory(retries: number): Promise<void> {
       void flushPromptHistory(retries + 1)
     }
   }
+}
+
+/**
+ * Get history entries for the current project, with current session's entries first.
+ *
+ * Entries from the current session are yielded before entries from other sessions,
+ * so concurrent sessions don't interleave their up-arrow history. Within each group,
+ * order is newest-first. Scans the same MAX_HISTORY_ITEMS window as before —
+ * entries are reordered within that window, not beyond it.
+ */
+export async function* getHistory(): AsyncGenerator<HistoryEntry> {
+  const currentProject = getProjectRoot()
+  const currentSession = getSessionId()
+  const otherSessionEntries: LogEntry[] = []
+  let yielded = 0
+
+  for await (const entry of makeLogEntryReader()) {
+    // Skip malformed entries (corrupted file, old format, or invalid JSON structure)
+    if (!entry || typeof entry.project !== 'string') continue
+    if (entry.project !== currentProject) continue
+
+    if (entry.sessionId === currentSession) {
+      yield await logEntryToHistoryEntry(entry)
+      yielded++
+    } else {
+      otherSessionEntries.push(entry)
+    }
+
+    // Same MAX_HISTORY_ITEMS window as before — just reordered within it.
+    if (yielded + otherSessionEntries.length >= MAX_HISTORY_ITEMS) break
+  }
+
+  for (const entry of otherSessionEntries) {
+    if (yielded >= MAX_HISTORY_ITEMS) return
+    yield await logEntryToHistoryEntry(entry)
+    yielded++
+  }
+}
+
+/**
+ * Convert LogEntry to HistoryEntry by resolving paste store references.
+ */
+async function logEntryToHistoryEntry(entry: LogEntry): Promise<HistoryEntry> {
+  const pastedContents: Record<number, PastedContent> = {}
+
+  for (const [id, stored] of Object.entries(entry.pastedContents || {})) {
+    const resolved = await resolveStoredPastedContent(stored)
+    if (resolved) {
+      pastedContents[Number(id)] = resolved
+    }
+  }
+
+  return {
+    display: entry.display,
+    pastedContents,
+  }
+}
+/**
+ * Resolve stored paste content to full PastedContent by fetching from paste store if needed.
+ */
+async function resolveStoredPastedContent(
+  stored: StoredPastedContent,
+): Promise<PastedContent | null> {
+  // If we have inline content, use it directly
+  if (stored.content) {
+    return {
+      id: stored.id,
+      type: stored.type,
+      content: stored.content,
+      mediaType: stored.mediaType,
+      filename: stored.filename,
+    }
+  }
+
+  // If we have a hash reference, fetch from paste store
+  if (stored.contentHash) {
+    const content = await retrievePastedText(stored.contentHash)
+    if (content) {
+      return {
+        id: stored.id,
+        type: stored.type,
+        content,
+        mediaType: stored.mediaType,
+        filename: stored.filename,
+      }
+    }
+  }
+
+  // Content not available
+  return null
 }

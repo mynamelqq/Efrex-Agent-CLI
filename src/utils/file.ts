@@ -2,9 +2,12 @@
 import { chmodSync, readFileSync, renameSync, writeFileSync as fsWriteFileSync } from 'fs'
 import { realpath, stat} from 'fs/promises'
 import { homedir } from 'os'
+import { open } from 'fs/promises'
+
+import * as nodePath from 'path'
 import { lstatSync,realpathSync,openSync,readSync,closeSync,readlinkSync} from 'fs'
 import { fileReadCache } from './fileReadCache'
-import { readdirSync,Dirent,statSync,unlinkSync} from 'fs'
+import { readdirSync,Dirent,statSync,unlinkSync,existsSync} from 'fs'
 import { isENOENT } from './errors.js'
 import {
   basename,
@@ -538,3 +541,238 @@ export function readFileSyncCached(filePath: string): string {
 }
 
 
+/**
+ * Async generator that yields lines from a file in reverse order.
+ * Reads the file backwards in chunks to avoid loading the entire file into memory.
+ * @param path - The path to the file to read
+ * @returns An async generator that yields lines in reverse order
+ */
+export async function* readLinesReverse(
+  path: string,//从后往前逐行读取文件，且不把整个文件加载到内存（适合超大文件），完美处理 UTF-8 多字节字符、换行符分割问题。
+): AsyncGenerator<string, void, undefined> {
+  const CHUNK_SIZE = 1024 * 4
+  const fileHandle=await open(path,'r');//每次只读取 4KB 小片段，内存占用极低
+  try {
+    const stats = await fileHandle.stat()
+    let position = stats.size// 读取指针 = 文件总大小（从末尾开始读）
+    // Carry raw bytes (not a decoded string) across chunk boundaries so that
+    // multi-byte UTF-8 sequences split by the 4KB boundary are not corrupted.
+    // Decoding per-chunk would turn a split sequence into U+FFFD on both sides,
+    // which for history.jsonl means JSON.parse throws and the entry is dropped.
+    let remainder = Buffer.alloc(0)// 存储上一次剩下的字节（关键！）
+    const buffer = Buffer.alloc(CHUNK_SIZE)// 读取缓冲区
+
+    while (position > 0) {
+      const currentChunkSize = Math.min(CHUNK_SIZE, position)
+      position -= currentChunkSize
+
+      await fileHandle.read(buffer, 0, currentChunkSize, position)
+      const combined = Buffer.concat([
+        buffer.subarray(0, currentChunkSize),
+        remainder,
+      ])
+
+      const firstNewline = combined.indexOf(0x0a)
+      if (firstNewline === -1) {
+        remainder = combined
+        continue
+      }
+
+      remainder = Buffer.from(combined.subarray(0, firstNewline))
+      const lines = combined.toString('utf8', firstNewline + 1).split('\n')
+
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i]!
+        if (line) {
+          yield line
+        }
+      }
+    }
+
+    if (remainder.length > 0) {
+      yield remainder.toString('utf8')
+    }
+  } finally {
+    await fileHandle.close()
+  }
+}
+/**
+ * Gets all paths that should be checked for permissions.
+ * This includes the original path, all intermediate symlink targets in the chain,
+ * and the final resolved path.
+ *
+ * For example, if test.txt -> /etc/passwd -> /private/etc/passwd:
+ * - test.txt (original path)
+ * - /etc/passwd (intermediate symlink target)
+ * - /private/etc/passwd (final resolved path)
+ *
+ * This is important for security: a deny rule for /etc/passwd should block
+ * access even if the file is actually at /private/etc/passwd (as on macOS).
+ *
+ * @param path - The path to check (will be converted to absolute)
+ * @returns An array of absolute paths to check permissions for
+ */
+export function getPathsForPermissionCheck(inputPath: string): string[] {// 输出所有需要检查权限的路径列表
+  // Expand tilde notation defensively - tools should do this in getPath(),
+  // but we normalize here as defense in depth for permission checking
+  let path = inputPath
+  if (path === '~') {
+    path = homedir().normalize('NFC')//把路径字符串统一成【标准Unicode格式】
+  } else if (path.startsWith('~/')) {
+    path = nodePath.join(homedir().normalize('NFC'), path.slice(2))
+  }
+
+  const pathSet = new Set<string>()
+  // Always check the original path
+  pathSet.add(path)
+
+  // Block UNC paths before any filesystem access to prevent network
+  // requests (DNS/SMB) during validation on Windows
+  if (path.startsWith('//') || path.startsWith('\\\\')) {
+    return Array.from(pathSet)
+  }
+
+  // Follow the symlink chain, collecting ALL intermediate targets
+  // This handles cases like: test.txt -> /etc/passwd -> /private/etc/passwd
+  // We want to check all three paths, not just test.txt and /private/etc/passwd
+  try {
+    let currentPath = path
+    const visited = new Set<string>()
+    const maxDepth = 40 // Prevent runaway loops, matches typical SYMLOOP_MAX
+
+    for (let depth = 0; depth < maxDepth; depth++) {
+      // Prevent infinite loops from circular symlinks
+      if (visited.has(currentPath)) {
+        break
+      }
+      visited.add(currentPath)
+
+      if (!existsSync(currentPath)) {
+        // Path doesn't exist (new file case). existsSync follows symlinks,
+        // so this is also reached for DANGLING symlinks (link entry exists,
+        // target doesn't). Resolve symlinks in the path and its ancestors
+        // so permission checks see the real destination. Without this,
+        // `./data -> /etc/cron.d/` (live parent symlink) or
+        // `./evil.txt -> ~/.ssh/authorized_keys2` (dangling file symlink)
+        // would allow writes that escape the working directory.
+        if (currentPath === path) {
+          const resolved = resolveDeepestExistingAncestorSync(path)
+          if (resolved !== undefined) {
+            pathSet.add(resolved)
+          }
+        }
+        break
+      }
+
+      const stats = lstatSync(currentPath)
+
+      // Skip special file types that can cause issues
+      if (
+        stats.isFIFO() ||
+        stats.isSocket() ||
+        stats.isCharacterDevice() ||
+        stats.isBlockDevice()
+      ) {
+        break
+      }
+
+      if (!stats.isSymbolicLink()) {
+        break
+      }
+
+      // Get the immediate symlink target
+      const target = readlinkSync(currentPath)
+
+      // If target is relative, resolve it relative to the symlink's directory
+      const absoluteTarget = nodePath.isAbsolute(target)
+        ? target
+        : nodePath.resolve(nodePath.dirname(currentPath), target)
+
+      // Add this intermediate target to the set
+      pathSet.add(absoluteTarget)
+      currentPath = absoluteTarget
+    }
+  } catch {
+    // If anything fails during chain traversal, continue with what we have
+  }
+
+  // Also add the final resolved path using realpathSync for completeness
+  // This handles any remaining symlinks in directory components
+  const { resolvedPath, isSymlink } = safeResolvePath(path)
+  if (isSymlink && resolvedPath !== path) {
+    pathSet.add(resolvedPath)
+  }
+
+  return Array.from(pathSet)
+}
+
+/**
+ * Resolve the deepest existing ancestor of a path via realpathSync, walking
+ * up until it succeeds. Detects dangling symlinks (link entry exists, target
+ * doesn't) via lstat and resolves them via readlink.
+ *
+ * Use when the input path may not exist (new file writes) and you need to
+ * know where the write would ACTUALLY land after the OS follows symlinks.
+ *
+ * Returns the resolved absolute path with non-existent tail segments
+ * rejoined, or undefined if no symlink was found in any existing ancestor
+ * (the path's existing ancestors all resolve to themselves).
+ *
+ * Handles: live parent symlinks, dangling file symlinks, dangling parent
+ * symlinks. Same core algorithm as teamMemPaths.ts:realpathDeepestExisting.
+ */
+export function resolveDeepestExistingAncestorSync(//路径不存在时，找到它最深层的真实存在的祖先目录，并解析软链接。
+  absolutePath: string,
+): string | undefined {
+  let dir = absolutePath
+  const segments: string[] = []
+  let st=null
+  // Walk up using lstat (cheap, O(1)) to find the first existing component.
+  // lstat does not follow symlinks, so dangling symlinks are detected here.
+  // Only call realpathSync (expensive, O(depth)) once at the end.
+  while (dir !== nodePath.dirname(dir)) {
+    try {
+      st = lstatSync(dir)
+    } catch {
+      // lstat failed: truly non-existent. Walk up.
+      segments.unshift(nodePath.basename(dir))
+      dir = nodePath.dirname(dir)
+      continue
+    }
+    if (st.isSymbolicLink()) {
+      // Found a symlink (live or dangling). Try realpath first (resolves
+      // chained symlinks); fall back to readlink for dangling symlinks.
+      try {
+        const resolved = realpathSync(dir)
+        return segments.length === 0
+          ? resolved
+          : nodePath.join(resolved, ...segments)
+      } catch {
+        // Dangling: realpath failed but lstat saw the link entry.
+        const target = readlinkSync(dir)
+        const absTarget = nodePath.isAbsolute(target)
+          ? target
+          : nodePath.resolve(nodePath.dirname(dir), target)
+        return segments.length === 0
+          ? absTarget
+          : nodePath.join(absTarget, ...segments)
+      }
+    }
+    // Existing non-symlink component. One realpath call resolves any
+    // symlinks in its ancestors. If none, return undefined (no symlink).
+    try {
+      const resolved = realpathSync(dir)
+      if (resolved !== dir) {
+        return segments.length === 0
+          ? resolved
+          : nodePath.join(resolved, ...segments)
+      }
+    } catch {
+      // realpath can still fail (e.g. EACCES in ancestors). Return
+      // undefined — we can't resolve, and the logical path is already
+      // in pathSet for the caller.
+    }
+    return undefined
+  }
+  return undefined
+}

@@ -5,6 +5,7 @@ import { Box, Text, useApp, useInput, useWindowSize } from './ink.js';
 import { stringWidth } from './ink/stringWidth.js';
 import { buildEffectiveSystemPrompt } from './utils/systemPrompt.js';
 import { addToHistory } from './history.js';
+import { useArrowKeyHistory } from './hooks/useArrowKeyHistory.js';
 import type { ScrollBoxHandle } from './ink/components/ScrollBox.js';
 import PromptInput from './components/PromptInput.js';
 import MessageViewport from './components/MessageViewport.js';
@@ -243,9 +244,9 @@ function getTranscriptHeaderLines({
 		` ${'─'.repeat(Math.max(0, boxWidth - stringWidth(brandPlain) - 2))}`
 	);
 
-	if (!welcome || boxWidth < 72) {
-		return [`${brand}${rule}`, chalk.gray(fitDisplay(meta, boxWidth)), ''];
-	}
+	// if (!welcome || boxWidth < 72) {
+	// 	return [`${brand}${rule}`, chalk.gray(fitDisplay(meta, boxWidth)), ''];
+	// }
 
 	const leftWidth = Math.max(28, Math.min(52, Math.floor(innerWidth * 0.42)));
 	const rightWidth = Math.max(20, innerWidth - leftWidth - 1);
@@ -1016,6 +1017,17 @@ export default function QueryApp({
 	const [input, setInput] = useState('');
 	const [cursorSyncKey, setCursorSyncKey] = useState(0);
 	const [pastedContents, setPastedContents] = useState<Record<number, PastedContent>>({});
+	const { onHistoryUp, onHistoryDown, resetHistory } = useArrowKeyHistory(
+		setInput,
+		setPastedContents,
+		input,
+		pastedContents,
+	);
+	const handleInputChange = useCallback((nextValue: string) => {
+		setInput(nextValue);
+		resetHistory();
+	}, [resetHistory]);
+
 	
 	const [loading, setLoading] = useState(false);
 	const [alertMessage, setAlertMessage] = useState<string | null>(null);
@@ -1102,6 +1114,10 @@ export default function QueryApp({
 		},
 		[setAppState]
 	);
+	const shiftToolUseConfirmQueue = useCallback(() => {
+		setToolUseConfirmQueue(([, ...tail]) => tail);
+	}, []);
+	const handlePermissionReject = useCallback(() => undefined, []);
 
 	const canUseTool = useCanUseTool(
 		setToolUseConfirmQueue,
@@ -1438,13 +1454,14 @@ export default function QueryApp({
 				display: input,
 				pastedContents: pastedContents,
 			});
+			resetHistory();
 			setAlertMessage(null);
 
 			
 
 			await submitPrompt(text);
 		},
-		[loading, repinScroll, setAppState, setMessages, submitPrompt]
+		[loading, repinScroll, resetHistory, setAppState, setMessages, submitPrompt]
 	);
 
 	const terminalColumns = columns || process.stdout.columns || 80;
@@ -1582,8 +1599,8 @@ export default function QueryApp({
 			{activeToolUseConfirm ? (
 				<PermissionRequest
 					key={activeToolUseConfirm.toolUseID}
-					onDone={() => setToolUseConfirmQueue(([, ...tail]) => tail)}
-					onReject={() => undefined}
+					onDone={shiftToolUseConfirmQueue}
+					onReject={handlePermissionReject}
 					toolUseConfirm={activeToolUseConfirm}
 					toolUseContext={activeToolUseConfirm.toolUseContext}
 					verbose={false}
@@ -1611,8 +1628,10 @@ export default function QueryApp({
 						isActive={!activeToolUseConfirm}
 						suspendSubmit={showCommandSelector}
 						suspendVerticalArrows={showCommandSelector}
-						onChange={setInput}
+						onChange={handleInputChange}
 						onSubmit={onSubmit}
+						onHistoryPrev={onHistoryUp}
+						onHistoryNext={onHistoryDown}
 						onCtrlC={handleCtrlC}
 						placeholder={loading ? '等待 query.ts 响应中...' : ''}
 						pastedContents={pastedContents}
@@ -1659,7 +1678,7 @@ export default function QueryApp({
 						<Text dimColor>再按一次 Ctrl+C 确认退出</Text>
 					) : (
 						<Text color="gray">
-							Enter 发送 · 现在主界面直接走 query.ts · Ctrl+C 退出
+							Enter 发送  Ctrl+C 退出
 						</Text>
 					)}
 				</Box>
