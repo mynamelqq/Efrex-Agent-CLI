@@ -4,10 +4,11 @@ import { randomUUID } from 'node:crypto';
 import { Box, Text, useApp, useInput, useWindowSize } from './ink.js';
 import { stringWidth } from './ink/stringWidth.js';
 import { buildEffectiveSystemPrompt } from './utils/systemPrompt.js';
+import { addToHistory } from './history.js';
 import type { ScrollBoxHandle } from './ink/components/ScrollBox.js';
 import PromptInput from './components/PromptInput.js';
 import MessageViewport from './components/MessageViewport.js';
-import { parseCommand } from './commands.js';
+import { PastedContent } from './utils/config.js';
 import type { Message as MessageType } from './package/message.js';
 import {
 	findToolByName,
@@ -1014,6 +1015,8 @@ export default function QueryApp({
 	const { columns, rows } = useWindowSize();
 	const [input, setInput] = useState('');
 	const [cursorSyncKey, setCursorSyncKey] = useState(0);
+	const [pastedContents, setPastedContents] = useState<Record<number, PastedContent>>({});
+	
 	const [loading, setLoading] = useState(false);
 	const [alertMessage, setAlertMessage] = useState<string | null>(null);
 	const [exitHint, setExitHint] = useState(false);
@@ -1416,10 +1419,12 @@ export default function QueryApp({
 				text,
 				setAbortController,
 				getCurrentModel,
+				pastedContents,
+				setPastedContents,
 				onQuery
 			});
 		},
-		[getCurrentModel, onQuery]
+		[getCurrentModel, onQuery, pastedContents, setPastedContents]
 	);
 
 	const onSubmit = useCallback(
@@ -1428,35 +1433,14 @@ export default function QueryApp({
 			if (!text || loading) {
 				return;
 			}
-
 			repinScroll(); //滚回底部
+			addToHistory({
+				display: input,
+				pastedContents: pastedContents,
+			});
 			setAlertMessage(null);
 
-			const commandResult = await parseCommand(text);
-			if (commandResult !== null) {
-				if (!commandResult.success) {
-					setAlertMessage(commandResult.message);
-				} else {
-					setMessages(prev => [
-						...prev,
-						{
-							type: 'assistant',
-							uuid: randomUUID(),
-							timestamp: new Date().toISOString(),
-							message: {
-								role: 'assistant',
-								content: commandResult.message
-							}
-						} as MessageType
-					]);
-					setAppState(prev => ({
-						...prev,
-						mainLoopModel: getCurrentModel()
-					}));
-				}
-				setInput('');
-				return;
-			}
+			
 
 			await submitPrompt(text);
 		},
@@ -1618,7 +1602,9 @@ export default function QueryApp({
 						›{' '}
 					</Text>
 					<PromptInput
+						messages={messages}
 						value={input}
+						height={terminalRows}
 						width={promptInputWidth}
 						maxVisibleLines={maxPromptInputRows}
 						cursorSyncKey={cursorSyncKey}
@@ -1628,8 +1614,9 @@ export default function QueryApp({
 						onChange={setInput}
 						onSubmit={onSubmit}
 						onCtrlC={handleCtrlC}
-						onPasteText={text => text}
 						placeholder={loading ? '等待 query.ts 响应中...' : ''}
+						pastedContents={pastedContents}
+                      	setPastedContents={setPastedContents}
 					/>
 				</Box>
 				<Text color={loading ? 'blue' : 'gray'}>{inputRule}</Text>

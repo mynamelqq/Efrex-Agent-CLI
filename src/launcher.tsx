@@ -4,6 +4,7 @@ import QueryApp from './QueryApp.js'
 import { isWorkSpaceTruested, trustFoler } from '../utils/load.js'
 import { getAllBaseTools } from './tools.js'
 import { init } from './entrypoints/init.js'
+import { EBP, DBP } from './ink/termio/dec.js'
 
 function TrustPrompt({ onTrust }: { onTrust: () => void }) {
   const { exit } = useApp()
@@ -64,6 +65,15 @@ function TrustPrompt({ onTrust }: { onTrust: () => void }) {
 
 export default function Launcher() {
   const [trusted, setTrusted] = React.useState(isWorkSpaceTruested())
+
+  React.useEffect(() => {
+    // Enable bracketed paste mode
+    process.stdout.write(EBP)
+    return () => {
+      // Disable bracketed paste mode
+      process.stdout.write(DBP)
+    }
+  }, [])
 
   if (!trusted) {
     return <TrustPrompt onTrust={() => setTrusted(true)} />

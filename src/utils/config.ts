@@ -37,6 +37,10 @@ export type PastedContent = {
   dimensions?: ImageDimensions
   sourcePath?: string // Original file path for images dragged onto the terminal
 }
+export interface HistoryEntry {
+  display: string
+  pastedContents: Record<number, PastedContent>
+}
 export interface SerializedStructuredHistoryEntry {
   display: string
   pastedContents?: Record<number, PastedContent>

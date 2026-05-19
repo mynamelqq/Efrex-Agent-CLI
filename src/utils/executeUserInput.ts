@@ -1,4 +1,5 @@
 import type { Message } from '../package/message.js'
+import { logForDebugging } from './debug.js'
 import { createUserMessage } from './messages.js'
 
 export async function executeUserInput({

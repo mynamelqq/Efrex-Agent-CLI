@@ -11,12 +11,14 @@ type Props = {
   isActive?: boolean;
   suspendSubmit?: boolean;
   suspendVerticalArrows?: boolean;
+  cursorOffset?: number;
   onChange: (value: string) => void;
+  onCursorOffsetChange?: (offset: number) => void;
   onSubmit?: (value: string) => void;
   onHistoryPrev?: () => void;
   onHistoryNext?: () => void;
   onCtrlC?: () => void;
-  onPasteText?: (text: string) => string;
+  onPasteText?: (text: string) => string | void;
 };
 
 export default function useTextInput({
@@ -26,22 +28,32 @@ export default function useTextInput({
   isActive = true,
   suspendSubmit = false,
   suspendVerticalArrows = false,
+  cursorOffset,
   onChange,
+  onCursorOffsetChange,
   onSubmit,
   onHistoryPrev,
   onHistoryNext,
   onCtrlC,
   onPasteText,
 }: Props) {
-  const [cursor, setCursor] = useState(() => new Cursor(value, value.length));
+  const initialOffset = Math.min(cursorOffset ?? value.length, value.length);
+  const [cursor, setCursor] = useState(() => new Cursor(value, initialOffset));
 
   useEffect(() => {
-    setCursor(new Cursor(value, value.length));
+    setCursor(new Cursor(value, Math.min(cursorOffset ?? value.length, value.length)));
   }, [cursorSyncKey]);
 
   useEffect(() => {
-    setCursor(previous => previous.sync(value, Math.min(previous.offset, value.length)));
-  }, [value]);
+    setCursor(previous => {
+      const nextOffset = Math.min(cursorOffset ?? previous.offset, value.length);
+      return previous.sync(value, nextOffset);
+    });
+  }, [value, cursorOffset]);
+
+  useEffect(() => {
+    onCursorOffsetChange?.(cursor.offset);
+  }, [cursor.offset, onCursorOffsetChange]);
 
   useInput(
     (input, key, event) => {
@@ -135,9 +147,16 @@ export default function useTextInput({
       } else if (textInput) {
         const normalizedInput = textInput.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
         const insertedText =
-          event.keypress.isPasted && onPasteText
+          onPasteText &&
+          (normalizedInput.length > 1 ||
+            normalizedInput.includes('\n') ||
+            normalizedInput.includes('\t'))
             ? onPasteText(normalizedInput)
             : normalizedInput;
+        if (insertedText === undefined) {
+          event.stopImmediatePropagation();
+          return;
+        }
         nextCursor = cursor.insert(insertedText);
       }
 
@@ -154,7 +173,7 @@ export default function useTextInput({
     {isActive},
   );
 
-  return {cursor};
+  return {cursor, setCursor};
 }
 
 function stripMouseInput(input: string): string {

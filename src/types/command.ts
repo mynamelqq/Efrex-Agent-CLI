@@ -1,0 +1,175 @@
+
+import { CanUseToolFn } from '../hooks/useCanUseTool.js';
+import { Message } from '../package/message.js';
+import { SettingSource } from '../utils/settings/constants.js';
+import { EffortValue } from '../utils/effort.js';
+import { ContentBlockParam } from '@anthropic-ai/sdk/resources';
+import { ToolUseContext } from '../Tool.js';
+
+
+
+export type LocalCommandResult =
+  | { type: 'text'; value: string }
+  | {
+      type: 'compact'
+      displayText?: string
+    }
+  | { type: 'skip' } // Skip messages
+
+export type PromptCommand = {
+  type: 'prompt'
+  progressMessage: string
+  contentLength: number // Length of command content in characters (used for token estimation)
+  argNames?: string[]
+  allowedTools?: string[]
+  model?: string
+  source: SettingSource | 'builtin' | 'mcp' | 'plugin' | 'bundled'
+  disableNonInteractive?: boolean
+  // Hooks to register when this skill is invoked
+  // Base directory for skill resources (used to set CLAUDE_PLUGIN_ROOT environment variable for skill hooks)
+  skillRoot?: string
+  // Execution context: 'inline' (default) or 'fork' (run as sub-agent)
+  // 'inline' = skill content expands into the current conversation
+  // 'fork' = skill runs in a sub-agent with separate context and token budget
+  context?: 'inline' | 'fork'
+  // Agent type to use when forked (e.g., 'Bash', 'general-purpose')
+  // Only applicable when context is 'fork'
+  agent?: string
+  effort?: EffortValue
+  // Glob patterns for file paths this skill applies to
+  // When set, the skill is only visible after the model touches matching files
+  paths?: string[]
+  getPromptForCommand(
+    args: string,
+    context: ToolUseContext,
+  ): Promise<ContentBlockParam[]>
+}
+
+export type LocalJSXCommandContext = ToolUseContext & {
+  canUseTool?: CanUseToolFn
+  setMessages: (updater: (prev: Message[]) => Message[]) => void
+  onChangeAPIKey: () => void
+}
+/**
+ * The call signature for a local command implementation.
+ */
+export type LocalCommandCall = (
+  args: string,
+  context: LocalJSXCommandContext,
+) => Promise<LocalCommandResult>
+
+/**
+ * Module shape returned by load() for lazy-loaded local commands.
+ */
+export type LocalCommandModule = {
+  call: LocalCommandCall
+}
+
+type LocalCommand = {
+  type: 'local'
+  supportsNonInteractive: boolean
+  load: () => Promise<LocalCommandModule>
+}
+export type CommandResultDisplay = 'skip' | 'system' | 'user'
+/**
+ * Callback when a command completes.
+ * @param result - Optional user-visible message to display
+ * @param options - Optional configuration for command completion
+ * @param options.display - How to display the result: 'skip' | 'system' | 'user' (default)
+ * @param options.shouldQuery - If true, send messages to the model after command completes
+ * @param options.metaMessages - Additional messages to insert as isMeta (model-visible but hidden)
+ */
+export type LocalJSXCommandOnDone = (
+  result?: string,
+  options?: {
+    display?: CommandResultDisplay
+    shouldQuery?: boolean
+    metaMessages?: string[]
+    nextInput?: string
+    submitNextInput?: boolean
+  },
+) => void
+
+/**
+ * The call signature for a local JSX command implementation.
+ */
+export type LocalJSXCommandCall = (
+  onDone: LocalJSXCommandOnDone,
+  context: ToolUseContext & LocalJSXCommandContext,
+  args: string,
+) => Promise<React.ReactNode>
+
+export interface CommandResult {
+  success: boolean;
+  message: string;
+  shouldContinueChat?: boolean;
+}
+
+/**
+ * Module shape returned by load() for lazy-loaded commands.
+ */
+export type LocalJSXCommandModule = {
+  call: LocalJSXCommandCall
+}
+type LocalJSXCommand = {
+  type: 'local-jsx'
+  /**
+   * Lazy-load the command implementation.
+   * Returns a module with a call() function.
+   * This defers loading heavy dependencies until the command is invoked.
+   */
+  load: () => Promise<LocalJSXCommandModule>
+}
+export type Command = CommandBase &
+  (PromptCommand | LocalCommand |LocalJSXCommand )
+
+
+
+
+export type CommandAvailability =
+  // claude.ai OAuth subscriber (Pro/Max/Team/Enterprise via claude.ai)
+  | 'claude-ai'
+  // Console API key user (direct api.anthropic.com, not via claude.ai OAuth)
+  | 'console'
+
+export type CommandBase = {
+  availability?: CommandAvailability[]
+  /**
+   * Allows a local/local-jsx command to execute when it arrives over the
+   * Remote Control bridge. Only use for commands that do not require local
+   * interactive Ink UI and can safely complete headlessly.
+   */
+  bridgeSafe?: boolean
+  /**
+   * Optional per-invocation validation for bridge-delivered slash commands.
+   * Return a user-facing rejection reason when specific arguments are unsafe
+   * to run headlessly over Remote Control.
+   */
+  getBridgeInvocationError?: (args: string) => string | undefined
+  description: string
+  hasUserSpecifiedDescription?: boolean
+  /** Defaults to true. Only set when the command has conditional enablement (feature flags, env checks, etc). */
+  isEnabled?: () => boolean
+  /** Defaults to false. Only set when the command should be hidden from typeahead/help. */
+  isHidden?: boolean
+  name: string
+  aliases?: string[]
+  isMcp?: boolean
+  argumentHint?: string // Hint text for command arguments (displayed in gray after command)
+  whenToUse?: string // From the "Skill" spec. Detailed usage scenarios for when to use this command
+  version?: string // Version of the command/skill
+  disableModelInvocation?: boolean // Whether to disable this command from being invoked by models
+  userInvocable?: boolean // Whether users can invoke this skill by typing /skill-name
+  loadedFrom?:
+    | 'commands_DEPRECATED'
+    | 'skills'
+    | 'plugin'
+    | 'managed'
+    | 'bundled'
+    | 'mcp' // Where the command was loaded from
+  kind?: 'workflow' // Distinguishes workflow-backed commands (badged in autocomplete)
+  immediate?: boolean // If true, command executes immediately without waiting for a stop point (bypasses queue)
+  isSensitive?: boolean // If true, args are redacted from the conversation history
+  /** Defaults to `name`. Only override when the displayed name differs (e.g. plugin prefix stripping). */
+  userFacingName?: () => string
+}

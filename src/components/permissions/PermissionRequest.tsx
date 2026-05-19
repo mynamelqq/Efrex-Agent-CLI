@@ -297,7 +297,7 @@ function getAlwaysAllowCopy(
 	};
 }
 
-function Field({
+function InlineField({
 	label,
 	value,
 	width,
@@ -308,15 +308,14 @@ function Field({
 	width: number;
 	color?: PermissionColor;
 }): React.ReactNode {
-	const labelWidth = 9;
+	const labelText = `${label}: `;
+	const labelWidth = stringWidth(labelText);
 
 	return (
-		<Box flexDirection="row">
-			<Text color="ansi:blackBright">
-				{`${label}${' '.repeat(Math.max(1, labelWidth - label.length))}`}
-			</Text>
+		<Box width={width} flexDirection="row">
+			<Text color="ansi:blackBright">{labelText}</Text>
 			<Text color={color ?? 'ansi:whiteBright'}>
-				{fitDisplay(value, Math.max(8, width - labelWidth))}
+				{fitDisplay(value, Math.max(4, width - labelWidth))}
 			</Text>
 		</Box>
 	);
@@ -333,7 +332,7 @@ export function PermissionRequest({
 		toolUseConfirm.input,
 		toolUseConfirm.description
 	);
-	const panelWidth = Math.min(96, Math.max(44, columns - 4));
+	const panelWidth = Math.min(120, Math.max(60, columns - 4));
 	const contentWidth = Math.max(32, panelWidth - 6);
 	const allowAlwaysUpdates = hasPermissionSuggestions(
 		toolUseConfirm.permissionResult
@@ -435,6 +434,21 @@ export function PermissionRequest({
 	);
 
 	const selectedOption = options[selectedIndex];
+	const leftColumnWidth = Math.min(
+		34,
+		Math.max(18, Math.floor(contentWidth * 0.32))
+	);
+	const rightColumnWidth = Math.max(16, contentWidth - leftColumnWidth - 2);
+	const optionGapWidth = 2;
+	const optionWidth = Math.max(
+		12,
+		Math.floor(
+			(contentWidth - optionGapWidth * Math.max(0, options.length - 1)) /
+				options.length
+		)
+	);
+	const headerTitleWidth = 20;
+	const headerIntentWidth = Math.max(0, contentWidth - headerTitleWidth - 2);
 
 	return (
 		<Box
@@ -452,70 +466,84 @@ export function PermissionRequest({
 					?{' '}
 				</Text>
 				<Text color="ansi:whiteBright">
-					{fitDisplay('Permission required', contentWidth - 2)}
+					{fitDisplay('Permission required', headerTitleWidth)}
+				</Text>
+				<Text color="ansi:blackBright">
+					{fitDisplay(`  ${presentation.intent}`, headerIntentWidth)}
 				</Text>
 			</Box>
 
-			<Text color="ansi:blackBright">
-				{fitDisplay(presentation.intent, contentWidth)}
-			</Text>
-
-			<Box flexDirection="column" marginTop={1}>
-				<Field label="Tool" value={presentation.toolLabel} width={contentWidth} />
-				<Field
-					label={presentation.primaryLabel}
-					value={presentation.primary}
-					width={contentWidth}
-					color={presentation.accent}
-				/>
-				<Field
-					label="Working"
-					value={presentation.working}
-					width={contentWidth}
-				/>
-				{presentation.risk ? (
-					<Field
-						label="Risk"
-						value={presentation.risk}
-						width={contentWidth}
-						color={
-							presentation.isDangerous
-								? 'ansi:redBright'
-								: 'ansi:blackBright'
-						}
+			<Box flexDirection="column">
+				<Box flexDirection="row">
+					<InlineField
+						label="Tool"
+						value={presentation.toolLabel}
+						width={leftColumnWidth}
 					/>
-				) : null}
+					<Box width={2} />
+					<InlineField
+						label={presentation.primaryLabel}
+						value={presentation.primary}
+						width={rightColumnWidth}
+						color={presentation.accent}
+					/>
+				</Box>
+				<Box flexDirection="row">
+					<InlineField
+						label="Work"
+						value={presentation.working}
+						width={leftColumnWidth}
+					/>
+					<Box width={2} />
+					{presentation.risk ? (
+						<InlineField
+							label="Risk"
+							value={presentation.risk}
+							width={rightColumnWidth}
+							color={
+								presentation.isDangerous
+									? 'ansi:redBright'
+									: 'ansi:blackBright'
+							}
+						/>
+					) : null}
+				</Box>
 			</Box>
 
-			<Box flexDirection="column" marginTop={1}>
+			<Box flexDirection="row">
 				{options.map((option, index) => {
 					const selected = selectedIndex === index;
 
 					return (
-						<Text
+						<Box
 							key={option.key}
-							color={selected ? option.color : 'ansi:whiteBright'}
-							bold={selected}
+							width={optionWidth}
+							marginRight={index === options.length - 1 ? 0 : 2}
 						>
-							{fitDisplay(
-								`${selected ? '›' : ' '} [${option.hotkey}] ${
-									option.label
-								}`,
-								contentWidth
-							)}
-						</Text>
+							<Text
+								color={selected ? option.color : 'ansi:whiteBright'}
+								bold={selected}
+							>
+								{fitDisplay(
+									`${selected ? '›' : ' '}[${option.hotkey}] ${
+										option.label
+									}`,
+									optionWidth
+								)}
+							</Text>
+						</Box>
 					);
 				})}
-				{selectedOption?.help ? (
-					<Text color="ansi:blackBright">
-						{fitDisplay(`  ${selectedOption.help}`, contentWidth)}
-					</Text>
-				) : null}
 			</Box>
 
-			<Box marginTop={1}>
+			<Box marginTop={0}>
 				<Text color="ansi:blackBright">
-					{fitDisplay('Select A/D/S · ↑↓ navigate · Enter confirm', contentWidth)}
+					{fitDisplay(
+						selectedOption?.help
+							? `${selectedOption.help} · Enter confirm`
+							: 'A/D/S select · ←→ navigate · Enter confirm',
+						contentWidth
+					)}
 				</Text>
 			</Box>
 		</Box>

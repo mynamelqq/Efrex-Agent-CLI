@@ -360,3 +360,25 @@ export function addToTotalLinesChanged(added: number, removed: number): void {
   STATE.totalLinesRemoved += removed
 }
 
+/**
+ * Get the stable project root directory.
+ * Unlike getOriginalCwd(), this is never updated by mid-session EnterWorktreeTool
+ * (so skills/history stay stable when entering a throwaway worktree).
+ * It IS set at startup by --worktree, since that worktree is the session's project.
+ * Use for project identity (history, skills, sessions) not file operations.
+ */
+export function getProjectRoot(): string {
+  return STATE.projectRoot
+}
+
+export function setOriginalCwd(cwd: string): void {
+  STATE.originalCwd = cwd.normalize('NFC')
+}
+
+/**
+ * Only for --worktree startup flag. Mid-session EnterWorktreeTool must NOT
+ * call this — skills/history should stay anchored to where the session started.
+ */
+export function setProjectRoot(cwd: string): void {
+  STATE.projectRoot = cwd.normalize('NFC')
+}
