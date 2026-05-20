@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from 'react'
-import { settingsChangeDetector } from '../utils/settings/changeDetector.js'
+import { settingsChangeDetector } from '../utils/settings/changeDetector'
 import { getSettings_DEPRECATED } from '../utils/settings/settings.js'
 import type { SettingsJson } from '../utils/settings/types.js'
 import { SettingSource } from 'src/utils/settings/settings.js';

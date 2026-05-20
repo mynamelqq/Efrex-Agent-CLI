@@ -1,8 +1,7 @@
-﻿import React, {type Ref} from 'react';
+import React from 'react';
 import {Box, Text} from '../ink.js';
 import chalk from 'chalk';
 import {stringWidth} from '../ink/stringWidth.js';
-import ScrollBox, {type ScrollBoxHandle} from '../ink/components/ScrollBox.js';
 
 const USER_MESSAGE_BG = '#2e2f30';
 const USER_MESSAGE_FG = '#f0f0ea';
@@ -22,9 +21,6 @@ type Props = {
   headerLines?: string[];
   messages: ViewportMessage[];
   width: number;
-  height: number;
-  scrollBoxRef?: Ref<ScrollBoxHandle>;
-  nativeScrollback?: boolean;
   alertMessage?: string | null;
   statusLine?: string | null;
   blinkOn?: boolean;
@@ -59,50 +55,30 @@ export default function MessageViewport({
   headerLines,
   messages,
   width,
-  height,
-  scrollBoxRef,
-  nativeScrollback = false,
   alertMessage,
   statusLine,
   blinkOn = false,
 }: Props) {
-  const lines = getMessageViewportLines({
-    headerLines,
-    messages,
-    width,
-    alertMessage,
-    statusLine,
-    blinkOn,
-  });
-
-  if (nativeScrollback) {
-    return (
-      <Box flexDirection="column" flexShrink={0}>
-        {headerLines?.map((line, index) => (
-          <Text key={`header-${index}`} wrap="truncate-end">
-            {line || ' '}
-          </Text>
-        ))}
-        {alertMessage ? (
-          <Text color="redBright">错误: {alertMessage}</Text>
-        ) : null}
-        {messages.map(message => renderMessageNode(message, width, blinkOn))}
-        {statusLine ? (
-          <Text color="yellow">{statusLine}</Text>
-        ) : null}
-      </Box>
-    );
-  }
-
   return (
-    <ScrollBox
-      ref={scrollBoxRef}
-      lines={lines}
-      width={width}
-      height={height}
-      stickyScroll
-      showScrollbar
-    />
+    <Box flexDirection="column" flexShrink={0} width="100%">
+      {headerLines?.map((line, index) => (
+        <Text key={`header-${index}`} wrap="truncate-end">
+          {line || ' '}
+        </Text>
+      ))}
+      {alertMessage ? (
+        <Text color="redBright">错误: {alertMessage}</Text>
+      ) : null}
+      {messages.map((message, index) => (
+        <Box key={message.id} flexDirection="column" width="100%">
+          {index > 0 ? <Text>{' '}</Text> : null}
+          {renderMessageNode(message, width, blinkOn)}
+        </Box>
+      ))}
+      {statusLine ? (
+        <Text color="yellow">{statusLine}</Text>
+      ) : null}
+    </Box>
   );
 }
 
@@ -117,7 +93,7 @@ function renderMessageNode(message: ViewportMessage, width: number, blinkOn: boo
 
   if (message.role === 'user') {
     return (
-      <Box key={message.id} flexDirection="column" marginTop={1} width={width}>
+      <Box key={message.id} flexDirection="column" width={width}>
         <Text color={USER_MESSAGE_FG} backgroundColor={USER_MESSAGE_BG} wrap="wrap">
           {`> ${message.text}`}
         </Text>
@@ -134,9 +110,16 @@ function renderMessageNode(message: ViewportMessage, width: number, blinkOn: boo
         : '●  ';
 
     return (
-      <Box key={message.id} flexDirection="row" marginTop={1} width={width}>
-        <Text bold>{assistantPrefix}</Text>
-        <Box flexDirection="column" flexShrink={1}>
+      <Box
+        key={message.id}
+        flexDirection="row"
+        flexWrap="nowrap"
+        width={width}
+      >
+        <Box flexShrink={0} width={3}>
+          <Text bold>{assistantPrefix}</Text>
+        </Box>
+        <Box flexDirection="column" flexGrow={1} flexShrink={1} width={Math.max(1, width - 3)}>
           {message.content}
         </Box>
       </Box>
@@ -146,9 +129,16 @@ function renderMessageNode(message: ViewportMessage, width: number, blinkOn: boo
   const { toolPrefix, prefixColor } = getToolPrefix(message, blinkOn);
 
   return (
-    <Box key={message.id} flexDirection="row" width={width}>
-      <Text color={prefixColor}>{toolPrefix}</Text>
-      <Box flexDirection="column" flexShrink={1}>
+    <Box
+      key={message.id}
+      flexDirection="row"
+      flexWrap="nowrap"
+      width={width}
+    >
+      <Box flexShrink={0} width={3}>
+        <Text color={prefixColor}>{toolPrefix}</Text>
+      </Box>
+      <Box flexDirection="column" flexGrow={1} flexShrink={1} width={Math.max(1, width - 3)}>
         {message.content}
       </Box>
     </Box>
@@ -413,14 +403,6 @@ function truncatePlain(text: string, width: number): string {
     output += char;
   }
   return `${output}…`;
-}
-
-function truncateStyled(text: string, width: number): string {
-  if (stringWidth(text) <= width) {
-    return text;
-  }
-
-  return truncatePlain(text, width);
 }
 
 function padPlain(text: string, width: number): string {

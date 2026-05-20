@@ -11,6 +11,6 @@ import { FileWriteTool } from './tools/FileWriteTool/FileWriteTool'
 import { FileEditTool } from './tools/FileEditTool/FileEditTool'
 export function getAllBaseTools():Tools{
     return [GlobTool,GrepTool,FileReadTool,FileEditTool]
-
 }
+
 export type BashProgress = any

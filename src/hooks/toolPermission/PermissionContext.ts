@@ -6,6 +6,7 @@ import type {
   ToolUseContext,
 } from '../../Tool.js'
 import { persistPermissionUpdates } from 'src/utils/permissions/PermissionUpdate.js'
+import { applyPermissionUpdates } from 'src/utils/permissions/PermissionUpdate.js'
 import { BASH_TOOL_NAME } from 'src/tools/BashTool/toolName.js'
 import type { AssistantMessage } from 'src/package/message.js'
 import type {
@@ -66,11 +67,11 @@ function createPermissionContext(//权限上下文
     },
     async persistPermissions(updates: PermissionUpdate[]) {
       if (updates.length === 0) return false
-      persistPermissionUpdates(updates)//持久化权限文件
+      await persistPermissionUpdates(updates)//持久化权限文件
       const appState = toolUseContext.getAppState()
-      // setToolPermissionContext(//设置上下文
-        // applyPermissionUpdates(appState.toolPermissionContext, updates),
-      // )
+      setToolPermissionContext(
+        applyPermissionUpdates(appState.toolPermissionContext, updates),
+      )
       return true
     },
     resolveIfAborted(resolve: (decision: PermissionDecision) => void) {

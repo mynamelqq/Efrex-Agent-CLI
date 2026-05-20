@@ -134,3 +134,59 @@ function getEmptyPermissionSettingsJson(): SettingsJson {
     permissions: {},
   }
 }
+/**
+ * Loads all permission rules from all relevant sources (managed and project settings)
+ * @returns Array of all permission rules
+ */
+export function loadAllPermissionRulesFromDisk(): PermissionRule[] {
+  // Otherwise, load from all enabled sources (backwards compatible)
+  const rules: PermissionRule[] = []
+
+  for (const source of getEnabledSettingSources()) {
+    rules.push(...getPermissionRulesForSource(source))
+  }
+  return rules
+}
+
+/**
+ * Loads permission rules from a specific source
+ * @param source The source to load from
+ * @returns Array of permission rules from that source
+ */
+export function getPermissionRulesForSource(
+  source: SettingSource,
+): PermissionRule[] {
+  const settingsData = getSettingsForSource(source)
+  return settingsJsonToRules(settingsData, source)
+}
+/**
+ * Converts permissions JSON to an array of PermissionRule objects
+ * @param data The parsed permissions data
+ * @param source The source of these rules
+ * @returns Array of PermissionRule objects
+ */
+function settingsJsonToRules(
+  data: SettingsJson | null,
+  source: PermissionRuleSource,
+): PermissionRule[] {
+  if (!data || !data.permissions) {
+    return []
+  }
+
+  const { permissions } = data
+  const rules: PermissionRule[] = []
+  for (const behavior of SUPPORTED_RULE_BEHAVIORS) {
+    const behaviorArray = permissions[behavior]
+    if (behaviorArray) {
+      for (const ruleString of behaviorArray) {
+        rules.push({
+          source,
+          ruleBehavior: behavior,
+          ruleValue: permissionRuleValueFromString(ruleString),
+        })
+      }
+    }
+  }
+  return rules
+}
+

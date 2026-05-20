@@ -1,0 +1,71 @@
+import type { ContentBlockParam } from '@anthropic-ai/sdk/resources'
+import { randomUUID } from 'crypto'
+import { setPromptId } from 'src/bootstrap/state.js'
+import type {
+  AttachmentMessage,
+  SystemMessage,
+  UserMessage,
+} from 'src/package/message.js'
+import type { PermissionMode } from '../../types/permissions.js'
+import { createUserMessage } from '../messages.js'
+
+
+export function processTextPrompt(
+  input: string | Array<ContentBlockParam>,
+  uuid?: string,
+  permissionMode?: PermissionMode,
+  isMeta?: boolean,
+): {
+  messages: (UserMessage | AttachmentMessage | SystemMessage)[]
+  shouldQuery: boolean
+} {
+  const promptId = randomUUID()
+  setPromptId(promptId)
+  const userPromptText =
+    typeof input === 'string'
+      ? input
+      : input.find(block => block.type === 'text')?.text || ''
+  // Emit user_prompt OTEL event for both string (CLI) and array (SDK/VS Code)
+  // input shapes. Previously gated on `typeof input === 'string'`, so VS Code
+  // sessions never emitted user_prompt (anthropics/claude-code#33301).
+  // For array input, use the LAST text block: createUserContent pushes the
+  // user's message last (after any <ide_selection>/attachment context blocks),
+  // so .findLast gets the actual prompt. userPromptText (first block) is kept
+  // unchanged for startInteractionSpan to preserve existing span attributes.
+
+  const isNegative =false// matchesNegativeKeyword(userPromptText)
+  const isKeepGoing =false //matchesKeepGoingKeyword(userPromptText)
+  // If we have pasted images, create a message with image content
+  // if (imageContentBlocks.length > 0) {//如果有粘贴的图片
+  //   // Build content: text first, then images below
+  //   const textContent =
+  //     typeof input === 'string'
+  //       ? input.trim()
+  //         ? [{ type: 'text' as const, text: input }]
+  //         : []
+  //       : input
+  //   const userMessage = createUserMessage({
+  //     content: [...textContent, ...imageContentBlocks],
+  //     uuid: uuid,
+  //     imagePasteIds: imagePasteIds.length > 0 ? imagePasteIds : undefined,
+  //     isMeta: isMeta || undefined,
+  //   })
+
+  //   return {
+  //     messages: [userMessage, ...attachmentMessages],
+  //     shouldQuery: true,
+  //   }
+  // }
+
+  const userMessage = createUserMessage({
+    content: input,
+    uuid,
+    permissionMode,
+    isMeta: isMeta || undefined,
+  })
+
+  return {
+    messages: [userMessage],
+    shouldQuery: true,
+  }
+}

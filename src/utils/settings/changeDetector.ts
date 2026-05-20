@@ -1,13 +1,17 @@
-
+import chokidar, { type FSWatcher } from 'chokidar'
 import { stat } from 'fs/promises'
 import * as platformPath from 'path'
 import { registerCleanup } from '../cleanupRegistry.js'
 import { logForDebugging } from '../debug.js'
-import { SettingSource } from './settings.js'
 import { errorMessage } from '../errors.js'
+
+import { createSignal } from '../signal.js'
+import { SETTING_SOURCES, type SettingSource } from './constants.js'
+import { clearInternalWrites, consumeInternalWrite } from './internalWrites.js'
+
 import { getSettingsFilePathForSource } from './settings.js'
 import { resetSettingsCache } from './settingsCache.js'
-
+// 配置文件变更检测器，用于监控 Claude Code 的各种设置文件变化并触发相应的更新逻
 /**
  * Time in milliseconds to wait for file writes to stabilize before processing.
  * This helps avoid processing partial writes or rapid successive changes.
@@ -66,12 +70,9 @@ let testOverrides: {
  * Initialize file watching
  */
 export async function initialize(): Promise<void> {
-  if (getIsRemoteMode()) return
   if (initialized || disposed) return
   initialized = true
 
-  // Start MDM poll for registry/plist changes (independent of filesystem watching)
-  startMdmPoll()
 
   // Register cleanup to properly dispose during graceful shutdown
   registerCleanup(dispose)
@@ -171,13 +172,6 @@ async function getWatchTargets(): Promise<{
   const dirsWithExistingFiles = new Set<string>()
 
   for (const source of SETTING_SOURCES) {
-    // Skip flagSettings - they're provided via CLI and won't change during the session.
-    // Additionally, they may be temp files in $TMPDIR which can contain special files
-    // (FIFOs, sockets) that cause the file watcher to hang or error.
-    // See: https://github.com/anthropics/claude-code/issues/16469
-    if (source === 'flagSettings') {
-      continue
-    }
     const path = getSettingsFilePathForSource(source)
     if (!path) {
       continue
@@ -219,23 +213,13 @@ async function getWatchTargets(): Promise<{
   // its immediate children (the .json files). Any .json file inside it maps
   // to the 'policySettings' source.
   let dropInDir: string | null = null
-  const managedDropIn = getManagedSettingsDropInDir()
-  try {
-    const stats = await stat(managedDropIn)
-    if (stats.isDirectory()) {
-      dirsWithExistingFiles.add(managedDropIn)
-      dropInDir = managedDropIn
-    }
-  } catch {
-    // Drop-in directory doesn't exist, that's fine
-  }
 
   return { dirs: [...dirsWithExistingFiles], settingsFiles, dropInDir }
 }
 
 function settingSourceToConfigChangeSource(
   source: SettingSource,
-): ConfigChangeSource {
+): String {
   switch (source) {
     case 'userSettings':
       return 'user_settings'
@@ -243,9 +227,6 @@ function settingSourceToConfigChangeSource(
       return 'project_settings'
     case 'localSettings':
       return 'local_settings'
-    case 'flagSettings':
-    case 'policySettings':
-      return 'policy_settings'
   }
 }
 
@@ -315,7 +296,6 @@ function handleDelete(path: string): void {
   const source = getSourceForPath(path)
   if (!source) return
 
-  logForDebugging(`Detected deletion of ${path}`)
 
   // If there's already a pending deletion for this path, let it run
   if (pendingDeletions.has(path)) return
@@ -347,59 +327,12 @@ function getSourceForPath(path: string): SettingSource | undefined {
   // Normalize path because chokidar uses forward slashes on Windows
   const normalizedPath = platformPath.normalize(path)
 
-  // Check if the path is inside the managed-settings.d/ drop-in directory
-  const dropInDir = getManagedSettingsDropInDir()
-  if (normalizedPath.startsWith(dropInDir + platformPath.sep)) {
-    return 'policySettings'
-  }
 
   return SETTING_SOURCES.find(
     source => getSettingsFilePathForSource(source) === normalizedPath,
   )
 }
 
-/**
- * Start polling for MDM settings changes (registry/plist).
- * Takes a snapshot of current MDM settings and compares on each tick.
- */
-function startMdmPoll(): void {
-  // Capture initial snapshot (includes both admin MDM and user-writable HKCU)
-  const initial = getMdmSettings()
-  const initialHkcu = getHkcuSettings()
-  lastMdmSnapshot = jsonStringify({
-    mdm: initial.settings,
-    hkcu: initialHkcu.settings,
-  })
-
-  mdmPollTimer = setInterval(() => {
-    if (disposed) return
-
-    void (async () => {
-      try {
-        const { mdm: current, hkcu: currentHkcu } = await refreshMdmSettings()
-        if (disposed) return
-
-        const currentSnapshot = jsonStringify({
-          mdm: current.settings,
-          hkcu: currentHkcu.settings,
-        })
-
-        if (currentSnapshot !== lastMdmSnapshot) {
-          lastMdmSnapshot = currentSnapshot
-          // Update the cache so sync readers pick up new values
-          setMdmSettingsCache(current, currentHkcu)
-          logForDebugging('Detected MDM settings change via poll')
-          fanOut('policySettings')
-        }
-      } catch (error) {
-        logForDebugging(`MDM poll error: ${errorMessage(error)}`)
-      }
-    })()
-  }, testOverrides?.mdmPollInterval ?? MDM_POLL_INTERVAL_MS)
-
-  // Don't let the timer keep the process alive
-  mdmPollTimer.unref()
-}
 
 /**
  * Reset the settings cache, then notify all listeners.

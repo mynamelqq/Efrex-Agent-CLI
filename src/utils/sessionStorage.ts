@@ -2,6 +2,7 @@ import type { UUID } from 'crypto'
 import { FileHistorySnapshotMessage, Entry } from 'src/types/logs.js'
 import type { FileHistorySnapshot } from './fileHistory.js'
 import { registerCleanup } from './cleanupRegistry.js'
+import { QueueOperationMessage } from 'src/types/messageQueueTypes.js'
 import { getSessionProjectDir } from '../bootstrap/state.js'
 import { appendFile as fsAppendFile, mkdir } from 'fs/promises'
 import memoize from 'lodash/memoize'
@@ -96,7 +97,11 @@ class Project {
   private readonly FLUSH_INTERVAL_MS = 100
   private readonly MAX_CHUNK_BYTES = 100 * 1024 * 1024
   private sessionFile: string | null = null
-
+  async insertQueueOperation(queueOp: QueueOperationMessage) {//持久化排队命令
+    return this.trackWrite(async () => {
+      await this.appendEntry(queueOp)
+    })
+  }
   private incrementPendingWrites(): void {
     this.pendingWriteCount++
   }
@@ -248,4 +253,10 @@ class Project {
     const sessionFile = this.ensureCurrentSessionFile()//写入该文件
     void this.enqueueWrite(sessionFile, entry)
   }
+}
+
+
+
+export async function recordQueueOperation(queueOp: QueueOperationMessage) {
+  await getProject().insertQueueOperation(queueOp)
 }

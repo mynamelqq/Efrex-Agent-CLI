@@ -1,4 +1,4 @@
-import { DeepImmutable } from '../types/utils'
+import { DeepImmutable } from 'src/utils/messageQueueManager'
 import { Store } from './store'
 import { SettingsJson } from 'src/utils/settings/types'
 import { getInitialSettings } from 'src/utils/settings/settings'
@@ -15,7 +15,7 @@ export type FooterItem =
   | 'companion'
 
 export type AppState = DeepImmutable<{
-    mainLoopModel: string,
+    mainLoopModel: string |null,
     settings: SettingsJson,
     advisorModel?: string,
     inbox: {

@@ -5,7 +5,8 @@ import { isWorkSpaceTruested, trustFoler } from '../utils/load.js'
 import { getAllBaseTools } from './tools.js'
 import { init } from './entrypoints/init.js'
 import { EBP, DBP } from './ink/termio/dec.js'
-
+import { getCommands } from './commands.js'
+import { AppStateProvider } from './state/AppState.js'
 function TrustPrompt({ onTrust }: { onTrust: () => void }) {
   const { exit } = useApp()
   const [selectedIndex, setSelectedIndex] = React.useState(0)
@@ -65,6 +66,7 @@ function TrustPrompt({ onTrust }: { onTrust: () => void }) {
 
 export default function Launcher() {
   const [trusted, setTrusted] = React.useState(isWorkSpaceTruested())
+  const [commands, setCommands] = React.useState<Awaited<ReturnType<typeof getCommands>> | null>(null)
 
   React.useEffect(() => {
     // Enable bracketed paste mode
@@ -75,13 +77,39 @@ export default function Launcher() {
     }
   }, [])
 
+  React.useEffect(() => {
+    let mounted = true
+    void getCommands().then(result => {
+      if (mounted) {
+        setCommands(result)
+      }
+    })
+    return () => {
+      mounted = false
+    }
+  }, [])
+
   if (!trusted) {
     return <TrustPrompt onTrust={() => setTrusted(true)} />
   }
 
-  return <QueryApp debug={false} thinkingConfig={{type:"adaptive"} }
-  initialTools={[]}
-  initialMessages={[]}
-  
- />
+  if (!commands) {
+    return (
+      <Box paddingX={1} paddingY={1}>
+        <Text dimColor>Loading commands...</Text>
+      </Box>
+    )
+  }
+
+  return (
+    <AppStateProvider>
+      <QueryApp
+        debug={false}
+        thinkingConfig={{ type: 'adaptive' }}
+        initialTools={[]}
+        initialMessages={[]}
+        commands={commands}
+      />
+    </AppStateProvider>
+  )
 }

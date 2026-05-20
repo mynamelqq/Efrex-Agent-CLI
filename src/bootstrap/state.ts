@@ -287,6 +287,7 @@ function getInitialState(): State {
     // Additional directories from --add-dir flag (for CLAUDE.md loading)
     additionalDirectoriesForClaudeMd: [],
     hasDevChannels: false,
+    
     // Session project dir (null = derive from originalCwd)
     sessionProjectDir: null,
     // Prompt cache 1h allowlist (null = not yet fetched from GrowthBook)
@@ -381,4 +382,10 @@ export function setOriginalCwd(cwd: string): void {
  */
 export function setProjectRoot(cwd: string): void {
   STATE.projectRoot = cwd.normalize('NFC')
+}
+export function getPromptId(): string | null {
+  return STATE.promptId
+}
+export function setPromptId(id: string | null): void {
+  STATE.promptId = id
 }

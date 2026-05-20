@@ -140,12 +140,6 @@ export type CommandBase = {
    * interactive Ink UI and can safely complete headlessly.
    */
   bridgeSafe?: boolean
-  /**
-   * Optional per-invocation validation for bridge-delivered slash commands.
-   * Return a user-facing rejection reason when specific arguments are unsafe
-   * to run headlessly over Remote Control.
-   */
-  getBridgeInvocationError?: (args: string) => string | undefined
   description: string
   hasUserSpecifiedDescription?: boolean
   /** Defaults to true. Only set when the command has conditional enablement (feature flags, env checks, etc). */
@@ -172,4 +166,16 @@ export type CommandBase = {
   isSensitive?: boolean // If true, args are redacted from the conversation history
   /** Defaults to `name`. Only override when the displayed name differs (e.g. plugin prefix stripping). */
   userFacingName?: () => string
+}
+
+
+/** Resolves whether the command is enabled, defaulting to true. */
+export function isCommandEnabled(cmd: CommandBase): boolean {
+  return cmd.isEnabled?.() ?? true
+}
+
+/** Resolves the user-visible name, falling back to `cmd.name` when not overridden. */
+export function getCommandName(cmd: CommandBase): string {
+  const name = cmd.userFacingName?.() ?? cmd.name
+  return name || ''
 }

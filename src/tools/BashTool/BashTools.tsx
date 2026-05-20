@@ -10,7 +10,7 @@ import { copyFile, stat as fsStat, truncate as fsTruncate, link } from 'fs/promi
 import { ToolDef } from '../../Tool';
 import { ExecResult } from '../../utils/ShellCommand';
 import { ValidationResult } from '../../Tool';
-import { getDefaultBashTimeoutMs, getMaxBashTimeoutMs } from '../../utils/timeouts';
+import { getDefaultBashTimeoutMs, getMaxBashTimeoutMs } from '../../../timeouts';
 import { isENOENT, ShellError } from '../../utils/errors';
 import {readFile}from "fs/promises"
 import { ToolUseContext } from '../../Tool';

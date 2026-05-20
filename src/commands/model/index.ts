@@ -1,16 +1,15 @@
 import type { Command } from "../../types/command"
-import { shouldInferenceConfigCommandBeImmediate } from '../../utils/immediateCommand.js'
-import { getMainLoopModel, renderModelName } from '../../utils/model/model.js'
+// import { getMainLoopModel, renderModelName } from '../../utils/model/model.js'
 
 export default {
   type: 'local-jsx',
   name: 'model',
   get description() {
-    return `Set the AI model for Claude Code (currently ${renderModelName(getMainLoopModel())})`
+    return `Set the AI model for Claude Code (currently})`
   },
   argumentHint: '[model]',
   get immediate() {
-    return shouldInferenceConfigCommandBeImmediate()
+    return false
   },
   load: () => import('./model.js'),
 } satisfies Command

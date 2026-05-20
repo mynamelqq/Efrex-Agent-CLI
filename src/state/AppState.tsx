@@ -1,7 +1,9 @@
 
 import React, { useContext, useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
 import { logForDebugging } from '../utils/debug.js';
+import { applySettingsChange } from 'src/utils/settings/applySettingsChange.js';
 import { createStore } from './store.js';
+import { useSettingsChange } from 'src/hooks/useSettingsChange.js';
 import { type AppState, type AppStateStore, getDefaultAppState } from './AppStateStore.js';
 export {
   type AppState,
@@ -41,15 +43,14 @@ export function AppStateProvider({ children, initialState, onChangeAppState }: P
   // Listen for external settings changes and sync to AppState.
   // This ensures file watcher changes propagate through the app --
   // shared with the headless/SDK path via applySettingsChange.
-  const onSettingsChange = useEffectEvent((source: SettingSource) => applySettingsChange(source, store.setState));
+  const onSettingsChange = useEffectEvent((source: SettingSource) => applySettingsChange(source, store.setState));//如果有变动，就立刻应用applySettingChange
+  //持久化变更
   useSettingsChange(onSettingsChange);
 
   return (
     <HasAppStateContext.Provider value={true}>
       <AppStoreContext.Provider value={store}>
-        {/* <MailboxProvider>
-          <VoiceProvider>{children}</VoiceProvider>
-        </MailboxProvider> */}
+        {children}
       </AppStoreContext.Provider>
     </HasAppStateContext.Provider>
   );

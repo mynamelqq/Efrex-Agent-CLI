@@ -6,7 +6,7 @@ import {
 } from 'src/package/message'
 import { getModelMaxOutputTokens } from 'src/context.js'
 import type { SystemPrompt } from 'src/prompt'
-import type { ThinkingConfig } from 'src/queryEngine'
+import type { ThinkingConfig } from "src/utils/effort.js"
 import { toolMatchesName, type Tools } from 'src/Tool'
 import { normalizeMessagesForAPI } from 'src/utils/api.js'
 import { createAssistantAPIErrorMessage } from 'src/utils/messages.js'

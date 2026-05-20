@@ -16,7 +16,12 @@ export const SETTING_SOURCES = [
 ] as const
 
 export type SettingSource = (typeof SETTING_SOURCES)[number]
-
+export function getEnabledSettingSources(): SettingSource[] {
+  const allowed = SETTING_SOURCES
+  // Always include policy and flag settings
+  const result = new Set<SettingSource>(allowed)
+  return Array.from(result)
+}
 export function getSettingSourceName(source: SettingSource): string {
   switch (source) {
     case 'userSettings':

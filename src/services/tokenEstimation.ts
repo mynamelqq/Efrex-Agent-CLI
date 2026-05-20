@@ -1,7 +1,3 @@
-import type {
-  ChatCompletionMessageParam,
-} from 'openai/resources/chat/completions/completions.mjs'
-
 import type { Attachment } from '../utils/attachments.js'
 import type { Message } from '../package/message.js'
 
@@ -75,9 +71,7 @@ export function roughTokenCountEstimationForMessage(
 function roughTokenCountEstimationForMessageContent(
   content: NonNullable<Message['message']>,
 ): number {
-  let totalTokens = roughTokenCountEstimationForContent(
-    content.content as ChatCompletionMessageParam['content'],
-  )
+  let totalTokens = roughTokenCountEstimationForContent(content.content)
 
   if (Array.isArray(content.tool_calls) && content.tool_calls.length > 0) {
     totalTokens += roughTokenCountEstimation(JSON.stringify(content.tool_calls))
@@ -98,7 +92,7 @@ function roughTokenCountEstimationForMessageContent(
 
 function roughTokenCountEstimationForContent(
   content:
-    | ChatCompletionMessageParam['content']
+    | NonNullable<Message['message']>['content']
     | Array<Record<string, unknown>>
     | null
     | undefined,

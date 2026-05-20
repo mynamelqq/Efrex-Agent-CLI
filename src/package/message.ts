@@ -6,8 +6,6 @@ import type { UUID } from 'crypto'
 export type{ContentBlockParam, ContentBlock} from '@anthropic-ai/sdk/resources/index.mjs'
 import type {
   ChatCompletionAssistantMessageParam,
-  ChatCompletionContentPart,
-  ChatCompletionContentPartRefusal,
   ChatCompletionMessage,
   ChatCompletionMessageParam,
   ChatCompletionMessageToolCall,
@@ -56,10 +54,10 @@ export interface ToolResultBlockParam {
   is_error?: boolean;
 }
 export type ContentItem =
-  | ChatCompletionContentPart
-  | ChatCompletionContentPartRefusal
+  | ContentBlock
+  | ContentBlockParam
 
-export type MessageContent = ChatCompletionMessageParam['content']| Array<Record<string, unknown>>|ContentBlock[]|ContentBlockParam[]
+export type MessageContent = string|ContentBlock[]|ContentBlockParam[]
 export interface ToolUseBlock {
   id: string;
 

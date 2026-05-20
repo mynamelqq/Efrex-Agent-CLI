@@ -1,6 +1,9 @@
 import { ReasoningEffort } from "openai/resources";
 export type  { ReasoningEffort}
-
+export type ThinkingConfig =
+  | { type: 'adaptive' }
+  | { type: 'enabled'; budgetTokens: number }
+  | { type: 'disabled' }
 export const EFFORT_LEVELS = [
     'minimal',
   'low',

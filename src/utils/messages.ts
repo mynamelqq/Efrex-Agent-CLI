@@ -1,10 +1,9 @@
 import type {
   ChatCompletion,
-  ChatCompletionContentPart,
-  ChatCompletionMessage,
 } from 'openai/resources/chat/completions'
+import { PermissionMode } from 'src/types/permissions'
 import { randomUUID, type UUID } from 'crypto'
-
+import { DeepImmutable } from './messageQueueManager'
 import { Tools } from 'src/Tool'
 import { findToolByName } from 'src/Tool'
 import { safeParseJSON } from './json'
@@ -16,6 +15,8 @@ import type {
   AssistantMessage,
   AttachmentMessage,
   ContentBlock,
+  MessageContent,
+  ContentBlockParam,
   Message,
   MessageOrigin,
   MessageType,
@@ -77,7 +78,6 @@ export type SDKAssistantMessageError =
   | 'server_error'
   | 'unknown'
   | 'max_output_tokens'
-import { ContentBlockParam } from '../package/message'
 export function createUserMessage({
   content,
   isMeta,
@@ -91,7 +91,7 @@ export function createUserMessage({
   imagePasteIds,
   sourceToolAssistantUUID,
 }: {
-  content: string | ChatCompletionContentPart[]|ContentBlock[]|ContentBlockParam[]
+  content: MessageContent
   isMeta?: true
   isVisibleInTranscriptOnly?: true
   isVirtual?: true
@@ -104,6 +104,7 @@ export function createUserMessage({
   }
   uuid?: UUID | string
   timestamp?: string
+  permissionMode?: PermissionMode
   imagePasteIds?: number[]
   // For tool_result messages: the UUID of the assistant message containing the matching tool_use
   sourceToolAssistantUUID?: UUID|string
@@ -192,7 +193,7 @@ function baseCreateAssistantMessage({
     total_tokens: 0,
   },
 }: {
-  content: ChatCompletionMessage['content']
+  content: MessageContent
   isApiErrorMessage?: boolean
   apiError?: AssistantMessage['apiError']
   error?: SDKAssistantMessageError
@@ -254,16 +255,16 @@ export function createAttachmentMessage(
 // API 可能返回多层嵌套的字符串化 JSON（比如一个 JSON 对象里某个字段又是 JSON 字符串）
 // 函数会递归解析这些字符串，将字符串转为真正的对象
 export function normalizeContentFromAPI(
-  contentBlocks: ChatCompletionMessage['content'] | Array<Record<string, unknown>>,
+  contentBlocks: MessageContent | ReadonlyArray<Record<string, unknown>>,
   tools: Tools,
-): ChatCompletionMessage['content'] | Array<Record<string, unknown>> {
+): MessageContent {
   if (!contentBlocks) {
     return ''
   }
   if (typeof contentBlocks === 'string') {
     return contentBlocks
   }
-  return contentBlocks.map(contentBlock => {
+  const normalizedBlocks = contentBlocks.map(contentBlock => {
     switch (contentBlock.type) {
       case 'tool_use': {
         if (
@@ -339,6 +340,7 @@ export function normalizeContentFromAPI(
         return contentBlock
     }
   })
+  return normalizedBlocks as MessageContent
 }
 export function extractTag(html: string, tagName: string): string | null {
   if (!html.trim() || !tagName.trim()) {
@@ -393,5 +395,32 @@ export function extractTag(html: string, tagName: string): string | null {
     lastIndex = match.index + match[0].length
   }
 
+  return null
+}
+/**
+ * Extract text from an array of content blocks, joining text blocks with the
+ * given separator. Works with ContentBlock, ContentBlockParam, BetaContentBlock,
+ * and their readonly/DeepImmutable variants via structural typing.
+ */
+export function extractTextContent(
+  blocks: readonly { readonly type: string }[],
+  separator = '',
+): string {
+  return blocks
+    .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+    .map(b => b.text)
+    .join(separator)
+}
+
+
+export function getContentText(
+  content: string | DeepImmutable<Array<ContentBlockParam>>,
+): string | null {
+  if (typeof content === 'string') {
+    return content
+  }
+  if (Array.isArray(content)) {
+    return extractTextContent(content, '\n').trim() || null
+  }
   return null
 }

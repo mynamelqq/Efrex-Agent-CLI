@@ -1,6 +1,6 @@
 import type { AppState } from '../../state/AppState.js'
 import { logForDebugging } from '../debug.js'
-
+import { loadAllPermissionRulesFromDisk } from '../permissions/permissionsLoader'
 import type { SettingSource } from './settings.js'
 import { getInitialSettings } from './settings.js'
 
@@ -25,13 +25,11 @@ export function applySettingsChange(
   source: SettingSource,
   setAppState: (f: (prev: AppState) => AppState) => void,
 ): void {
-  const newSettings = getInitialSettings()
+  const newSettings = getInitialSettings()//得到最初的设置
 
   logForDebugging(`Settings changed from ${source}, updating app state`)
 
   const updatedRules = loadAllPermissionRulesFromDisk()
-  updateHooksConfigSnapshot()
-
   setAppState(prev => {
     let newContext = syncPermissionRulesFromDisk(
       prev.toolPermissionContext,
@@ -39,24 +37,15 @@ export function applySettingsChange(
     )
 
     // Ant-only: re-strip overly broad Bash allow rules after settings sync
-    if (
-      process.env.USER_TYPE === 'ant' &&
-      process.env.CLAUDE_CODE_ENTRYPOINT !== 'local-agent'
-    ) {
-      const overlyBroad = findOverlyBroadBashPermissions(updatedRules, [])
-      if (overlyBroad.length > 0) {
-        newContext = removeDangerousPermissions(newContext, overlyBroad)
-      }
-    }
 
-    if (
-      newContext.isBypassPermissionsModeAvailable &&
-      isBypassPermissionsModeDisabled()
-    ) {
-      newContext = createDisabledBypassPermissionsContext(newContext)
-    }
+    // if (
+    //   newContext.isBypassPermissionsModeAvailable &&
+    //   isBypassPermissionsModeDisabled()
+    // ) {
+    //   newContext = createDisabledBypassPermissionsContext(newContext)
+    // }
 
-    newContext = transitionPlanAutoMode(newContext)
+    // newContext = transitionPlanAutoMode(newContext)
 
     // Sync effortLevel from settings to top-level AppState when it changes
     // (e.g. via applyFlagSettings from IDE). Only propagate if the setting

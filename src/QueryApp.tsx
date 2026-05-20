@@ -1,15 +1,30 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import chalk from 'chalk';
+// import { useMainLoopModel } from './hooks/useMainLoopModel.js';
+import { CommandResultDisplay } from './types/command.js';
+import { Command,getCommandName } from './types/command.js';
+import { useQueueProcessor } from './hooks/useQueueProcessor.js';
 import { randomUUID } from 'node:crypto';
+import { FileHistoryState } from './utils/fileHistory.js';
 import { Box, Text, useApp, useInput, useWindowSize } from './ink.js';
 import { stringWidth } from './ink/stringWidth.js';
+import { createAbortController } from './utils/abortController.js';
+import { createFileStateCacheWithSizeLimit,READ_FILE_STATE_CACHE_SIZE } from './utils/fileStateCache.js';
+import { useAppStateStore } from './state/AppState.js';
 import { buildEffectiveSystemPrompt } from './utils/systemPrompt.js';
 import { addToHistory } from './history.js';
+import { useMemo } from 'react';
 import { useArrowKeyHistory } from './hooks/useArrowKeyHistory.js';
+import type { ProcessUserInputContext } from './utils/executeUserInput.js';
 import type { ScrollBoxHandle } from './ink/components/ScrollBox.js';
+import { AlternateScreen } from './ink/components/AlternateScreen.js';
 import PromptInput from './components/PromptInput.js';
+import { isCommandEnabled } from './types/command.js';
 import MessageViewport from './components/MessageViewport.js';
+import FullscreenLayout from './components/FullscreenLayout.js';
+import { ScrollKeybindingHandler } from './components/ScrollKeybindingHandler.js';
 import { PastedContent } from './utils/config.js';
+import { parseReferences } from './history.js';
 import type { Message as MessageType } from './package/message.js';
 import {
 	findToolByName,
@@ -17,6 +32,7 @@ import {
 	type ToolPermissionContext,
 	type ToolUseContext
 } from './Tool.js';
+import { expandPastedTextRefs } from './history.js';
 import { getAllBaseTools } from './tools.js';
 import { query } from './query.js';
 import { handlePromptSubmit } from './utils/handlePromptSubmit.js';
@@ -24,10 +40,15 @@ import { getAnthropicModel, getEffortLevel } from './utils/anthropicConfig.js';
 import { FileStateCache } from './utils/fileStateCache.js';
 import { getSystemPrompt } from './constants/prompts.js';
 import { getUserContext } from './context.js';
+import { createUserMessage } from './utils/messages.js';
 import { getDefaultAppState, type AppState } from './state/AppStateStore.js';
-import { ThinkingConfig } from './queryEngine.js';
+import { ThinkingConfig } from './utils/effort.js';
 import { handleMessageFromStream } from './utils/handleMessageFromStream.js';
 import useCanUseTool from './hooks/useCanUseTool.js';
+import { QueryGuard } from './utils/QueryGuard.js';
+import type { QueuedCommand } from './types/textInputTypes.js';
+import { PromptInputQueuedCommands } from './components/PromptInput/PromptInputQueuedCommands.js';
+import { isFullscreenEnvEnabled } from './utils/fullscreen.js';
 import {
 	PermissionRequest,
 	type ToolUseConfirm
@@ -67,25 +88,10 @@ type StreamingAssistantState = {
 	pendingToolCalls: string[];
 };
 
-const INPUT_MARGIN_ROWS = 1;
-const INPUT_RULE_ROWS = 2;
-const FOOTER_ROWS = 2;
-const MIN_MESSAGE_VIEWPORT_ROWS = 1;
 const MAX_PROMPT_INPUT_ROWS = 6;
-const COMMAND_SELECTOR_LIMIT = 5;
 const APP_BRAND = 'efrex code';
 const APP_VERSION = CLI_APP_VERSION;
 
-const commands = [
-	{
-		label: '/model                         Change Your Model',
-		value: '/model'
-	},
-	{
-		label: '/help                          Show help and available commands',
-		value: '/help'
-	}
-];
 
 const GLIMMER_PAD_COLUMNS = 10;
 const GLIMMER_WIDTH_COLUMNS = 8;
@@ -154,35 +160,6 @@ function getStatusLabelSegments(
 
 function normalizeLineEndings(text: string): string {
 	return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-}
-
-function countWrappedRows(text: string, width: number): number {
-	if (text.length === 0) {
-		return 1;
-	}
-
-	const safeWidth = Math.max(1, width);
-	return normalizeLineEndings(text)
-		.split('\n')
-		.reduce((rows, logicalLine) => {
-			if (logicalLine.length === 0) {
-				return rows + 1;
-			}
-
-			let lineWidth = 0;
-			let visualRows = 1;
-			for (const char of Array.from(logicalLine)) {
-				const charWidth = Math.max(1, stringWidth(char));
-				if (lineWidth > 0 && lineWidth + charWidth > safeWidth) {
-					visualRows++;
-					lineWidth = charWidth;
-				} else {
-					lineWidth += charWidth;
-				}
-			}
-
-			return rows + visualRows;
-		}, 0);
 }
 
 function truncateDisplay(text: string, width: number): string {
@@ -377,7 +354,7 @@ function extractTextContent(content: unknown): string {
 				return '';
 			}
 
-			const typedBlock = block as Record<string, unknown>;
+			const typedBlock = block as unknown as Record<string, unknown>;
 			if (
 				typedBlock.type === 'text' &&
 				typeof typedBlock.text === 'string'
@@ -409,7 +386,7 @@ function extractToolUseLabels(content: unknown): string[] {
 				return null;
 			}
 
-			const typedBlock = block as Record<string, unknown>;
+			const typedBlock = block as unknown as Record<string, unknown>;
 			if (typedBlock.type !== 'tool_use') {
 				return null;
 			}
@@ -476,12 +453,13 @@ function buildAssistantToolUseRenderItem(
 	).trim();
 	return {
 		text: renderedToolUseText
-			? `${parsedToolUse.userFacingToolName}(${renderedToolUseText})`
+			? `${parsedToolUse.userFacingToolName} ${renderedToolUseText}`
 			: fallbackLabel,
 		content: (
-			<Box flexDirection="row">
+			<Box flexDirection="row" flexWrap="wrap">
 				<Text bold>{parsedToolUse.userFacingToolName}</Text>
-				<Text>({renderedToolUseMessage})</Text>
+				<Text>{' '}</Text>
+				{renderedToolUseMessage}
 			</Box>
 		)
 	};
@@ -502,7 +480,7 @@ function getAssistantToolUseViewportMessages(
 				return null;
 			}
 
-			const typedBlock = block as Record<string, unknown>;
+			const typedBlock = block as unknown as Record<string, unknown>;
 			if (typedBlock.type !== 'tool_use') {
 				return null;
 			}
@@ -670,7 +648,7 @@ function getToolResultBlock(message: MessageType): {
 			return false;
 		}
 
-		return (contentBlock as Record<string, unknown>).type === 'tool_result';
+		return (contentBlock as unknown as Record<string, unknown>).type === 'tool_result';
 	}) as
 		| { tool_use_id?: unknown; is_error?: unknown; content?: unknown }
 		| undefined;
@@ -712,7 +690,7 @@ function findAssistantToolUse(
 				return false;
 			}
 
-			const typedBlock = block as Record<string, unknown>;
+			const typedBlock = block as unknown as Record<string, unknown>;
 			return (
 				typedBlock.type === 'tool_use' && typedBlock.id === toolUseId
 			);
@@ -770,7 +748,7 @@ function isToolResultUserMessage(message: MessageType): boolean {
 			return false;
 		}
 
-		return (block as Record<string, unknown>).type === 'tool_result';
+		return (block as unknown as Record<string, unknown>).type === 'tool_result';
 	});
 }
 
@@ -787,7 +765,7 @@ function extractToolResult(message: MessageType): {
 			return false;
 		}
 
-		return (block as Record<string, unknown>).type === 'tool_result';
+		return (block as unknown as Record<string, unknown>).type === 'tool_result';
 	}) as { content?: unknown; is_error?: boolean } | undefined;
 
 	const rawText =
@@ -900,7 +878,7 @@ function messageToViewport(
 							return null;
 						}
 
-						const typedBlock = block as Record<string, unknown>;
+						const typedBlock = block as unknown as Record<string, unknown>;
 						if (typedBlock.type !== 'tool_use') {
 							return null;
 						}
@@ -970,6 +948,7 @@ function messageToViewport(
 	return null;
 }
 export type Props = {
+	commands: Command[];
 	debug: boolean;
 	initialTools: Tool[];
 	// Initial messages to populate the REPL with
@@ -999,6 +978,7 @@ export type Props = {
 	thinkingConfig: ThinkingConfig;
 };
 export default function QueryApp({
+	commands:initialCommands,
 	debug,
 	initialMessages,
 	initialTools,
@@ -1017,19 +997,23 @@ export default function QueryApp({
 	const [input, setInput] = useState('');
 	const [cursorSyncKey, setCursorSyncKey] = useState(0);
 	const [pastedContents, setPastedContents] = useState<Record<number, PastedContent>>({});
+	const store = useAppStateStore();
 	const { onHistoryUp, onHistoryDown, resetHistory } = useArrowKeyHistory(
 		setInput,
 		setPastedContents,
 		input,
 		pastedContents,
 	);
+	// Local state for commands (hot-reloadable when skill files change)
+  	const [localCommands, setLocalCommands] = useState(initialCommands);
 	const handleInputChange = useCallback((nextValue: string) => {
 		setInput(nextValue);
 		resetHistory();
 	}, [resetHistory]);
-
-	
-	const [loading, setLoading] = useState(false);
+  	const mainLoopModel = ""
+  	const activeTools = initialTools.length > 0 ? initialTools : getAllBaseTools();
+  	const mergedCommands = initialCommands
+	const commands = useMemo(() => (disableSlashCommands ? [] : mergedCommands), [disableSlashCommands, mergedCommands]);
 	const [alertMessage, setAlertMessage] = useState<string | null>(null);
 	const [exitHint, setExitHint] = useState(false);
 	const [streamingAssistant, setStreamingAssistant] =
@@ -1042,15 +1026,24 @@ export default function QueryApp({
 	const [messages, rawSetMessages] = useState<MessageType[]>([]);
 	const [showCommandSelector, setShowCommandSelector] = useState(false);
 	const [filteredCommands, setFilteredCommands] = useState(commands);
+	  const [initialReadFileState] = useState(() => createFileStateCacheWithSizeLimit(READ_FILE_STATE_CACHE_SIZE));
+	const readFileState = useRef(initialReadFileState);
 	const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
-	const [appState, rawSetAppState] = useState<AppState>(() => ({
-		...getDefaultAppState(),
-		mainLoopModel: getCurrentModel()
-	}));
+	const appState = React.useSyncExternalStore(
+		store.subscribe,
+		store.getState,
+		store.getState
+	);
 	const [toolUseConfirmQueue, setToolUseConfirmQueue] = useState<
 		ToolUseConfirm[]
 	>([]);
-
+	const queryGuard = useRef(new QueryGuard()).current;
+	const isQueryActive = React.useSyncExternalStore(
+		queryGuard.subscribe,
+		queryGuard.getSnapshot
+	);
+	const loading = isQueryActive;
+	
 	const messagesRef = useRef(messages);
 	const appStateRef = useRef(appState);
 	const [abortController, setAbortController] =
@@ -1063,7 +1056,6 @@ export default function QueryApp({
 	const nextPlaceholderIdRef = useRef(1);
 	const scrollRef = useRef<ScrollBoxHandle | null>(null);
 	const [animationTick, setAnimationTick] = useState(0);
-
 	useEffect(() => {
 		if (!loading) {
 			setAnimationTick(0);
@@ -1097,13 +1089,16 @@ export default function QueryApp({
 		[]
 	);
 
-	const setAppState = useCallback((updater: (prev: AppState) => AppState) => {
-		rawSetAppState(prev => {
-			const next = updater(prev);
-			appStateRef.current = next;
-			return next;
-		});
-	}, []);
+	const setAppState = useCallback(
+		(updater: (prev: AppState) => AppState) => {
+			store.setState(prev => {
+				const next = updater(prev);
+				appStateRef.current = next;
+				return next;
+			});
+		},
+		[store]
+	);
 
 	const setToolPermissionContext = useCallback(
 		(context: ToolPermissionContext) => {
@@ -1132,21 +1127,6 @@ export default function QueryApp({
 		appStateRef.current = appState;
 	}, [appState]);
 
-	useEffect(() => {
-		if (input.startsWith('/')) {
-			const searchTerm = input.toLowerCase();
-			const nextCommands = commands.filter(command =>
-				command.label.toLowerCase().includes(searchTerm)
-			);
-			setFilteredCommands(nextCommands);
-			setShowCommandSelector(nextCommands.length > 0);
-			setSelectedCommandIndex(0);
-			return;
-		}
-
-		setShowCommandSelector(false);
-		setSelectedCommandIndex(0);
-	}, [input]);
 
 	const handleCommandSelect = useCallback((value: string) => {
 		setInput(value);
@@ -1156,6 +1136,7 @@ export default function QueryApp({
 
 	const handleCtrlC = useCallback(() => {
 		if (loading) {
+			queryGuard.forceEnd();
 			abortControllerRef.current?.abort('user-cancel');
 			setAbortController(null);
 			return;
@@ -1179,7 +1160,7 @@ export default function QueryApp({
 			setExitHint(false);
 			exitTimerRef.current = null;
 		}, 3000);
-	}, [exit, exitHint, loading]);
+	}, [exit, exitHint, loading, queryGuard]);
 
 	const repinScroll = useCallback(() => {
 		scrollRef.current?.scrollToBottom();
@@ -1203,42 +1184,36 @@ export default function QueryApp({
 				return;
 			}
 
-			if (key.return) {
-				const selected = filteredCommands[selectedCommandIndex];
-				if (selected) {
-					handleCommandSelect(selected.value);
-				}
-			}
 		},
 		{ isActive: showCommandSelector && toolUseConfirmQueue.length === 0 }
 	);
 
-	const buildToolUseContext = useCallback(
-		(
-			nextMessages: MessageType[],
-			abortController: AbortController
-		): ToolUseContext => ({
-			options: {
-				debug: false,
-				verbose: false,
-				thinkingConfig: { type: 'disabled' },
-				mainLoopModel: getCurrentModel(),
-				tools: getAllBaseTools(),
-				isNonInteractiveSession: false,
-				customSystemPrompt,
-				appendSystemPrompt
-			},
-			readFileState: readFileStateRef.current,
-			abortController,
-			updateFileHistoryState: updater => {
-				void updater;
-			},
-			getAppState: () => appStateRef.current,
-			setAppState,
-			messages: nextMessages
-		}),
-		[appendSystemPrompt, canUseTool, customSystemPrompt, setAppState]
-	);
+	// const buildToolUseContext = useCallback(
+	// 	(
+	// 		nextMessages: MessageType[],
+	// 		abortController: AbortController
+	// 	): ToolUseContext => ({
+	// 		options: {
+	// 			debug: false,
+	// 			verbose: false,
+	// 			thinkingConfig: { type: 'disabled' },
+	// 			mainLoopModel: getCurrentModel(),
+	// 			tools: getAllBaseTools(),
+	// 			isNonInteractiveSession: false,
+	// 			customSystemPrompt,
+	// 			appendSystemPrompt
+	// 		},
+	// 		readFileState: readFileStateRef.current,
+	// 		abortController,
+	// 		updateFileHistoryState: updater => {
+	// 			void updater;
+	// 		},
+	// 		getAppState: () => appStateRef.current,
+	// 		setAppState,
+	// 		messages: nextMessages
+	// 	}),
+	// 	[appendSystemPrompt, canUseTool, customSystemPrompt, setAppState]
+	// );
 
 	const onQueryEvent = useCallback(
 		(event: MessageType | { type: string; [key: string]: unknown }) => {
@@ -1323,7 +1298,60 @@ export default function QueryApp({
 		},
 		[setMessages]
 	);
-
+const getToolUseContext = useCallback(
+		(
+		messages: MessageType[],
+		newMessages: MessageType[],
+		abortController: AbortController,
+		mainLoopModel: string,
+		): ProcessUserInputContext => {
+		// Read mutable values fresh from the store rather than closure-capturing
+		// useAppState() snapshots. Same values today (closure is refreshed by the
+		// render between turns); decouples freshness from React's render cycle for
+		// a future headless conversation loop. Same pattern refreshTools() uses.
+		const s = store.getState();
+		return {
+			abortController,
+			options: {
+			tools: activeTools,
+			debug,
+			verbose: false,
+			thinkingConfig:{ type: 'disabled' },
+			mainLoopModel,
+			isNonInteractiveSession: false,
+			customSystemPrompt,
+			appendSystemPrompt,
+			},
+			getAppState: () => store.getState(),
+			setAppState,
+			messages,
+			setMessages,
+			updateFileHistoryState(updater: (prev: FileHistoryState) => FileHistoryState) {
+			// Perf: skip the setState when the updater returns the same reference
+			// (e.g. fileHistoryTrackEdit returns `state` when the file is already
+			// tracked). Otherwise every no-op call would notify all store listeners.
+			setAppState(prev => {
+				const updated = updater(prev.fileHistory  as FileHistoryState);
+				if (updated === prev.fileHistory) return prev;
+				return { ...prev, fileHistory: updated };
+			});
+			},
+			readFileState: readFileState.current,
+			onChangeAPIKey: () => {}
+			};
+		},
+		[
+		 commands,
+      debug,
+      store,
+      setAppState,
+      setMessages,
+      disabled,
+      customSystemPrompt,
+      appendSystemPrompt,
+      activeTools,
+		],
+	);
 	const onQueryImpl = useCallback(
 		async (
 			messagesIncludingNewMessages: MessageType[],
@@ -1336,10 +1364,12 @@ export default function QueryApp({
 			if (!shouldQuery) {
 				return;
 			}
-			const toolUseContext = buildToolUseContext(
+			const toolUseContext = getToolUseContext(
 				messagesIncludingNewMessages,
-				abortController
-			);
+				messagesIncludingNewMessages,
+				abortController,
+				mainLoopModelParam,
+      		);
 			const { tools: freshTools } = toolUseContext.options;
 			const [defaultSystemPrompt, baseUserContext] = await Promise.all([
 				getSystemPrompt(freshTools, mainLoopModelParam, [
@@ -1379,7 +1409,7 @@ export default function QueryApp({
 				}
 			}
 		},
-		[buildToolUseContext, onQueryEvent]
+		[getToolUseContext, onQueryEvent]
 	);
 
 	const onQuery = useCallback(
@@ -1388,8 +1418,12 @@ export default function QueryApp({
 			abortController: AbortController,
 			shouldQuery: boolean,
 			additionalAllowedTools: string[],
-			mainLoopModelParam: string
+			mainLoopModel: string
 		): Promise<void> => {
+			const thisGeneration = queryGuard.tryStart();
+			if (thisGeneration === null) {
+				return;
+			}
 			setMessages(oldMessages => [...oldMessages, ...newMessages]);
 			setInput('');
 			setStreamingAssistant({
@@ -1398,7 +1432,6 @@ export default function QueryApp({
 				text: '',
 				pendingToolCalls: []
 			});
-			setLoading(true);
 
 			try {
 				const latestMessages = messagesRef.current;
@@ -1408,11 +1441,10 @@ export default function QueryApp({
 					abortController,
 					shouldQuery,
 					additionalAllowedTools,
-					mainLoopModelParam
+					mainLoopModel
 				);
 			} finally {
-				setLoading(false);
-				if (shouldQuery) {
+				if (queryGuard.end(thisGeneration) && shouldQuery) {
 					setStreamingAssistant({
 						active: false,
 						placeholderId: null,
@@ -1426,71 +1458,135 @@ export default function QueryApp({
 				}
 			}
 		},
-		[onQueryImpl, setAppState, setMessages]
-	);
-
-	const submitPrompt = useCallback(
-		async (text: string) => {
-			await handlePromptSubmit({
-				text,
-				setAbortController,
-				getCurrentModel,
-				pastedContents,
-				setPastedContents,
-				onQuery
-			});
-		},
-		[getCurrentModel, onQuery, pastedContents, setPastedContents]
+		[onQueryImpl, queryGuard, setAppState, setMessages]
 	);
 
 	const onSubmit = useCallback(
 		async (value: string) => {
 			const text = value.trim();
-			if (!text || loading) {
-				return;
-			}
 			repinScroll(); //滚回底部
+			if (text.startsWith('/')) {
+				//展开文本
+				const trimmedInput = expandPastedTextRefs(
+					value,
+					pastedContents
+				).trim();
+				const spaceIndex = trimmedInput.indexOf(' ');
+				const commandName = spaceIndex === -1 ? trimmedInput.slice(1) : trimmedInput.slice(1, spaceIndex);
+				const commandArgs = spaceIndex === -1 ? '' : trimmedInput.slice(spaceIndex + 1).trim();
+				// Find matching command - treat as immediate if:
+				// 1. Command has `immediate: true`, OR
+				// 2. Command was triggered via keybinding (fromKeybinding option)
+				const matchingCommand = commands.find(
+				cmd =>
+					isCommandEnabled(cmd) &&
+					(cmd.name === commandName || cmd.aliases?.includes(commandName) || getCommandName(cmd) === commandName),
+				);
+				const shouldTreatAsImmediate =  (matchingCommand?.immediate);
+				// if (matchingCommand && shouldTreatAsImmediate && matchingCommand.type === 'local-jsx') {
+				// const pastedTextRefs = parseReferences(input).filter(r => pastedContents[r.id]?.type === 'text');
+				// const pastedTextCount = pastedTextRefs.length;
+				// const pastedTextBytes = pastedTextRefs.reduce(
+				// 	(sum, r) => sum + (pastedContents[r.id]?.content.length ?? 0),
+				// 	0,
+				// );
+				// // Execute the command directly
+				// const executeImmediateCommand = async (): Promise<void> => {
+				// 	let doneWasCalled = false;
+				// 	const onDone = (
+				// 	result?: string,
+				// 	doneOptions?: {
+				// 		display?: CommandResultDisplay;
+				// 		metaMessages?: string[];
+				// 	},
+				// 	): void => {
+				// 	doneWasCalled = true;
+				// 	// setToolJSX({
+				// 	// 	jsx: null,
+				// 	// 	shouldHidePromptInput: false,
+				// 	// 	clearLocalJSX: true,
+				// 	// });
+				// 	const newMessages: MessageType[] = [];
+				// 	// Inject meta messages (model-visible, user-hidden) into the transcript
+				// 	if (doneOptions?.metaMessages?.length) {
+				// 		newMessages.push(
+				// 		...doneOptions.metaMessages.map(content => createUserMessage({ content, isMeta: true })),
+				// 		);
+				// 	}
+				// 	if (newMessages.length) {
+				// 		setMessages(prev => [...prev, ...newMessages]);
+				// 	}
+
+				// };
+
+				// 	// Build context for the command (reuses existing getToolUseContext).
+				// 	// Read messages via ref to keep onSubmit stable across message
+				// 	// updates — matches the pattern at L2384/L2400/L2662 and avoids
+				// 	// pinning stale REPL render scopes in downstream closures.
+				// 	const context = getToolUseContext(messagesRef.current, [], createAbortController(), mainLoopModel);
+
+				// 	const mod = await matchingCommand.load();
+				// 	const jsx = await mod.call(onDone, context, commandArgs);
+
+				// 	};
+				// 	void executeImmediateCommand();
+				// 	return; // Always return early - don't add to history or queue
+				// }
+			}
 			addToHistory({
-				display: input,
+				display: value,
 				pastedContents: pastedContents,
 			});
 			resetHistory();
 			setAlertMessage(null);
 
 			
-
-			await submitPrompt(text);
+			await handlePromptSubmit({
+				input: value,
+				onInputChange: setInput,
+				helpers: {
+					setCursorOffset: () => {
+						setCursorSyncKey(prev => prev + 1);
+					},
+					clearBuffer: () => {
+						setCursorSyncKey(prev => prev + 1);
+					},
+					resetHistory,
+				},
+				setAbortController,
+				getToolUseContext,
+				pastedContents,
+				setPastedContents,
+				onQuery,
+				messages,
+				mainLoopModel,
+				commands,
+				setAppState,
+				queryGuard,
+			});
 		},
-		[loading, repinScroll, resetHistory, setAppState, setMessages, submitPrompt]
+		[
+			commands,
+			getToolUseContext,
+			mainLoopModel,
+			messages,
+			onQuery,
+			pastedContents,
+			queryGuard,
+			repinScroll,
+			resetHistory,
+			setAppState
+		]
 	);
-
+	
 	const terminalColumns = columns || process.stdout.columns || 80;
 	const terminalRows = rows || process.stdout.rows || 24;
 	const messageWidth = Math.max(8, terminalColumns - 4);
 	const promptInputWidth = Math.max(8, terminalColumns - 6);
 	const inputRule = '─'.repeat(Math.max(8, terminalColumns - 2));
-	const fixedRows = INPUT_MARGIN_ROWS + INPUT_RULE_ROWS + FOOTER_ROWS;
-	const maxPromptInputRows = Math.max(
-		1,
-		Math.min(
-			MAX_PROMPT_INPUT_ROWS,
-			terminalRows - fixedRows - MIN_MESSAGE_VIEWPORT_ROWS
-		)
-	);
-	const promptInputRows = Math.min(
-		maxPromptInputRows,
-		countWrappedRows(input, promptInputWidth)
-	);
-	const commandSelectorRows = showCommandSelector
-		? Math.min(COMMAND_SELECTOR_LIMIT, filteredCommands.length)
-		: 0;
-	const messageViewportRows = Math.max(
-		MIN_MESSAGE_VIEWPORT_ROWS,
-		terminalRows - fixedRows - promptInputRows - commandSelectorRows
-	);
+	const maxPromptInputRows = Math.max(1, MAX_PROMPT_INPUT_ROWS);
 
-	const renderTools =
-		initialTools.length > 0 ? initialTools : getAllBaseTools();
+	const renderTools = activeTools;
 	const viewportMessages = buildViewportMessages(messages, renderTools);
 
 	if (loading && streamingAssistant.placeholderId !== null) {
@@ -1551,48 +1647,81 @@ export default function QueryApp({
 	const statusSegments = statusText
 		? getStatusLabelSegments(statusText, glimmerIndex)
 		: null;
+  // Process queued commands when query completes and queue has items
 
-	return (
-		<Box flexDirection="column" paddingX={1} paddingY={0}>
-			<Box flexDirection="column" flexShrink={0}>
-				<MessageViewport
-					headerLines={transcriptHeaderLines}
-					messages={viewportMessages}
-					width={messageWidth}
-					height={messageViewportRows}
-					scrollBoxRef={scrollRef}
-					nativeScrollback
-					alertMessage={alertMessage}
-					statusLine={null}
-					blinkOn={blinkVisible}
-				/>
-			</Box>
+	const executeQueuedInput = useCallback(
+		async (queuedCommands: QueuedCommand[]) => {
+		await handlePromptSubmit({
+			helpers: {
+			setCursorOffset: () => {},
+			clearBuffer: () => {},
+			resetHistory: () => {},
+			},
+			queryGuard,
+			commands,
+			onInputChange: () => {},
+			setPastedContents: () => {},
+			getToolUseContext,
+			messages,
+			mainLoopModel,
+			setAbortController,
+			onQuery,
+			setAppState,
+			onBeforeQuery,
+			setMessages,
+			queuedCommands,
+		});
+		},
+		[
+		queryGuard,
+		commands,
+		getToolUseContext,
+		messages,
+		mainLoopModel,
+		canUseTool,
+		setAbortController,
+		onQuery,
+		setAppState,
+		onBeforeQuery,
+		],
+	);
 
+	useQueueProcessor({
+		executeQueuedInput,
+		queryGuard,
+	});
+	const bottomContent = (
+		<Box flexDirection="column" width="100%">
 			{loading &&
 			!activeToolUseConfirm &&
 			statusText &&
 			statusPrefix &&
 			statusSegments ? (
-				<Box
-					marginTop={1}
-					flexDirection="row"
-					flexWrap="nowrap"
-					flexShrink={0}
-				>
-					<Text
-						color="yellowBright"
-						dim={statusPrefixDim}
-						bold={statusPrefixBold}
+				<Box flexDirection="column" flexShrink={0} marginTop={1}>
+					<Box
+						flexDirection="row"
+						flexWrap="nowrap"
+						flexShrink={0}
 					>
-						{statusPrefix}
-					</Text>
-					<Text color="gray">{statusSegments.before}</Text>
-					{statusSegments.shimmer ? (
-						<Text color="cyanBright" bold>
-							{statusSegments.shimmer}
-						</Text>
-					) : null}
-					<Text color="gray">{statusSegments.after}</Text>
+						<Box flexShrink={0} width={3}>
+							<Text
+								color="yellowBright"
+								dim={statusPrefixDim}
+								bold={statusPrefixBold}
+							>
+								{statusPrefix}{' '}
+							</Text>
+						</Box>
+						<Box flexDirection="row" flexWrap="nowrap" flexShrink={1}>
+							<Text color="gray">{statusSegments.before}</Text>
+							{statusSegments.shimmer ? (
+								<Text color="cyanBright" bold>
+									{statusSegments.shimmer}
+								</Text>
+							) : null}
+							<Text color="gray">{statusSegments.after}</Text>
+						</Box>
+					</Box>
 				</Box>
 			) : null}
 
@@ -1608,7 +1737,8 @@ export default function QueryApp({
 				/>
 			) : null}
 
-			<Box flexDirection="column" marginTop={1} flexShrink={0}>
+			<Box flexDirection="column" flexShrink={0}>
+				<PromptInputQueuedCommands width={terminalColumns} />
 				<Text color={loading ? 'blue' : 'gray'}>{inputRule}</Text>
 				<Box
 					flexDirection="row"
@@ -1635,44 +1765,13 @@ export default function QueryApp({
 						onCtrlC={handleCtrlC}
 						placeholder={loading ? '等待 query.ts 响应中...' : ''}
 						pastedContents={pastedContents}
-                      	setPastedContents={setPastedContents}
+						setPastedContents={setPastedContents}
 					/>
 				</Box>
 				<Text color={loading ? 'blue' : 'gray'}>{inputRule}</Text>
-
-				{showCommandSelector && (
-					<Box flexDirection="column">
-						{filteredCommands
-							.slice(0, commandSelectorRows)
-							.map((item, index) => (
-								<Box key={item.value}>
-									<Text
-										color={
-											index === selectedCommandIndex
-												? 'greenBright'
-												: 'gray'
-										}
-									>
-										{index === selectedCommandIndex
-											? '› '
-											: '  '}
-									</Text>
-									<Text
-										color={
-											index === selectedCommandIndex
-												? 'greenBright'
-												: undefined
-										}
-									>
-										{item.label}
-									</Text>
-								</Box>
-							))}
-					</Box>
-				)}
 			</Box>
 
-			<Box marginTop={1} flexDirection="column" flexShrink={0}>
+			<Box flexDirection="column" flexShrink={0}>
 				<Box>
 					{exitHint ? (
 						<Text dimColor>再按一次 Ctrl+C 确认退出</Text>
@@ -1683,6 +1782,40 @@ export default function QueryApp({
 					)}
 				</Box>
 			</Box>
+		</Box>
+	);
+
+	const scrollableContent = (
+		<MessageViewport
+			headerLines={transcriptHeaderLines}
+			messages={viewportMessages}
+			width={messageWidth}
+			alertMessage={alertMessage}
+			statusLine={null}
+			blinkOn={blinkVisible}
+		/>
+	);
+
+	if (isFullscreenEnvEnabled()) {
+		return (
+			<AlternateScreen mouseTracking>
+				<ScrollKeybindingHandler
+					scrollRef={scrollRef}
+					isActive
+				/>
+				<FullscreenLayout
+					scrollRef={scrollRef}
+					scrollable={scrollableContent}
+					bottom={bottomContent}
+				/>
+			</AlternateScreen>
+		);
+	}
+
+	return (
+		<Box flexDirection="column" paddingX={1} paddingY={0}>
+			{scrollableContent}
+			{bottomContent}
 		</Box>
 	);
 }

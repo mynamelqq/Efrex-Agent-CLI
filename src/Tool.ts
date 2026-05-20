@@ -13,7 +13,7 @@ import type {
 } from 'src/package/message';
 import { Message } from 'src/package/message';
 import { ToolResultBlockParam } from 'src/package/message';
-import { ThinkingConfig } from './queryEngine';
+import { ThinkingConfig } from "src/utils/effort";
 import { ThemeName } from 'packages/@ant/ink/src';
 import { ContentReplacementState } from './utils/toolResultStorage';
 import { DeepImmutable } from './types/utils';
