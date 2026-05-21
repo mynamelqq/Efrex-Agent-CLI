@@ -1,8 +1,7 @@
 import * as React from 'react';
 import chalk from 'chalk';
 import { stripANSI as stripAnsi } from 'bun';
-import {  Box } from '../ink.js';
-import { Ansi } from 'packages/@ant/ink/src/index.js';
+import { Ansi, Box, Text, useTerminalFocus } from '../ink.js';
 import useTextInput from '../hooks/useTextInput.js';
 import { useDeclaredCursor } from '../ink/hooks/use-declared-cursor.js';
 import type { Message } from 'src/package/message.js';
@@ -129,9 +128,18 @@ export default function PromptInput({
 		[height, insertTextAtCursor, setPastedContents]
 	);
 
-	const { cursor } = useTextInput({
+	const terminalFocus = useTerminalFocus();
+	const invert = React.useCallback(
+		(text: string) => chalk.bgHex(INPUT_CURSOR_BG).hex(INPUT_CURSOR_FG)(text),
+		[]
+	);
+
+	const { renderedValue, cursorLine, cursorColumn } = useTextInput({
 		value,
 		width,
+		maxVisibleLines,
+		cursorChar: isActive ? ' ' : '',
+		invert,
 		cursorSyncKey,
 		isActive,
 		suspendSubmit,
@@ -152,45 +160,31 @@ export default function PromptInput({
 		}
 	}, [cursorOffset, value.length]);
 
-	const cursorPosition = cursor.getPosition({
-		width,
-		maxVisibleLines
-	});
-
 	const cursorRef = useDeclaredCursor({
-		line: cursorPosition.line,
-		column: cursorPosition.column,
-		active: isActive
+		line: cursorLine,
+		column: cursorColumn,
+		active: Boolean(isActive && terminalFocus)
 	});
 
-	const renderedValue = value.length === 0;
-	if (renderedValue) {
-		const renderedPlaceholder = isActive
+	const isEmpty = value.length === 0;
+	const renderedContent = isEmpty
+		? isActive
 			? placeholder.length > 0
 				? chalk.bgHex(INPUT_CURSOR_BG).hex(INPUT_CURSOR_FG)(
 						placeholder[0]
 					) + chalk.gray(placeholder.slice(1))
 				: chalk.bgHex(INPUT_CURSOR_BG)(' ')
-			: chalk.gray(placeholder);
-
-		return (
-			<Box ref={cursorRef} width={width} flexShrink={0}>
-				<Ansi>{renderedPlaceholder}</Ansi>
-			</Box>
-		);
-	}
-
-	const lines = cursor.render({
-		width,
-		maxVisibleLines,
-		invert: text => chalk.bgHex(INPUT_CURSOR_BG).hex(INPUT_CURSOR_FG)(text)
-	});
+			: chalk.gray(placeholder)
+		: renderedValue
+				.split('\n')
+				.map(line => (line.length === 0 ? ' ' : line))
+				.join('\n');
 
 	return (
-		<Box ref={cursorRef} flexDirection="column" width={width} flexShrink={0}>
-			{lines.map((line, index) => (
-				<Ansi key={index}>{line.length === 0 ? ' ' : line}</Ansi>
-			))}
+		<Box ref={cursorRef} width={width} flexShrink={0}>
+			<Text wrap="truncate-end">
+				<Ansi>{renderedContent}</Ansi>
+			</Text>
 		</Box>
 	);
 }

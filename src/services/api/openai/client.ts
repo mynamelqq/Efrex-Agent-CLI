@@ -72,6 +72,7 @@ export function getOpenAIClient(options?: {
     }),
     // fetchOptions: getProxyFetchOptions({ forAnthropicAPI: false }),
     fetch: wrappedFetch,
+    
   })
 
   if (!options?.fetchOverride) {

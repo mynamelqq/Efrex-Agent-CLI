@@ -1,12 +1,15 @@
-import {useEffect, useState} from 'react';
 import {useInput} from '../ink.js';
 import Cursor from '../utils/Cursor.js';
+import { PASTE_THRESHOLD } from '../utils/paste.js';
 
 const SGR_MOUSE_INPUT_PATTERN = /(?:\x1B)?\[<\d+;\d+;\d+[mM]/g;
 
 type Props = {
   value: string;
   width: number;
+  maxVisibleLines?: number;
+  cursorChar?: string;
+  invert?: (text: string) => string;
   cursorSyncKey?: number;
   isActive?: boolean;
   suspendSubmit?: boolean;
@@ -24,6 +27,9 @@ type Props = {
 export default function useTextInput({
   value,
   width,
+  maxVisibleLines,
+  cursorChar = ' ',
+  invert = text => text,
   cursorSyncKey = 0,
   isActive = true,
   suspendSubmit = false,
@@ -37,24 +43,12 @@ export default function useTextInput({
   onCtrlC,
   onPasteText,
 }: Props) {
-  const initialOffset = Math.min(cursorOffset ?? value.length, value.length);
-  const [cursor, setCursor] = useState(() => new Cursor(value, initialOffset));
+  const effectiveOffset = Math.min(cursorOffset ?? value.length, value.length);
+  const cursor = Cursor.fromText(value, width, effectiveOffset);
 
   const applyCursor = (nextCursor: Cursor) => {
-    setCursor(nextCursor);
     onCursorOffsetChange?.(nextCursor.offset);
   };
-
-  useEffect(() => {
-    setCursor(new Cursor(value, Math.min(cursorOffset ?? value.length, value.length)));
-  }, [cursorSyncKey]);
-
-  useEffect(() => {
-    setCursor(previous => {
-      const nextOffset = Math.min(cursorOffset ?? previous.offset, value.length);
-      return previous.sync(value, nextOffset);
-    });
-  }, [value, cursorOffset]);
 
   useInput(
     (input, key, event) => {
@@ -147,11 +141,12 @@ export default function useTextInput({
         nextCursor = cursor.deleteForward();
       } else if (textInput) {
         const normalizedInput = textInput.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        const shouldHandleAsPaste =
+          normalizedInput.includes('\n') ||
+          normalizedInput.includes('\t') ||
+          normalizedInput.length > PASTE_THRESHOLD;
         const insertedText =
-          onPasteText &&
-          (normalizedInput.length > 1 ||
-            normalizedInput.includes('\n') ||
-            normalizedInput.includes('\t'))
+          onPasteText && shouldHandleAsPaste
             ? onPasteText(normalizedInput)
             : normalizedInput;
         if (insertedText === undefined) {
@@ -174,7 +169,23 @@ export default function useTextInput({
     {isActive},
   );
 
-  return {cursor, setCursor};
+  const cursorPos = cursor.getPosition();
+
+  return {
+    cursor,
+    renderedValue: cursor
+      .render({
+        cursorChar,
+        width,
+        maxVisibleLines,
+        invert
+      })
+      .join('\n'),
+    cursorLine: cursorPos.line - cursor.getViewportStartLine(maxVisibleLines),
+    cursorColumn: cursorPos.column,
+    offset: cursor.offset,
+    setOffset: onCursorOffsetChange
+  };
 }
 
 function stripMouseInput(input: string): string {

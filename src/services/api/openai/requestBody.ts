@@ -108,9 +108,11 @@ export function buildOpenAIRequestBody(params: {
     }),
     // Only send temperature when thinking mode is off (DeepSeek ignores it anyway,
     // but other providers may respect it)
-    ...(!enableThinking &&
-      temperatureOverride !== undefined && {
-        temperature: temperatureOverride,
-      }),
+    // ...(!enableThinking &&
+    //   temperatureOverride !== undefined && {
+    //     temperature: temperatureOverride,
+    //   }),
+    temperature:0.0
+
   }
 }

@@ -184,6 +184,7 @@ export default class Ink {
   // screen readers / screen magnifiers track it — so parking at the text
   // input's caret makes CJK input appear inline and lets a11y tools follow.
   private cursorDeclaration: CursorDeclaration | null = null;
+  private cursorDeclarationRenderQueued = false;
   // Main-screen: physical cursor position after the declared-cursor move,
   // tracked separately from frame.cursor (which must stay at content-bottom
   // for log-update's relative-move invariants). Alt-screen doesn't need
@@ -1448,7 +1449,23 @@ export default class Ink {
     if (decl === null && clearIfNode !== undefined && this.cursorDeclaration?.node !== clearIfNode) {
       return;
     }
+    const previous = this.cursorDeclaration;
     this.cursorDeclaration = decl;
+
+    const columnOnlyChanged =
+      previous !== null &&
+      decl !== null &&
+      previous.node === decl.node &&
+      previous.relativeY === decl.relativeY &&
+      previous.relativeX !== decl.relativeX;
+
+    if (columnOnlyChanged && !this.cursorDeclarationRenderQueued) {
+      this.cursorDeclarationRenderQueued = true;
+      queueMicrotask(() => {
+        this.cursorDeclarationRenderQueued = false;
+        this.onRender();
+      });
+    }
   };
   render(node: ReactNode): void {
     this.currentNode = node;

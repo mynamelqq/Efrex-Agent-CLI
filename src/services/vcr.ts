@@ -163,25 +163,27 @@ function mapAssistantMessage(
     timestamp: message.timestamp,
     message: {
       ...message.message,
-      content: (message.message.content as BetaContentBlock[])
-        .map(_ => {
-          switch (_.type) {
-            case 'text':
-              return {
-                ..._,
-                text: f(_.text) as string,
-                citations: _.citations || [],
-              } // Ensure citations
-            case 'tool_use':
-              return {
-                ..._,
-                input: mapValuesDeep(_.input as Record<string, unknown>, f),
+      content: typeof message.message.content === 'string'
+        ? f(message.message.content)
+        : (message.message.content as BetaContentBlock[])
+            .map(_ => {
+              switch (_.type) {
+                case 'text':
+                  return {
+                    ..._,
+                    text: f(_.text) as string,
+                    citations: _.citations || [],
+                  } // Ensure citations
+                case 'tool_use':
+                  return {
+                    ..._,
+                    input: mapValuesDeep(_.input as Record<string, unknown>, f),
+                  }
+                default:
+                  return _ // Handle other block types unchanged
               }
-            default:
-              return _ // Handle other block types unchanged
-          }
-        })
-        .filter(Boolean) as any,
+            })
+            .filter(Boolean) as any,
     },
     type: 'assistant',
   }

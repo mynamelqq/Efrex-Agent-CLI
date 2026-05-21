@@ -90,20 +90,30 @@ export function FullscreenLayout({
 	scrollRef
 }: Props): React.ReactNode {
 	return (
-		<Box flexDirection="row" height="100%" width="100%" overflow="hidden">
-			<Box flexDirection="column" flexGrow={1} overflow="hidden">
-				<ScrollBox
-					ref={scrollRef}
-					flexGrow={1}
-					flexDirection="column"
-					paddingTop={1}
-					stickyScroll
-				>
-					{scrollable}
-					{bottom}
-				</ScrollBox>
+		<Box flexDirection="column" height="100%" width="100%" overflow="hidden">
+			<Box
+				flexDirection="row"
+				flexGrow={1}
+				flexShrink={1}
+				overflow="hidden"
+			>
+				<Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+					<ScrollBox
+						ref={scrollRef}
+						flexGrow={1}
+						flexShrink={1}
+						flexDirection="column"
+						paddingTop={1}
+						stickyScroll
+					>
+						{scrollable}
+					</ScrollBox>
+				</Box>
+				<Scrollbar scrollRef={scrollRef} />
 			</Box>
-			<Scrollbar scrollRef={scrollRef} />
+			<Box flexDirection="column" flexShrink={0}>
+				{bottom}
+			</Box>
 		</Box>
 	);
 }

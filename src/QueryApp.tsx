@@ -59,6 +59,7 @@ import {
 	renderToolResultContent,
 	renderToolUseContent
 } from './components/messages/renderToolContent.js';
+import StatusAnimationRow from './components/StatusAnimationRow.js';
 import { CLI_APP_VERSION } from 'utils/load.js';
 type ViewportMessage = {
 	id: number;
@@ -1060,6 +1061,7 @@ export default function QueryApp({
 	const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const nextPlaceholderIdRef = useRef(1);
 	const scrollRef = useRef<ScrollBoxHandle | null>(null);
+	const loadingStartTimeRef = useRef<number | null>(null);
 	const [animationTick, setAnimationTick] = useState(0);
 	useEffect(() => {
 		if (!loading) {
@@ -1072,6 +1074,17 @@ export default function QueryApp({
 		}, 50);
 
 		return () => clearInterval(timer);
+	}, [loading]);
+
+	useEffect(() => {
+		if (loading) {
+			if (loadingStartTimeRef.current === null) {
+				loadingStartTimeRef.current = Date.now();
+			}
+			return;
+		}
+
+		loadingStartTimeRef.current = null;
 	}, [loading]);
 
 	const blinkVisible = Math.floor(animationTick / 14) % 2 === 0;
@@ -1587,7 +1600,9 @@ const getToolUseContext = useCallback(
 	const terminalColumns = columns || process.stdout.columns || 80;
 	const terminalRows = rows || process.stdout.rows || 24;
 	const messageWidth = Math.max(8, terminalColumns - 4);
-	const promptInputWidth = Math.max(8, terminalColumns - 6);
+	// The prompt row is already inside outer paddingX=1, and the leading "› "
+	// consumes 2 columns. The input itself should use the remaining content width.
+	const promptInputWidth = Math.max(8, terminalColumns - 4);
 	const inputRule = '─'.repeat(Math.max(8, terminalColumns - 2));
 	const maxPromptInputRows = Math.max(1, MAX_PROMPT_INPUT_ROWS);
 
@@ -1702,32 +1717,16 @@ const getToolUseContext = useCallback(
 			statusText &&
 			statusPrefix &&
 			statusSegments ? (
-				<Box flexDirection="column" flexShrink={0} marginTop={1}>
-					<Box
-						flexDirection="row"
-						flexWrap="nowrap"
-						flexShrink={0}
-					>
-						<Box flexShrink={0} width={3}>
-							<Text
-								color="yellowBright"
-								dim={statusPrefixDim}
-								bold={statusPrefixBold}
-							>
-								{statusPrefix}{' '}
-							</Text>
-						</Box>
-						<Box flexDirection="row" flexWrap="nowrap" flexShrink={1}>
-							<Text color="gray">{statusSegments.before}</Text>
-							{statusSegments.shimmer ? (
-								<Text color="cyanBright" bold>
-									{statusSegments.shimmer}
-								</Text>
-							) : null}
-							<Text color="gray">{statusSegments.after}</Text>
-						</Box>
-					</Box>
-				</Box>
+				<StatusAnimationRow
+					prefix={statusPrefix}
+					prefixDim={statusPrefixDim}
+					prefixBold={statusPrefixBold}
+					before={statusSegments.before}
+					shimmer={statusSegments.shimmer}
+					after={statusSegments.after}
+					startedAtMs={loadingStartTimeRef.current}
+					toolCount={streamingAssistant.pendingToolCalls.length}
+				/>
 			) : null}
 
 			{activeToolUseConfirm ? (
@@ -1750,9 +1749,11 @@ const getToolUseContext = useCallback(
 					flexWrap="nowrap"
 					width={terminalColumns - 2}
 				>
-					<Text color={loading ? 'blueBright' : 'greenBright'}>
-						›{' '}
-					</Text>
+					<Box flexShrink={0} width={2}>
+						<Text color={loading ? 'blueBright' : 'greenBright'}>
+							›{' '}
+						</Text>
+					</Box>
 					<PromptInput
 						messages={messages}
 						value={input}

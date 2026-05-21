@@ -1,5 +1,6 @@
 import { getCwd } from './cwd.js'
 import { Tool, Tools, toolMatchesName } from 'src/Tool'
+import { ContentBlockParam } from 'src/package/message.js'
 import type {
   AssistantMessage,
   AttachmentMessage,
@@ -233,13 +234,50 @@ function mergeAssistantMessages(
     },
   }
 }
-
+function normalizeUserTextContent(
+  a: string | ContentBlockParam[],
+): ContentBlockParam[] {
+  if (typeof a === 'string') {
+    return [{ type: 'text', text: a }]
+  }
+  return a
+}
+/**
+ * Concatenate two content block arrays, appending `\n` to a's last text block
+ * when the seam is text-text. The API concatenates adjacent text blocks in a
+ * user message without a separator, so two queued prompts `"2 + 2"` +
+ * `"3 + 3"` would otherwise reach the model as `"2 + 23 + 3"`.
+ *
+ * Blocks stay separate; the `\n` goes on a's side so no block's startsWith
+ * changes — smooshSystemReminderSiblings classifies via
+ * `startsWith('<system-reminder>')`, and prepending to b would break that
+ * when b is an SR-wrapped attachment.
+ */
+function joinTextAtSeam(
+  a: ContentBlockParam[],
+  b: ContentBlockParam[],
+): ContentBlockParam[] {
+  const lastA = a.at(-1)
+  const firstB = b[0]
+  if (lastA?.type === 'text' && firstB?.type === 'text') {
+    return [...a.slice(0, -1), { ...lastA, text: lastA.text + '\n' }, ...b]
+  }
+  return [...a, ...b]
+}
 function mergeUserMessages(a: UserMessage, b: UserMessage): UserMessage {
+  const lastContent = normalizeUserTextContent(
+    a.message.content as string | ContentBlockParam[],
+  )
+  const currentContent = normalizeUserTextContent(
+    b.message.content as string | ContentBlockParam[],
+  )
   return {
     ...a,
+    uuid: a.isMeta ? b.uuid : a.uuid,
+    isMeta: a.isMeta && b.isMeta ? (true as const) : undefined,
     message: {
       ...a.message,
-      content: mergeUserContent(a.message.content, b.message.content),
+      content: joinTextAtSeam(lastContent,currentContent),
     },
   }
 }

@@ -67,7 +67,7 @@ function TrustPrompt({ onTrust }: { onTrust: () => void }) {
 export default function Launcher() {
   const [trusted, setTrusted] = React.useState(isWorkSpaceTruested())
   const [commands, setCommands] = React.useState<Awaited<ReturnType<typeof getCommands>> | null>(null)
-
+  process.env.NODE_ENV="test"
   React.useEffect(() => {
     // Enable bracketed paste mode
     process.stdout.write(EBP)
