@@ -10,7 +10,7 @@ import { Box, Text, useApp, useInput, useWindowSize } from './ink.js';
 import { stringWidth } from './ink/stringWidth.js';
 import { createAbortController } from './utils/abortController.js';
 import { createFileStateCacheWithSizeLimit,READ_FILE_STATE_CACHE_SIZE } from './utils/fileStateCache.js';
-import { useAppStateStore } from './state/AppState.js';
+import { useAppStateStore,useSetAppState } from './state/AppState.js';
 import { buildEffectiveSystemPrompt } from './utils/systemPrompt.js';
 import { addToHistory } from './history.js';
 import { useMemo } from 'react';
@@ -41,7 +41,8 @@ import { FileStateCache } from './utils/fileStateCache.js';
 import { getSystemPrompt } from './constants/prompts.js';
 import { getUserContext } from './context.js';
 import { createUserMessage } from './utils/messages.js';
-import { getDefaultAppState, type AppState } from './state/AppStateStore.js';
+import { getDefaultAppState, type AppState} from './state/AppStateStore.js';
+import { useAppState } from './state/AppState.js';
 import { ThinkingConfig } from './utils/effort.js';
 import { handleMessageFromStream } from './utils/handleMessageFromStream.js';
 import useCanUseTool from './hooks/useCanUseTool.js';
@@ -997,6 +998,10 @@ export default function QueryApp({
 	const [input, setInput] = useState('');
 	const [cursorSyncKey, setCursorSyncKey] = useState(0);
 	const [pastedContents, setPastedContents] = useState<Record<number, PastedContent>>({});
+	const toolPermissionContext = useAppState(s => s.toolPermissionContext);
+	const fileHistory = useAppState(s => s.fileHistory);
+	// feature() is a build-time constant — dead code elimination removes the hook
+	// call entirely in external builds, so this is safe despite looking conditional.
 	const store = useAppStateStore();
 	const { onHistoryUp, onHistoryDown, resetHistory } = useArrowKeyHistory(
 		setInput,

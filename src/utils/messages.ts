@@ -91,7 +91,7 @@ export function createUserMessage({
   imagePasteIds,
   sourceToolAssistantUUID,
 }: {
-  content: MessageContent
+  content:string | ContentBlockParam[]
   isMeta?: true
   isVisibleInTranscriptOnly?: true
   isVirtual?: true

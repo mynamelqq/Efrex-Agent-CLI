@@ -1,6 +1,7 @@
 import { posix } from 'path'
 import type { ToolPermissionContext } from '../../Tool.js'
 import { logForDebugging } from '../debug.js'
+import { toPosixPath } from './filesystem.js'
 import { EditableSettingSource } from '../settings/constants.js'
 import {
   getSettingsForSource,
@@ -172,5 +173,42 @@ export function persistPermissionUpdate(update: PermissionUpdate): void {
     //   })
     //   break
     // }
+  }
+}
+
+
+/**
+ * Creates a Read rule suggestion for a directory.
+ * @param dirPath The directory path to create a rule for
+ * @param destination The destination for the permission rule (defaults to 'session')
+ * @returns A PermissionUpdate for a Read rule, or undefined for the root directory
+ */
+export function createReadRuleSuggestion(
+  dirPath: string,
+  destination: PermissionUpdateDestination = 'session',
+): PermissionUpdate | undefined {
+  // Convert to POSIX format for pattern matching (handles Windows internally)
+  const pathForPattern = toPosixPath(dirPath)
+
+  // Root directory is too broad to be a reasonable permission target
+  if (pathForPattern === '/') {
+    return undefined
+  }
+
+  // For absolute paths, prepend an extra / to create //path/** pattern
+  const ruleContent = posix.isAbsolute(pathForPattern)
+    ? `/${pathForPattern}/**`
+    : `${pathForPattern}/**`
+
+  return {
+    type: 'addRules',
+    rules: [
+      {
+        toolName: 'Read',
+        ruleContent,
+      },
+    ],
+    behavior: 'allow',
+    destination,
   }
 }

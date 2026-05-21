@@ -10,7 +10,7 @@ import { BashTool } from './tools/BashTool/BashTools'
 import { FileWriteTool } from './tools/FileWriteTool/FileWriteTool'
 import { FileEditTool } from './tools/FileEditTool/FileEditTool'
 export function getAllBaseTools():Tools{
-    return [GlobTool,GrepTool,FileReadTool,FileEditTool]
+    return [GlobTool,GrepTool,FileReadTool,FileEditTool,BashTool,WebFetchTool,WebSearchTool]
 }
 
 export type BashProgress = any

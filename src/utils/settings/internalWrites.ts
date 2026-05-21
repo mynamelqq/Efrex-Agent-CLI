@@ -14,7 +14,7 @@
 
 const timestamps = new Map<string, number>()
 
-export function markInternalWrite(path: string): void {
+export function markInternalWrite(path: string): void {//标记写入
   timestamps.set(path, Date.now())
 }
 

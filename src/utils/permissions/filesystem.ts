@@ -1,10 +1,12 @@
 
 import { randomBytes } from 'crypto'
 import ignore from 'ignore'
+import { getDirectoryForPath } from '../path.js'
 import { PermissionRule } from 'src/types/permissions.js'
 import memoize from 'lodash/memoize.js'
 import { FILE_EDIT_TOOL_NAME } from 'src/tools/FileEditTool/constants.js'
 import { FILE_WRITE_TOOL_NAME } from 'src/tools/FileWriteTool/prompt.js'
+
 import { FILE_READ_TOOL_NAME } from 'src/tools/FileReadTool/prompt.js'
 import { homedir, tmpdir } from 'os'
 import { join, normalize, posix, sep } from 'path'
@@ -12,8 +14,9 @@ import { getPathsForPermissionCheck } from '../file.js'
 import type { z } from 'zod/v4'
 import { getOriginalCwd, getSessionId } from '../../bootstrap/state.js'
 import type { AnyObject, Tool, ToolPermissionContext } from '../../Tool.js'
+import {getToolResultsDir}from "../sessionStorage.js"
 import { getCwd } from '../cwd.js'
-import { getClaudeConfigHomeDir } from '../envUtils.js'
+import { getClaudeConfigHomeDir, getEfrexConfigHomeDir } from '../envUtils.js'
 import {
   containsPathTraversal,
   expandPath,
@@ -33,9 +36,9 @@ import type {
   PermissionResult,PermissionUpdate
 } from 'src/types/permissions.js'
 import { createReadRuleSuggestion } from './PermissionUpdate.js'
+import { getRuleByContentsForToolName } from './permissions.js'
 
-
-
+import { PermissionRuleSource } from 'src/types/permissions.js'
 
 /**
  * Permission result for read permission for the specified tool & tool input
@@ -144,23 +147,23 @@ export function checkReadPermissionForTool(
   }
 
 // 6. 允许读取工作目录中的内容
-  const isInWorkingDir = pathInAllowedWorkingPath(
-    path,
-    toolPermissionContext,
-    pathsToCheck,
-  )
-  if (isInWorkingDir) {
-    return {
-      behavior: 'allow',
-      updatedInput: input,
-      decisionReason: {
-        type: 'mode',
-        mode: 'default',
-      },
-    }
-  }
+  // const isInWorkingDir = pathInAllowedWorkingPath(
+  //   path,
+  //   toolPermissionContext,
+  //   pathsToCheck,
+  // )
+  // if (isInWorkingDir) {
+  //   return {
+  //     behavior: 'allow',
+  //     updatedInput: input,
+  //     decisionReason: {
+  //       type: 'mode',
+  //       mode: 'default',
+  //     },
+  //   }
+  // }
 
-  // 7. Allow reads from internal harness paths (session-memory, plans, tool-results)
+  // 7. 允许读取内部工程路径中的数据（会话内存、计划、工具结果）
   const absolutePath = expandPath(path)
   const internalReadResult = checkReadableInternalPath(absolutePath, input)
   if (internalReadResult.behavior !== 'passthrough') {
@@ -202,7 +205,18 @@ export function checkReadPermissionForTool(
     },
   }
 }
-
+/**
+ * Converts a path to POSIX format for pattern matching.
+ * Handles Windows path conversion internally.
+ * @param path The path to convert
+ * @returns A POSIX-style path
+ */
+export function toPosixPath(path: string): string {
+  if (getPlatform() === 'windows') {
+    return windowsPathToPosixPath(path)
+  }
+  return path
+}
 /**
  * Permission result for write permission for the specified tool & tool input.
  *
@@ -250,14 +264,14 @@ export function checkWritePermissionForTool<Input extends AnyObject>(
 
   // 1.5. Allow writes to internal editable paths (plan files, scratchpad)
   // This MUST come before isDangerousFilePathToAutoEdit check since .claude is a dangerous directory
-  const absolutePathForEdit = expandPath(path)
-  const internalEditResult = checkEditableInternalPath(
-    absolutePathForEdit,
-    input,
-  )
-  if (internalEditResult.behavior !== 'passthrough') {
-    return internalEditResult
-  }
+  // const absolutePathForEdit = expandPath(path)
+  // const internalEditResult = checkEditableInternalPath(
+  //   absolutePathForEdit,
+  //   input,
+  // )
+  // if (internalEditResult.behavior !== 'passthrough') {
+  //   return internalEditResult
+  // }
 
   // 1.6. Check for .claude/** allow rules BEFORE safety checks
   // This allows session-level permissions to bypass the safety blocks for .claude/
@@ -280,77 +294,49 @@ export function checkWritePermissionForTool<Input extends AnyObject>(
     'edit',
     'allow',
   )
-  if (claudeFolderAllowRule) {
-    // Check if this rule is scoped under .claude/ (project or global).
-    // Accepts both the broad patterns ('/.claude/**', '~/.claude/**') and
-    // narrowed ones like '/.claude/skills/my-skill/**' so users can grant
-    // session access to a single skill without also exposing settings.json
-    // or hooks/. The rule already matched the path via matchingRuleForInput;
-    // this is an additional scope check. Reject '..' to prevent a rule like
-    // '/.claude/../**' from leaking this bypass outside .claude/.
-    const ruleContent = claudeFolderAllowRule.ruleValue.ruleContent
-    if (
-      ruleContent &&
-      (ruleContent.startsWith(CLAUDE_FOLDER_PERMISSION_PATTERN.slice(0, -2)) ||
-        ruleContent.startsWith(
-          GLOBAL_CLAUDE_FOLDER_PERMISSION_PATTERN.slice(0, -2),
-        )) &&
-      !ruleContent.includes('..') &&
-      ruleContent.endsWith('/**')
-    ) {
-      return {
-        behavior: 'allow',
-        updatedInput: input,
-        decisionReason: {
-          type: 'rule',
-          rule: claudeFolderAllowRule,
-        },
-      }
-    }
-  }
 
   // 1.7. Check comprehensive safety validations (Windows patterns, Claude config, dangerous files)
   // This MUST come before checking allow rules to prevent users from accidentally granting
   // permission to edit protected files
-  const safetyCheck = checkPathSafetyForAutoEdit(path, pathsToCheck)
-  if (!safetyCheck.safe) {
-    // SDK suggestion: if under .claude/skills/{name}/, emit the narrowed
-    // session-scoped addRules that step 1.6 will honor on the next call.
-    // Everything else (.claude/settings.json, .git/, .vscode/, .idea/) falls
-    // back to generateSuggestions — its setMode suggestion doesn't bypass
-    // this check, but preserving it avoids a surprising empty array.
-    const skillScope = getClaudeSkillScope(path)
-    const safetySuggestions: PermissionUpdate[] = skillScope
-      ? [
-          {
-            type: 'addRules',
-            rules: [
-              {
-                toolName: FILE_EDIT_TOOL_NAME,
-                ruleContent: skillScope.pattern,
-              },
-            ],
-            behavior: 'allow',
-            destination: 'session',
-          },
-        ]
-      : generateSuggestions(path, 'write', toolPermissionContext, pathsToCheck)
-    const failedCheck = safetyCheck as {
-      safe: false
-      message: string
-      classifierApprovable: boolean
-    }
-    return {
-      behavior: 'ask',
-      message: failedCheck.message,
-      suggestions: safetySuggestions,
-      decisionReason: {
-        type: 'safetyCheck',
-        reason: failedCheck.message,
-        classifierApprovable: failedCheck.classifierApprovable,
-      },
-    }
-  }
+  // const safetyCheck = checkPathSafetyForAutoEdit(path, pathsToCheck)
+  // if (!safetyCheck.safe) {
+  //   // SDK suggestion: if under .claude/skills/{name}/, emit the narrowed
+  //   // session-scoped addRules that step 1.6 will honor on the next call.
+  //   // Everything else (.claude/settings.json, .git/, .vscode/, .idea/) falls
+  //   // back to generateSuggestions — its setMode suggestion doesn't bypass
+  //   // this check, but preserving it avoids a surprising empty array.
+  //   const skillScope = getClaudeSkillScope(path)
+  //   const safetySuggestions: PermissionUpdate[] = skillScope
+  //     ? [
+  //         {
+  //           type: 'addRules',
+  //           rules: [
+  //             {
+  //               toolName: FILE_EDIT_TOOL_NAME,
+  //               ruleContent: skillScope.pattern,
+  //             },
+  //           ],
+  //           behavior: 'allow',
+  //           destination: 'session',
+  //         },
+  //       ]
+  //     : generateSuggestions(path, 'write', toolPermissionContext, pathsToCheck)
+  //   const failedCheck = safetyCheck as {
+  //     safe: false
+  //     message: string
+  //     classifierApprovable: boolean
+  //   }
+  //   return {
+  //     behavior: 'ask',
+  //     message: failedCheck.message,
+  //     suggestions: safetySuggestions,
+  //     decisionReason: {
+  //       type: 'safetyCheck',
+  //       reason: failedCheck.message,
+  //       classifierApprovable: failedCheck.classifierApprovable,
+  //     },
+  //   }
+  // }
 
   // 2. Check for ask rules - check both the original path and resolved symlink path
   for (const pathToCheck of pathsToCheck) {
@@ -670,6 +656,145 @@ export function generateSuggestions(
     ? [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }]
     : []
 }
+/**
+ * Returns the session memory file path for the current session.
+ * Path format: {projectDir}/{sessionId}/session-memory/summary.md
+ */
+export function getSessionMemoryPath(): string {
+  return join(getSessionMemoryDir(), 'summary.md')
+}
+
+/**
+ * Check if file is within the current project's directory.
+ * Path format: ~/.claude/projects/{sanitized-cwd}/...
+ */
+function isProjectDirPath(absolutePath: string): boolean {
+  const projectDir = getProjectDir(getCwd())
+  // SECURITY: Normalize to prevent path traversal bypasses via .. segments
+  const normalizedPath = normalize(absolutePath)
+  return (
+    normalizedPath === projectDir || normalizedPath.startsWith(projectDir + sep)
+  )
+}
+
+/**
+ * Returns the session memory directory path for the current session with trailing separator.
+ * Path format: {projectDir}/{sessionId}/session-memory/
+ */
+export function getSessionMemoryDir(): string {
+  return join(getProjectDir(getCwd()), getSessionId(), 'session-memory') + sep
+}
+// Check if file is within the session memory directory
+function isSessionMemoryPath(absolutePath: string): boolean {
+  // SECURITY: Normalize to prevent path traversal bypasses via .. segments
+  const normalizedPath = normalize(absolutePath)
+  return normalizedPath.startsWith(getSessionMemoryDir())
+}
+/**
+ * Check if a path is an internal path that can be read without permission.
+ * Returns a PermissionResult - either 'allow' if matched, or 'passthrough' to continue checking.
+ */
+export function checkReadableInternalPath(
+  absolutePath: string,
+  input: { [key: string]: unknown },
+): PermissionResult {
+  // SECURITY: Normalize path to prevent traversal bypasses via .. segments
+  // This is defense-in-depth; individual helper functions also normalize
+  const normalizedPath = normalize(absolutePath)
+
+  // Session memory directory
+  if (isSessionMemoryPath(normalizedPath)) {
+    return {
+      behavior: 'allow',
+      updatedInput: input,
+      decisionReason: {
+        type: 'other',
+        reason: 'Session memory files are allowed for reading',
+      },
+    }
+  }
+
+  // Project directory (for reading past session memories)
+  // Path format: ~/.claude/projects/{sanitized-cwd}/...
+  if (isProjectDirPath(normalizedPath)) {
+    return {
+      behavior: 'allow',
+      updatedInput: input,
+      decisionReason: {
+        type: 'other',
+        reason: 'Project directory files are allowed for reading',
+      },
+    }
+  }
+
+  // Tool results directory (persisted large outputs)
+  // Use path separator suffix to prevent path traversal (e.g., tool-results-evil/)
+  const toolResultsDir = getToolResultsDir()
+  const toolResultsDirWithSep = toolResultsDir.endsWith(sep)
+    ? toolResultsDir
+    : toolResultsDir + sep
+  if (
+    normalizedPath === toolResultsDir ||
+    normalizedPath.startsWith(toolResultsDirWithSep)
+  ) {
+    return {
+      behavior: 'allow',
+      updatedInput: input,
+      decisionReason: {
+        type: 'other',
+        reason: 'Tool result files are allowed for reading',
+      },
+    }
+  }
+
+
+  // Project temp directory (/tmp/claude/{sanitized-cwd}/)
+  // // Intentionally allows reading files from all sessions in this project, not just the current session.
+  // // This enables cross-session file access within the same project's temp space.
+  // const projectTempDir = getProjectTempDir()
+  // if (normalizedPath.startsWith(projectTempDir)) {
+  //   return {
+  //     behavior: 'allow',
+  //     updatedInput: input,
+  //     decisionReason: {
+  //       type: 'other',
+  //       reason: 'Project temp directory files are allowed for reading',
+  //     },
+  //   }
+  // }
+
+
+
+  // Tasks directory (~/.claude/tasks/) for swarm task coordination
+  const tasksDir = join(getEfrexConfigHomeDir(), 'tasks') + sep
+  if (
+    normalizedPath === tasksDir.slice(0, -1) ||
+    normalizedPath.startsWith(tasksDir)
+  ) {
+    return {
+      behavior: 'allow',
+      updatedInput: input,
+      decisionReason: {
+        type: 'other',
+        reason: 'Task files are allowed for reading',
+      },
+    }
+  }
+
+
+
+  return { behavior: 'passthrough', message: '' }
+}
+
+export function allWorkingDirectories(
+  context: ToolPermissionContext,
+): Set<string> {
+  return new Set([
+    getOriginalCwd(),
+  ])
+}
+
+export const getResolvedWorkingDirPaths = memoize(getPathsForPermissionCheck)
 export function pathInAllowedWorkingPath(
   path: string,
   toolPermissionContext: ToolPermissionContext,
@@ -695,11 +820,128 @@ export function pathInAllowedWorkingPath(
     ),
   )
 }
-export function allWorkingDirectories(
-  context: ToolPermissionContext,
-): Set<string> {
-  return new Set([
-    getOriginalCwd(),
-    ...context.additionalWorkingDirectories.keys(),
-  ])
+export function pathInWorkingPath(path: string, workingPath: string): boolean {
+  const absolutePath = expandPath(path)
+  const absoluteWorkingPath = expandPath(workingPath)
+
+  // On macOS, handle common symlink issues:
+  // - /var -> /private/var
+  // - /tmp -> /private/tmp
+  const normalizedPath = absolutePath
+    .replace(/^\/private\/var\//, '/var/')
+    .replace(/^\/private\/tmp(\/|$)/, '/tmp$1')
+  const normalizedWorkingPath = absoluteWorkingPath
+    .replace(/^\/private\/var\//, '/var/')
+    .replace(/^\/private\/tmp(\/|$)/, '/tmp$1')
+
+  // Normalize case for case-insensitive comparison to prevent bypassing security
+  // checks on case-insensitive filesystems (macOS/Windows) like .cLauDe/CoMmAnDs
+  const caseNormalizedPath = normalizeCaseForComparison(normalizedPath)
+  const caseNormalizedWorkingPath = normalizeCaseForComparison(
+    normalizedWorkingPath,
+  )
+
+  // Use cross-platform relative path helper
+  const relative = relativePath(caseNormalizedWorkingPath, caseNormalizedPath)
+
+  // Same path
+  if (relative === '') {
+    return true
+  }
+
+  if (containsPathTraversal(relative)) {
+    return false
+  }
+
+  // Path is inside (relative path that doesn't go up)
+  return !posix.isAbsolute(relative)
+}
+/**
+ * Normalizes a path for case-insensitive comparison.
+ * This prevents bypassing security checks using mixed-case paths on case-insensitive
+ * filesystems (macOS/Windows) like `.cLauDe/Settings.locaL.json`.
+ *
+ * We always normalize to lowercase regardless of platform for consistent security.
+ * @param path The path to normalize
+ * @returns The lowercase path for safe comparison
+ */
+export function normalizeCaseForComparison(path: string): string {
+  return path.toLowerCase()
+}
+function patternWithRoot(
+  pattern: string,
+  source: PermissionRuleSource,
+): {
+  relativePattern: string
+  root: string | null
+} {
+  if (pattern.startsWith(`${DIR_SEP}${DIR_SEP}`)) {
+    // Patterns starting with // resolve relative to /
+    const patternWithoutDoubleSlash = pattern.slice(1)
+
+    // On Windows, check if this is a POSIX-style drive path like //c/Users/...
+    // Note: UNC paths (//server/share) will not match this regex and will be treated
+    // as root-relative patterns, which may need separate handling in the future
+    if (
+      getPlatform() === 'windows' &&
+      patternWithoutDoubleSlash.match(/^\/[a-z]\//i)
+    ) {
+      // Convert POSIX path to Windows format
+      // The pattern is like /c/Users/... so we convert it to C:\Users\...
+      const driveLetter = patternWithoutDoubleSlash[1]?.toUpperCase() ?? 'C'
+      // Keep the pattern in POSIX format since relativePath returns POSIX paths
+      const pathAfterDrive = patternWithoutDoubleSlash.slice(2)
+
+      // Extract the drive root (C:\) and the rest of the pattern
+      const driveRoot = `${driveLetter}:\\`
+      const relativeFromDrive = pathAfterDrive.startsWith('/')
+        ? pathAfterDrive.slice(1)
+        : pathAfterDrive
+
+      return {
+        relativePattern: relativeFromDrive,
+        root: driveRoot,
+      }
+    }
+
+    return {
+      relativePattern: patternWithoutDoubleSlash,
+      root: DIR_SEP,
+    }
+  } else if (pattern.startsWith(`~${DIR_SEP}`)) {
+    // Patterns starting with ~/ resolve relative to homedir
+    return {
+      relativePattern: pattern.slice(1),
+      root: homedir().normalize('NFC'),
+    }
+  } else if (pattern.startsWith(DIR_SEP)) {
+    // Patterns starting with / resolve relative to the directory where settings are stored (without .claude/)
+    return {
+      relativePattern: pattern,
+      root: rootPathForSource(source),
+    }
+  }
+  // No root specified, put it with all the other patterns
+  // Normalize patterns that start with "./" to remove the prefix
+  // This ensures that patterns like "./.env" match files like ".env"
+  let normalizedPattern = pattern
+  if (pattern.startsWith(`.${DIR_SEP}`)) {
+    normalizedPattern = pattern.slice(2)
+  }
+  return {
+    relativePattern: normalizedPattern,
+    root: null,
+  }
+}
+function rootPathForSource(source: PermissionRuleSource): string {
+  switch (source) {
+    case 'cliArg':
+    case 'command':
+    case 'session':
+      return expandPath(getOriginalCwd())
+    case 'userSettings':
+    case 'projectSettings':
+    case 'localSettings':
+      return getSettingsRootPathForSource(source)
+  }
 }

@@ -2,6 +2,7 @@ import { homedir } from 'os'
 import { dirname, isAbsolute, join, normalize, relative, resolve } from 'path'
 import { getPlatform } from './platform'
 import { getCwd, } from './cwd'
+import { statSync } from 'fs'
 import { posixPathToWindowsPath } from './windowsPaths'
 /**
  * Checks if a path contains directory traversal patterns that navigate to parent directories.
@@ -121,4 +122,29 @@ export function expandPath(path: string, baseDir?: string): string {
 
   // Handle relative paths
   return resolve(actualBaseDir, processedPath).normalize('NFC')
+}
+/**
+ * Gets the directory path for a given file or directory path.
+ * If the path is a directory, returns the path itself.
+ * If the path is a file or doesn't exist, returns the parent directory.
+ *
+ * @param path - The file or directory path
+ * @returns The directory path
+ */
+export function getDirectoryForPath(path: string): string {
+  const absolutePath = expandPath(path)
+  // SECURITY: Skip filesystem operations for UNC paths to prevent NTLM credential leaks.
+  if (absolutePath.startsWith('\\\\') || absolutePath.startsWith('//')) {
+    return dirname(absolutePath)
+  }
+  try {
+    const stats = statSync(absolutePath)
+    if (stats.isDirectory()) {
+      return absolutePath
+    }
+  } catch {
+    // Path doesn't exist or can't be accessed
+  }
+  // If it's not a directory or doesn't exist, return the parent directory
+  return dirname(absolutePath)
 }

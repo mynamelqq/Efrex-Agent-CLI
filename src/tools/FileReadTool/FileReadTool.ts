@@ -6,7 +6,9 @@ import {
   readFile as readFileAsync,
   stat
 } from 'fs/promises'
+import { Base64ImageSource } from '@anthropic-ai/sdk/resources.js'
 import { addLineNumbers } from '../../utils/file'
+import { checkReadPermissionForTool } from 'src/utils/permissions/filesystem'
 import { FILE_UNCHANGED_STUB } from './prompt'
 import { posix, win32 } from 'path'
 import { formatFileSize } from 'src/utils/format'
@@ -857,12 +859,12 @@ async function callInner(
             'jpeg',
           )
           return {
-            type: 'image_url' as const,
-            image_url: {
-              url: createImageDataURL(
-                `image/${resized.mediaType}` as ImageMediaType,
-                resized.buffer.toString('base64'),
-              ),
+            type: 'image' as const,
+            source: {
+              type: 'base64' as const,
+              media_type:
+                `image/${resized.mediaType}` as Base64ImageSource['media_type'],
+              data: resized.buffer.toString('base64'),
             },
           }
         }),
@@ -907,12 +909,12 @@ async function callInner(
             'jpeg',
           )
           return {
-            type: 'image_url' as const,
-            image_url: {
-              url: createImageDataURL(
-                `image/${resized.mediaType}` as ImageMediaType,
-                resized.buffer.toString('base64'),
-              ),
+            type: 'image' as const,
+            source: {
+              type: 'base64' as const,
+              media_type:
+                `image/${resized.mediaType}` as Base64ImageSource['media_type'],
+              data: resized.buffer.toString('base64'),
             },
           }
         }),
@@ -941,10 +943,11 @@ async function callInner(
         createUserMessage({
           content: [
             {
-              type: 'file',
-              file: {
-                filename: path.basename(file_path),
-                file_data: `data:application/pdf;base64,${pdfData.file.base64}`,
+              type: 'document',
+              source: {
+                type: 'base64',
+                media_type: 'application/pdf',
+                data: pdfData.file.base64,
               },
             },
           ],

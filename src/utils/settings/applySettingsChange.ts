@@ -3,7 +3,7 @@ import { logForDebugging } from '../debug.js'
 import { loadAllPermissionRulesFromDisk } from '../permissions/permissionsLoader'
 import type { SettingSource } from './settings.js'
 import { getInitialSettings } from './settings.js'
-
+import { syncPermissionRulesFromDisk } from '../permissions/permissions.js'
 /**
  * Apply a settings change to app state. Re-reads settings from disk,
  * reloads permissions and hooks, and pushes the new state.

@@ -12,6 +12,7 @@ import { normalizeMessagesForAPI } from 'src/utils/api.js'
 import { createAssistantAPIErrorMessage } from 'src/utils/messages.js'
 import { type EffortValue } from 'src/utils/effort'
 import { getAPIProvider } from 'src/utils/model/provider.js'
+import { withStreamingVCR } from '../vcr.js'
 
 export type Options = {
   model: string
@@ -66,13 +67,16 @@ export async function* queryModelWithStreaming({
   switch (provider) {
     case 'openai': {
       const { queryModelOpenAI } = await import('./openai/index.js')
-      yield* queryModelOpenAI(
-        messagesForAPI,
-        systemPrompt,
-        tools,
-        signal,
-        options,
-      )
+      yield* withStreamingVCR(messagesForAPI,
+        async function* () {
+        yield* queryModelOpenAI(
+          messages,
+          systemPrompt,
+          tools,
+          signal,
+          options
+        )
+      })
       return
     }
     default:
@@ -84,6 +88,8 @@ export async function* queryModelWithStreaming({
       return
   }
 }
+
+
 export function getMaxOutputTokensForModel(model: string): number {
   const maxOutputTokens = getModelMaxOutputTokens(model)
   return maxOutputTokens.default

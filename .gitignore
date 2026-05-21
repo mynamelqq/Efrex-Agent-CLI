@@ -23,7 +23,7 @@ tmp/
 *.log
 *.sql
 *.env
-
+.claude
 # OS generated files #
 ######################
 **.DS_Store*
@@ -69,7 +69,8 @@ library/vendors/composer
 assets/img/.DS_Store
 
 # VSCode related files #
-# .vscode
+.vscode
 
 AGENTS.md
 dist/
+fixtures/

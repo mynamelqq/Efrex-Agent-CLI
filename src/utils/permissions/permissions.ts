@@ -74,6 +74,133 @@ export function toolAlwaysAllowedRule(
   )
 }
 /**
+ * Applies a single permission update to the context and returns the updated context
+ * @param context The current permission context
+ * @param update The permission update to apply
+ * @returns The updated permission context
+ */
+export function applyPermissionUpdate(
+  context: ToolPermissionContext,
+  update: PermissionUpdate,
+): ToolPermissionContext {
+  switch (update.type) {
+    case 'setMode':
+      logForDebugging(
+        `Applying permission update: Setting mode to '${update.mode}'`,
+      )
+      return {
+        ...context,
+        mode: update.mode,
+      }
+
+    case 'addRules': {
+      const ruleStrings = update.rules.map(rule =>
+        permissionRuleValueToString(rule),
+      )
+      logForDebugging(
+        `Applying permission update: Adding ${update.rules.length} ${update.behavior} rule(s) to destination '${update.destination}': ${JSON.stringify(ruleStrings)}`,
+      )
+
+      // Determine which collection to update based on behavior
+      const ruleKind =
+        update.behavior === 'allow'
+          ? 'alwaysAllowRules'
+          : update.behavior === 'deny'
+            ? 'alwaysDenyRules'
+            : 'alwaysAskRules'
+
+      return {
+        ...context,
+        [ruleKind]: {
+          ...context[ruleKind],
+          [update.destination]: [
+            ...(context[ruleKind][update.destination] || []),
+            ...ruleStrings,
+          ],
+        },
+      }
+    }
+
+    case 'replaceRules': {
+      const ruleStrings = update.rules.map(rule =>
+        permissionRuleValueToString(rule),
+      )
+      logForDebugging(
+        `Replacing all ${update.behavior} rules for destination '${update.destination}' with ${update.rules.length} rule(s): ${JSON.stringify(ruleStrings)}`,
+      )
+
+      // Determine which collection to update based on behavior
+      const ruleKind =
+        update.behavior === 'allow'
+          ? 'alwaysAllowRules'
+          : update.behavior === 'deny'
+            ? 'alwaysDenyRules'
+            : 'alwaysAskRules'
+
+      return {
+        ...context,
+        [ruleKind]: {
+          ...context[ruleKind],
+          [update.destination]: ruleStrings, // Replace all rules for this source
+        },
+      }
+    }
+
+    case 'addDirectories': {
+      logForDebugging(
+        `Applying permission update: Adding ${update.directories.length} director${update.directories.length === 1 ? 'y' : 'ies'} with destination '${update.destination}': ${JSON.stringify(update.directories)}`,
+      )
+
+      return {
+        ...context,
+      }
+    }
+
+    case 'removeRules': {
+      const ruleStrings = update.rules.map(rule =>
+        permissionRuleValueToString(rule),
+      )
+      logForDebugging(
+        `Applying permission update: Removing ${update.rules.length} ${update.behavior} rule(s) from source '${update.destination}': ${JSON.stringify(ruleStrings)}`,
+      )
+
+      // Determine which collection to update based on behavior
+      const ruleKind =
+        update.behavior === 'allow'
+          ? 'alwaysAllowRules'
+          : update.behavior === 'deny'
+            ? 'alwaysDenyRules'
+            : 'alwaysAskRules'
+
+      // Filter out the rules to be removed
+      const existingRules = context[ruleKind][update.destination] || []
+      const rulesToRemove = new Set(ruleStrings)
+      const filteredRules = existingRules.filter(
+        rule => !rulesToRemove.has(rule),
+      )
+
+      return {
+        ...context,
+        [ruleKind]: {
+          ...context[ruleKind],
+          [update.destination]: filteredRules,
+        },
+      }
+    }
+
+    case 'removeDirectories': {
+
+      return {
+        ...context,
+        
+      }
+    }
+
+    default:
+      return context
+  }
+}
+/**
  * Creates a permission request message that explain the permission request
  */
 export function createPermissionRequestMessage(
@@ -395,4 +522,118 @@ function getUpdatedInputOrFallback(
       ? permissionResult.updatedInput
       : undefined) ?? fallback
   )
+}
+// Used to break circular dependency where a Tool calls this function
+export function getRuleByContentsForToolName(
+  context: ToolPermissionContext,
+  toolName: string,
+  behavior: PermissionBehavior,
+): Map<string, PermissionRule> {
+  const ruleByContents = new Map<string, PermissionRule>()
+  let rules: PermissionRule[] = []
+  switch (behavior) {
+    case 'allow':
+      rules = getAllowRules(context)
+      break
+    case 'deny':
+      rules = getDenyRules(context)
+      break
+    case 'ask':
+      rules = getAskRules(context)
+      break
+  }
+  for (const rule of rules) {
+    if (
+      rule.ruleValue.toolName === toolName &&
+      rule.ruleValue.ruleContent !== undefined &&
+      rule.ruleBehavior === behavior
+    ) {
+      ruleByContents.set(rule.ruleValue.ruleContent, rule)
+    }
+  }
+  return ruleByContents
+}
+/**
+ * 从磁盘同步权限规则（用于设置更改的替换操作）
+ */
+export function syncPermissionRulesFromDisk(
+  toolPermissionContext: ToolPermissionContext,
+  rules: PermissionRule[],
+): ToolPermissionContext {
+  let context = toolPermissionContext
+    const sourcesToClear: PermissionUpdateDestination[] = [
+      'userSettings',
+      'projectSettings',
+      'localSettings',
+      'cliArg',
+      'session',
+    ]
+    const behaviors: PermissionBehavior[] = ['allow', 'deny', 'ask']
+
+    for (const source of sourcesToClear) {
+      for (const behavior of behaviors) {
+        context = applyPermissionUpdate(context, {
+          type: 'replaceRules',
+          rules: [],
+          behavior,
+          destination: source,
+        })
+      }
+    }
+
+  // Clear all disk-based source:behavior combos before applying new rules.
+  // Without this, removing a rule from settings (e.g. deleting a deny entry)
+  // would leave the old rule in the context because convertRulesToUpdates
+  // only generates replaceRules for source:behavior pairs that have rules —
+  // an empty group produces no update, so stale rules persist.
+  const diskSources: PermissionUpdateDestination[] = [
+    'userSettings',
+    'projectSettings',
+    'localSettings',
+  ]
+  for (const diskSource of diskSources) {
+    for (const behavior of ['allow', 'deny', 'ask'] as PermissionBehavior[]) {
+      context = applyPermissionUpdate(context, {
+        type: 'replaceRules',
+        rules: [],
+        behavior,
+        destination: diskSource,
+      })
+    }
+  }
+
+  const updates = convertRulesToUpdates(rules, 'replaceRules')
+  return applyPermissionUpdates(context, updates)
+}
+/**
+ * Helper to convert PermissionRule array to PermissionUpdate array
+ */
+function convertRulesToUpdates(
+  rules: PermissionRule[],
+  updateType: 'addRules' | 'replaceRules',
+): PermissionUpdate[] {
+  // Group rules by source and behavior
+  const grouped = new Map<string, PermissionRuleValue[]>()
+
+  for (const rule of rules) {
+    const key = `${rule.source}:${rule.ruleBehavior}`
+    if (!grouped.has(key)) {
+      grouped.set(key, [])
+    }
+    grouped.get(key)!.push(rule.ruleValue)
+  }
+
+  // Convert to PermissionUpdate array
+  const updates: PermissionUpdate[] = []
+  for (const [key, ruleValues] of grouped) {
+    const [source, behavior] = key.split(':')
+    updates.push({
+      type: updateType,
+      rules: ruleValues,
+      behavior: behavior as PermissionBehavior,
+      destination: source as PermissionUpdateDestination,
+    })
+  }
+
+  return updates
 }

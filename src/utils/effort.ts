@@ -4,8 +4,9 @@ export type ThinkingConfig =
   | { type: 'adaptive' }
   | { type: 'enabled'; budgetTokens: number }
   | { type: 'disabled' }
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh'
+
 export const EFFORT_LEVELS = [
-    'minimal',
   'low',
   'medium',
   'high',

@@ -14,9 +14,8 @@ export function setSessionSettingsCache(value: SettingsWithErrors): void {
 }
 
 /**
- * Per-source cache for getSettingsForSource. Invalidated alongside the
- * merged sessionSettingsCache — same resetSettingsCache() triggers
- * (settings write, --add-dir, plugin init, hooks refresh).
+每个源的缓存用于 getSettingsForSource 方法。该缓存会与合并后的 sessionSettingsCache
+一同失效——相同的 resetSettingsCache() 触发条件（设置写入、--add-dir、插件初始化、钩子刷新）。
  */
 const perSourceCache = new Map<SettingSource, SettingsJson | null>()
 

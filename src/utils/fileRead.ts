@@ -1,6 +1,7 @@
 import { logForDebugging } from './debug.js'
 import {readFileSync as fsReadFileSync,readSync}from "fs"
 export type LineEndingType = 'CRLF' | 'LF'
+
 import { fsReadSync } from './file.js'
 import { safeResolvePath } from './file.js'
 export function detectLineEndingsForString(content: string): LineEndingType {
