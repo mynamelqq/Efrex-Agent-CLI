@@ -13,6 +13,7 @@ import type {
 } from 'src/package/message';
 import { Message } from 'src/package/message';
 import { ToolResultBlockParam } from 'src/package/message';
+import { Command } from './types/command';
 import { ThinkingConfig } from "src/utils/effort";
 import { ThemeName } from 'packages/@ant/ink/src';
 import { ContentReplacementState } from './utils/toolResultStorage';
@@ -30,6 +31,20 @@ export type ValidationResult =
 			message: string;
 			errorCode: number;
 	  };
+
+export type SetToolJSXFn = (
+	args:
+		| {
+				jsx: ReactNode | null;
+				shouldHidePromptInput: boolean;
+				shouldContinueAnimation?: true;
+				showSpinner?: boolean;
+				isLocalJSXCommand?: boolean;
+				isImmediate?: boolean;
+				clearLocalJSX?: boolean;
+		  }
+		| null
+) => void;
 // Apply DeepImmutable to the imported type
 export type ToolPermissionContext = DeepImmutable<{
 	mode: PermissionMode;
@@ -65,6 +80,7 @@ export function findToolByName(tools: Tools, name: string): Tool | undefined {
 }
 export type ToolUseContext = {
 	options: {
+		commands: Command[]
 		debug: boolean;
 		verbose: boolean;
 		maxBudgetUsd?: number;
@@ -97,6 +113,7 @@ export type ToolUseContext = {
 	getAppState(): AppState;
 	setAppState(f: (prev: AppState) => AppState): void;
 	messages: Message[];
+	setToolJSX?: SetToolJSXFn;
 };
 // Type for any schema that outputs an object with string keys
 export type AnyObject = z.ZodType<{ [key: string]: unknown }>;

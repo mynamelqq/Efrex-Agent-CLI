@@ -15,14 +15,18 @@ import { init } from 'src/entrypoints/init.js';
 import { homedir } from 'node:os';
 import { render } from './src/ink.js';
 import { existsSync, mkdirSync } from 'node:fs';
+import { getInitialSettings } from 'src/utils/settings/settings.js';
 
 (async () => {
   attachErrorLogSink(createFileErrorSink());
+
   const efrexFolder=path.join(homedir(),".efrex")
   if(!existsSync(efrexFolder)){
     mkdirSync(efrexFolder, { recursive: true });
   }
   await init();
+
+  
   await render(<Launcher />, {
     exitOnCtrlC: false,
     

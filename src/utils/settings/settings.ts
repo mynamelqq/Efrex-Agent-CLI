@@ -58,11 +58,10 @@ function getUserSettingsFilePath(): string {
 }
 
 /**
- * Apply env vars from trusted sources directly, then apply only allowlisted
- * env vars from the fully merged settings view.
+直接从可信来源应用环境变量，然后仅从完全合并的设置视图中应用已列出的允许使用的环境变量。
  */
 export function applySafeConfigEnvironmentVariables(): void {
-  for (const source of TRUSTED_SETTING_SOURCES) {
+  for (const source of TRUSTED_SETTING_SOURCES) {//这里只有user
     const env = getSettingsForSource(source)?.env
     if (env) {
       Object.assign(process.env, env)
@@ -250,7 +249,7 @@ function loadSettingsFromDisk(): SettingsWithErrors {
     const allErrors: ValidationError[] = []
     const seenErrors = new Set<string>()
 
-    for (const source of SETTING_SOURCES) {
+    for (const source of SETTING_SOURCES) {//读取配置文件
       const { settings, errors } = parseSettingsFile(
         getSettingsFilePathForSource(source)!,
       )
@@ -263,7 +262,7 @@ function loadSettingsFromDisk(): SettingsWithErrors {
         }
       }
 
-      if (settings) {
+      if (settings) {//依次加载 user project local
         mergedSettings = mergeWith(
           mergedSettings,
           settings,
@@ -366,7 +365,7 @@ export function updateSettingsForSource(//更新配置
   }
 
   try {
-    mkdirSync(dirname(filePath))//保底措施
+    mkdirSync(dirname(filePath),{recursive:true})//保底措施
     // Try to get existing settings with validation. Bypass the per-source
     // cache — mergeWith below mutates its target (including nested refs),
     // and mutating the cached object would leak unpersisted state if the

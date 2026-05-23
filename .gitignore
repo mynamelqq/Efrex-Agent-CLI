@@ -70,7 +70,7 @@ assets/img/.DS_Store
 
 # VSCode related files #
 .vscode
-
+.claude
 AGENTS.md
 dist/
 fixtures/

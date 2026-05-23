@@ -4,9 +4,17 @@ import QueryApp from './QueryApp.js'
 import { isWorkSpaceTruested, trustFoler } from '../utils/load.js'
 import { getAllBaseTools } from './tools.js'
 import { init } from './entrypoints/init.js'
+
 import { EBP, DBP } from './ink/termio/dec.js'
+import { getGlobalConfig } from './utils/config.js'
 import { getCommands } from './commands.js'
 import { AppStateProvider } from './state/AppState.js'
+import { AppState } from './state/AppState.js'
+import { getInitialSettings } from './utils/settings/settings.js'
+import { getInitialEffortSetting } from './utils/effort.js'
+import { shouldEnableThinkingByDefault } from './utils/thinking.js'
+import { getInitialMainLoopModel } from './bootstrap/state.js'
+import { getEmptyToolPermissionContext } from './Tool.js'
 function TrustPrompt({ onTrust }: { onTrust: () => void }) {
   const { exit } = useApp()
   const [selectedIndex, setSelectedIndex] = React.useState(0)
@@ -68,6 +76,21 @@ export default function Launcher() {
   const [trusted, setTrusted] = React.useState(isWorkSpaceTruested())
   const [commands, setCommands] = React.useState<Awaited<ReturnType<typeof getCommands>> | null>(null)
   process.env.NODE_ENV="test"
+  const thinkingEnabled=shouldEnableThinkingByDefault()
+  const initialState: AppState = {
+      settings: getInitialSettings(),
+      mainLoopModel: process.env.MODEL as string,
+      toolPermissionContext: getEmptyToolPermissionContext(),
+      fileHistory: {
+        snapshots: [],
+        trackedFiles: new Set(),
+        snapshotSequence: 0,
+      },
+      inbox: {
+        messages: [],
+      },
+      effortValue: getInitialEffortSetting(),
+    };
   React.useEffect(() => {
     // Enable bracketed paste mode
     process.stdout.write(EBP)
@@ -102,7 +125,7 @@ export default function Launcher() {
   }
 
   return (
-    <AppStateProvider>
+    <AppStateProvider initialState={initialState}>
       <QueryApp
         debug={false}
         thinkingConfig={{ type: 'adaptive' }}

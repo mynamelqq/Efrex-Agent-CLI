@@ -2,12 +2,15 @@ import fs from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import model from './commands/model/index.js'
+import effort from './commands/effort/index.js'
 import { memoize } from 'lodash';
 import { Command } from './types/command.js';
 import { isCommandEnabled } from './types/command.js';
 import { CommandResult } from './types/command.js';
+import { getCommandName } from './types/command.js';
 export const COMMANDS = memoize((): Command[] => [
-  model
+  model,
+  effort
 ].filter(Boolean))
 /**
  * Loads all command sources (skills, plugins, workflows). Memoized by cwd
@@ -47,3 +50,38 @@ export async function getCommands(): Promise<Command[]> {
   //   ...baseCommands.slice(insertIndex),
   // ]
 }
+export function findCommand(
+  commandName: string,
+  commands: Command[],
+): Command | undefined {
+  return commands.find(
+    _ =>
+      _.name === commandName ||
+      getCommandName(_) === commandName ||
+      _.aliases?.includes(commandName),
+  )
+}
+export function hasCommand(commandName: string, commands: Command[]): boolean {
+  return findCommand(commandName, commands) !== undefined
+}
+export {getCommandName}
+export function getCommand(commandName: string, commands: Command[]): Command {
+  const command = findCommand(commandName, commands)
+  if (!command) {
+    throw ReferenceError(
+      `Command ${commandName} not found. Available commands: ${commands
+        .map(_ => {
+          const name = getCommandName(_)
+          return _.aliases ? `${name} (aliases: ${_.aliases.join(', ')})` : name
+        })
+        .sort((a, b) => a.localeCompare(b))
+        .join(', ')}`,
+    )
+  }
+
+  return command
+}
+export const builtInCommandNames = memoize(
+  (): Set<string> =>
+    new Set(COMMANDS().flatMap(_ => [_.name, ...(_.aliases ?? [])])),
+)

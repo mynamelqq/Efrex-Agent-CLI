@@ -61,3 +61,6 @@ export class ShellError extends Error {
     this.name = 'ShellError'
   }
 }
+
+
+export class MalformedCommandError extends Error {}

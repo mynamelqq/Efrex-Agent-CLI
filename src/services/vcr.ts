@@ -90,7 +90,6 @@ function mapMessages(
   f: (s: unknown) => unknown,
 ): (UserMessage | AssistantMessage)['message']['content'][] {
   return messages.map(_ => {
-    logForDebugging("_"+typeof _+_)
     if (typeof _ === 'string') {
       return f(_)
     }

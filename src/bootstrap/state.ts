@@ -15,6 +15,7 @@ type State = {
   totalCostUSD: number
   totalAPIDuration: number
   totalAPIDurationWithoutRetries: number
+  initialMainLoopModel: string
   totalToolDuration: number
   turnHookDurationMs: number
   turnToolDurationMs: number
@@ -203,6 +204,7 @@ function getInitialState(): State {
     totalCostUSD: 0,
     totalAPIDuration: 0,
     totalAPIDurationWithoutRetries: 0,
+    initialMainLoopModel:"",
     totalToolDuration: 0,
     turnHookDurationMs: 0,
     turnToolDurationMs: 0,
@@ -389,3 +391,8 @@ export function getPromptId(): string | null {
 export function setPromptId(id: string | null): void {
   STATE.promptId = id
 }
+
+export function getInitialMainLoopModel(): string {
+  return STATE.initialMainLoopModel
+}
+

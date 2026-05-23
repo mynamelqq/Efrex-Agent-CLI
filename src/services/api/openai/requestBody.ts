@@ -5,6 +5,8 @@
  */
 import type { ChatCompletionCreateParamsStreaming } from 'openai/resources/chat/completions/completions.mjs'
 import { isEnvTruthy, isEnvDefinedFalsy } from '../../../utils/envUtils.js'
+import { EffortLevel, EffortValue } from 'src/utils/effort.js'
+import effort from 'src/commands/effort/index.js'
 
 /**
  * Detect whether DeepSeek-style thinking mode should be enabled.
@@ -72,7 +74,8 @@ export function buildOpenAIRequestBody(params: {
   toolChoice: any
   enableThinking: boolean
   maxTokens: number
-  temperatureOverride?: number
+  temperatureOverride?: number,
+  effortLevel:EffortLevel |undefined
 }): ChatCompletionCreateParamsStreaming & {
   thinking?: { type: string }
   enable_thinking?: boolean
@@ -86,16 +89,19 @@ export function buildOpenAIRequestBody(params: {
     enableThinking,
     maxTokens,
     temperatureOverride,
+    effortLevel
   } = params
   return {
     model,
     messages,
     max_tokens: maxTokens,
+    reasoning_effort:effortLevel,
     ...(tools.length > 0 && {
       tools,
       ...(toolChoice && { tool_choice: toolChoice }),
     }),
     stream: true,
+
     stream_options: { include_usage: true },
     // DeepSeek thinking mode: enable chain-of-thought output.
     // When active, temperature/top_p/presence_penalty/frequency_penalty are ignored by DeepSeek.

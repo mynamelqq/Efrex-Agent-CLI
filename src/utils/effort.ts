@@ -1,4 +1,5 @@
 import { ReasoningEffort } from "openai/resources";
+import { getInitialSettings } from "./settings/settings";
 export type  { ReasoningEffort}
 export type ThinkingConfig =
   | { type: 'adaptive' }
@@ -54,4 +55,57 @@ export function convertEffortValueToLevel(value: EffortValue): ReasoningEffort {
 }
 export function isValidNumericEffort(value: number): boolean {
   return Number.isInteger(value)
+}
+
+export function getEffortEnvOverride(): EffortValue | null | undefined {
+  const envOverride = process.env.EFFORT_LEVEL
+  return envOverride?.toLowerCase() === 'unset' ||
+    envOverride?.toLowerCase() === 'auto'
+    ? null
+    : parseEffortValue(envOverride)
+}
+
+export function getEffortValueDescription(value: EffortValue): string {
+  if (typeof value === 'number') {
+    return `Numeric effort value of ${value}`
+  }
+
+  switch (value) {
+    case 'low':
+      return 'Quick, straightforward implementation with minimal overhead'
+    case 'medium':
+      return 'Balanced approach with standard implementation and testing'
+    case 'high':
+      return 'Comprehensive implementation with extensive testing and documentation'
+    case 'xhigh':
+      return 'Extended reasoning beyond high'
+    default:
+      return 'Balanced approach with standard implementation and testing'
+  }
+}
+
+/**
+ * Numeric values are model-default only and not persisted.
+ * 'max' is session-scoped for external users (ants can persist it).
+ * Write sites call this before saving to settings so the Zod schema
+ * (which only accepts string levels) never rejects a write.
+ */
+export function toPersistableEffort(
+  value: EffortValue | undefined,
+): EffortLevel | undefined {
+  if (
+    value === 'low' ||
+    value === 'medium' ||
+    value === 'high' ||
+    value === 'xhigh'
+  ) {
+    return value
+  }
+
+  return undefined
+}
+export function getInitialEffortSetting(): EffortLevel | undefined {
+  // toPersistableEffort filters 'max' for non-ants on read, so a manually
+  // edited settings.json doesn't leak session-scoped max into a fresh session.
+  return toPersistableEffort(getInitialSettings().effortLevel)
 }

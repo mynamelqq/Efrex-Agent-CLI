@@ -35,6 +35,8 @@ import {
   normalizeContentFromAPI,
   type SDKAssistantMessageError,
 } from '../../../utils/messages.js'
+import { getInitialEffortSetting, toPersistableEffort } from "src/utils/effort.js"
+import { getInitialSettings } from "src/utils/settings/settings.js"
 
 const deferredToolNames = new Set<string>()
 
@@ -242,6 +244,7 @@ export async function* queryModelOpenAI(
       enableThinking,
       maxTokens,
       temperatureOverride: options.temperatureOverride,
+      effortLevel:getInitialEffortSetting()
     })
     const stream = await client.chat.completions.create(requestBody, { signal })
 

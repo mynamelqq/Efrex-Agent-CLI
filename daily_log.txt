@@ -238,3 +238,8 @@ bash命令、和用户正常的输入，主要还是用新的框架修改打通�
 统一了使用Anthropic的类型，中途再转换为openai的类型
 优化了等待队列的渲染，不要太挤占垂直视觉
 AppState.tsx有点复杂，主要是监听配置文件的变化，使用chokidar 库监控配置文件变化，代码还需要进一步完善
+5.21-22
+增强了 Slash 命令体系：增加了两个slash command斜杠命令的支持，/model和/effort，和斜杠命令提示,slash选择器
+斜杠命令主要通过setToolJSX,把本地JSX命令UI接进主循环：src/Tool.ts 给 ToolUseContext 增加 commands 和 setToolJSX 能力
+
+src/launcher.tsx 构造并传入 AppStateProvider initialState；

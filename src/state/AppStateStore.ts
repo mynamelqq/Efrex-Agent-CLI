@@ -15,7 +15,7 @@ export type FooterItem =
   | 'companion'
 
 export type AppState = DeepImmutable<{
-    mainLoopModel: string |null,
+    mainLoopModel: string,
     settings: SettingsJson,
     advisorModel?: string,
     inbox: {
@@ -39,7 +39,7 @@ export type AppStateStore = Store<AppState>
 export function getDefaultAppState(): AppState {
   const initialMode: PermissionMode ='default'
    return {
-    mainLoopModel: "",
+    mainLoopModel: getInitialSettings().model as string,
     settings: getInitialSettings(),
     inbox: {
       messages: [],

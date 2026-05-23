@@ -1,144 +1,166 @@
 import chalk from 'chalk';
 import * as React from 'react';
-
+import { Box, Text, useInput } from '../../ink.js';
 import { useAppState, useSetAppState } from '../../state/AppState.js';
-import type { LocalJSXCommandCall } from '../../types/command.js';
-import { fa } from 'zod/v4/locales';
-import { CommandResultDisplay } from '../../types/command.js';
+import type {
+	CommandResultDisplay,
+	LocalJSXCommandCall,
+} from '../../types/command.js';
 
-function ModelPickerWrapper({
-  onDone,
+const MODEL_OPTIONS = [
+	'kimi-k2.6',
+	'gpt-5.4',
+	'gpt-5.4-mini',
+	'gpt-4.1',
+	'gpt-4o',
+] as const;
+
+const MODEL_ACCENTS: Record<(typeof MODEL_OPTIONS)[number], string> = {
+	'kimi-k2.6': 'yellowBright',
+	'gpt-5.4': 'cyanBright',
+	'gpt-5.4-mini': 'greenBright',
+	'gpt-4.1': 'blueBright',
+	'gpt-4o': 'magentaBright',
+};
+
+const MODEL_SUMMARIES: Record<(typeof MODEL_OPTIONS)[number], string> = {
+	'kimi-k2.6': 'Kimi line, suitable when you want this provider explicitly.',
+	'gpt-5.4': 'Primary general-purpose model with stronger capability.',
+	'gpt-5.4-mini': 'Faster, lighter-weight GPT-5.4 variant.',
+	'gpt-4.1': 'Stable GPT-4.1 line for broader compatibility.',
+	'gpt-4o': 'Multimodal GPT-4o line with balanced responsiveness.',
+};
+
+function renderModelLabel(model: string | null): string {
+	return model ?? 'default';
+}
+
+function ModelPicker({
+	onDone
 }: {
-  onDone: (result?: string, options?: { display?: CommandResultDisplay }) => void;
+	onDone: (result?: string, options?: { display?: CommandResultDisplay }) => void;
 }): React.ReactNode {
-  const mainLoopModel = useAppState(s => s.mainLoopModel);
-  const setAppState = useSetAppState();
+	const mainLoopModel = useAppState(s => s.mainLoopModel);
+	const setAppState = useSetAppState();
+	const currentIndex = Math.max(
+		0,
+		MODEL_OPTIONS.findIndex(option => option === mainLoopModel)
+	);
+	const [selectedIndex, setSelectedIndex] = React.useState(currentIndex);
 
-  function handleCancel(): void {
+	useInput((input, key) => {
+		if (key.leftArrow || key.upArrow) {
+			setSelectedIndex(index =>
+				index <= 0 ? MODEL_OPTIONS.length - 1 : index - 1
+			);
+			return;
+		}
 
-    const displayModel = mainLoopModel;
-    onDone(`Kept model as ${chalk.bold(displayModel)}`, {
-      display: 'system',
-    });
-  }
+		if (key.rightArrow || key.downArrow || key.tab) {
+			setSelectedIndex(index =>
+				index >= MODEL_OPTIONS.length - 1 ? 0 : index + 1
+			);
+			return;
+		}
 
-  function handleSelect(model: string | null): void {
+		if (key.escape||(key.ctrl&&input=='c')) {
+			onDone(`Kept model as ${chalk.bold(renderModelLabel(mainLoopModel))}`, {
+				display: 'system'
+			});
+			return;
+		}
 
-    setAppState(prev => ({
-      ...prev,
-      mainLoopModel: model,
-    }));
+		if (key.return) {
+			const nextModel = MODEL_OPTIONS[selectedIndex] ?? MODEL_OPTIONS[0];
+			setAppState(prev => ({
+				...prev,
+				mainLoopModel: nextModel
+			}));
+			onDone(`Set model to ${chalk.bold(nextModel)}`);
+			return;
+		}
 
-    let message = `Set model to ${chalk.bold(model)}`;
+		if (input === 'q') {
+			onDone(`Kept model as ${chalk.bold(renderModelLabel(mainLoopModel))}`, {
+				display: 'system'
+			});
+		}
+	});
 
-    // Turn off fast mode if switching to unsupported model
-    let wasFastModeToggledOn;
+	const selectedModel = MODEL_OPTIONS[selectedIndex] ?? MODEL_OPTIONS[0];
 
-
-    if (wasFastModeToggledOn === false) {
-      // Fast mode was toggled off, show suffix after extra usage billing
-      message += ` · Fast mode OFF`;
-    }
-
-    onDone(message);
-  }
-
-  return (
-    <ModelPicker
-      initial={mainLoopModel}
-      onSelect={handleSelect}
-      onCancel={handleCancel}
-      isStandaloneCommand
-    />
-  );
+	return (
+		<Box paddingX={1} flexDirection="column" marginTop={1}>
+			<Box flexDirection="row">
+				<Text color="cyanBright">◉ </Text>
+				<Text bold color="cyanBright">
+					Select model
+				</Text>
+			</Box>
+			<Text dimColor>
+				↑/↓ 选择，Enter 确认，Esc 取消
+			</Text>
+			<Box flexDirection="column" marginTop={1}>
+				{MODEL_OPTIONS.map((option, index) => {
+					const isSelected = index === selectedIndex;
+					const isCurrent = option === mainLoopModel;
+					const accent = MODEL_ACCENTS[option];
+					return (
+						<Box key={option}>
+							<Text color={isSelected ? accent : 'gray'}>
+								{isSelected ? '› ' : '  '}
+							</Text>
+							<Text color={accent}>● </Text>
+							<Text color={isSelected ? accent : undefined} bold={isSelected}>
+								{option}
+							</Text>
+							{isCurrent ? (
+								<Text color="gray">{isSelected ? ' current' : ' · current'}</Text>
+							) : null}
+						</Box>
+					);
+				})}
+			</Box>
+		</Box>
+	);
 }
 
 function SetModelAndClose({
-  args,
-  onDone,
+	args,
+	onDone
 }: {
-  args: string;
-  onDone: (result?: string, options?: { display?: CommandResultDisplay }) => void;
+	args: string;
+	onDone: (result?: string, options?: { display?: CommandResultDisplay }) => void;
 }): React.ReactNode {
-  const isFastMode = false
-  const setAppState = useSetAppState();
-  const model = args === 'default' ? null : args;
+	const setAppState = useSetAppState();
 
-  React.useEffect(() => {
-    async function handleModelChange(): Promise<void> {
-      if (model) {
-        onDone(`Model '${model}' is not available. Your organization restricts model selection.`, {
-          display: 'system',
-        });
-        return;
-      }
+	React.useEffect(() => {
+		const model = args.trim();
+		if (!model) {
+			onDone('Missing model name.', { display: 'system' });
+			return;
+		}
 
-      // Skip validation for default model
-      if (!model) {
-        setModel(null);
-        return;
-      }
+		setAppState(prev => ({
+			...prev,
+			mainLoopModel: model === 'default' ? "" : model
+		}));
+		onDone(
+			`Set model to ${chalk.bold(
+				renderModelLabel(model === 'default' ? null : model)
+			)}`
+		);
+	}, [args, onDone, setAppState]);
 
-      // Validate and set custom model
-      try {
-        // Don't use parseUserSpecifiedModel for non-aliases since it lowercases the input
-        // and model names are case-sensitive
-        const { valid, error } = await validateModel(model);
-
-        if (valid) {
-          setModel(model);
-        } else {
-          onDone(error || `Model '${model}' not found`, {
-            display: 'system',
-          });
-        }
-      } catch (error) {
-        onDone(`Failed to validate model: ${(error as Error).message}`, {
-          display: 'system',
-        });
-      }
-    }
-
-    function setModel(modelValue: string | null): void {
-      setAppState(prev => ({
-        ...prev,
-        mainLoopModel: modelValue,
-      }));
-      let message = `Set model to ${chalk.bold(renderModelLabel(modelValue))}`;
-
-
-
-      onDone(message);
-    }
-
-    void handleModelChange();
-  }, [model, onDone, setAppState]);
-
-  return null;
-}
-
-
-function ShowModelAndClose({ onDone }: { onDone: (result?: string) => void }): React.ReactNode {
-  const mainLoopModel = useAppState(s => s.mainLoopModel);
-  const effortValue = useAppState(s => s.effortValue);
-  // const displayModel = renderModelLabel(mainLoopModel);
-  const effortInfo = effortValue !== undefined ? ` (effort: ${effortValue})` : '';
-  onDone(`Current model: ${mainLoopModel}${effortInfo}`);
-
-  return null;
+	return null;
 }
 
 export const call: LocalJSXCommandCall = async (onDone, _context, args) => {
-  args = args?.trim() || '';
+	const trimmedArgs = args?.trim() || '';
 
-  if (args) {
-    return <SetModelAndClose args={args} onDone={onDone} />;
-  }
+	if (trimmedArgs) {
+		return <SetModelAndClose args={trimmedArgs} onDone={onDone} />;
+	}
 
-  return <ModelPickerWrapper onDone={onDone} />;
+	return <ModelPicker onDone={onDone} />;
 };
-
-// function renderModelLabel(model: string | null): string {
-//   const rendered = renderDefaultModelSetting(model ?? getDefaultMainLoopModelSetting());
-//   return model === null ? `${rendered} (default)` : rendered;
-// }

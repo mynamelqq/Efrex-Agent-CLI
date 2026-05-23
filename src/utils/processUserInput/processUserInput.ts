@@ -227,23 +227,23 @@ async function processUserInputBase(
 
   // Slash commands
   // Skip for remote bridge messages — input from CCR clients is plain text
-//   if (
-//     inputString !== null &&
-//     !effectiveSkipSlash &&
-//     inputString.startsWith('/')
-//   ) {
-//     const { processSlashCommand } = await import('./processSlashCommand.js')
-//     const slashResult = await processSlashCommand(
-//       inputString,
-//       precedingInputBlocks,
-//       context,
-//       uuid,
-//       isAlreadyProcessing,
-//       canUseTool,
-//       autonomy,
-//     )
-//     return addImageMetadataMessage(slashResult, imageMetadataTexts)
-//   }
+  if (
+    inputString !== null &&
+    !effectiveSkipSlash &&
+    inputString.startsWith('/')
+  ) {
+    const { processSlashCommand } = await import('./processSlashCommand.js')
+    const slashResult = await processSlashCommand(
+      inputString,
+      context,
+      precedingInputBlocks,
+      uuid,
+      isAlreadyProcessing,
+      canUseTool,
+
+    )
+    return slashResult
+  }
 
 
   // Regular user prompt正常用户输入

@@ -28,6 +28,7 @@ import { parseReferences } from './history.js';
 import type { Message as MessageType } from './package/message.js';
 import {
 	findToolByName,
+	type SetToolJSXFn,
 	type Tool,
 	type ToolPermissionContext,
 	type ToolUseContext
@@ -36,17 +37,19 @@ import { expandPastedTextRefs } from './history.js';
 import { getAllBaseTools } from './tools.js';
 import { query } from './query.js';
 import { handlePromptSubmit } from './utils/handlePromptSubmit.js';
-import { getAnthropicModel, getEffortLevel } from './utils/anthropicConfig.js';
+import { getAnthropicModel } from './utils/anthropicConfig.js';
 import { FileStateCache } from './utils/fileStateCache.js';
 import { getSystemPrompt } from './constants/prompts.js';
 import { getUserContext } from './context.js';
 import { createUserMessage } from './utils/messages.js';
+import { extractTag, isSystemLocalCommandMessage } from './utils/messages.js';
 import { getDefaultAppState, type AppState} from './state/AppStateStore.js';
 import { useAppState } from './state/AppState.js';
-import { ThinkingConfig } from './utils/effort.js';
+import { EffortLevel, ThinkingConfig } from './utils/effort.js';
 import { handleMessageFromStream } from './utils/handleMessageFromStream.js';
 import useCanUseTool from './hooks/useCanUseTool.js';
 import { QueryGuard } from './utils/QueryGuard.js';
+import { useTranscriptHeaderInfo } from './hooks/useTranscriptHeaderInfo.js';
 import type { QueuedCommand } from './types/textInputTypes.js';
 import { PromptInputQueuedCommands } from './components/PromptInput/PromptInputQueuedCommands.js';
 import { isFullscreenEnvEnabled } from './utils/fullscreen.js';
@@ -54,6 +57,13 @@ import {
 	PermissionRequest,
 	type ToolUseConfirm
 } from './components/permissions/PermissionRequest.js';
+import {
+	COMMAND_ARGS_TAG,
+	COMMAND_NAME_TAG,
+	LOCAL_COMMAND_CAVEAT_TAG,
+	LOCAL_COMMAND_STDERR_TAG,
+	LOCAL_COMMAND_STDOUT_TAG
+} from './constants/xml.js';
 import {
 	renderToolErrorContent,
 	renderToolResultContent,
@@ -90,9 +100,17 @@ type StreamingAssistantState = {
 	pendingToolCalls: string[];
 };
 
+type SlashCommandMatch = {
+	command: Command;
+	displayName: string;
+};
+
 const MAX_PROMPT_INPUT_ROWS = 6;
+const COMMAND_SELECTOR_VISIBLE_COUNT = 8;
 const APP_BRAND = 'efrex code';
 const APP_VERSION = CLI_APP_VERSION;
+const COMMAND_ROW_SELECTED_FG = '#7dd3fc';
+const COMMAND_ROW_SELECTED_DESC = '#b7c9d3';
 
 
 const GLIMMER_PAD_COLUMNS = 10;
@@ -104,6 +122,179 @@ const statusSegmenter =
 
 function getCurrentModel(): string {
 	return getAnthropicModel();
+}
+
+function getSlashCommandMatches(
+	value: string,
+	commands: Command[]
+): SlashCommandMatch[] {
+	if (!value.startsWith('/')) {
+		return [];
+	}
+
+	const trimmed = value.trimStart();
+	if (!trimmed.startsWith('/')) {
+		return [];
+	}
+
+	const body = trimmed.slice(1);
+	if (body.includes(' ')) {
+		return [];
+	}
+
+	const query = body.toLowerCase();
+	const matches = commands
+		.filter(command => isCommandEnabled(command))
+		.map(command => ({
+			command,
+			displayName: getCommandName(command)
+		}))
+		.filter(({ command, displayName }) => {
+			if (!query) {
+				return true;
+			}
+
+			return getCommandMatchRank(command, displayName, query) !== null;
+		});
+
+	return matches.sort((a, b) => {
+		if (!query) {
+			return a.displayName.localeCompare(b.displayName);
+		}
+
+		const aRank = getCommandMatchRank(a.command, a.displayName, query);
+		const bRank = getCommandMatchRank(b.command, b.displayName, query);
+		if (aRank === null && bRank === null) {
+			return a.displayName.localeCompare(b.displayName);
+		}
+		if (aRank === null) {
+			return 1;
+		}
+		if (bRank === null) {
+			return -1;
+		}
+
+		if (aRank.bucket !== bRank.bucket) {
+			return aRank.bucket - bRank.bucket;
+		}
+		if (aRank.index !== bRank.index) {
+			return aRank.index - bRank.index;
+		}
+		return a.displayName.localeCompare(b.displayName);
+	});
+}
+
+function getCommandMatchRank(
+	command: Command,
+	displayName: string,
+	query: string
+): { bucket: number; index: number } | null {
+	const display = displayName.toLowerCase();
+	const internalName = command.name.toLowerCase();
+	const aliases = command.aliases?.map(alias => alias.toLowerCase()) ?? [];
+	const description = command.description.toLowerCase();
+
+	const displayPrefix = display.startsWith(query) ? 0 : -1;
+	if (displayPrefix === 0) {
+		return { bucket: 0, index: 0 };
+	}
+
+	const internalPrefix = internalName.startsWith(query) ? 0 : -1;
+	if (internalPrefix === 0) {
+		return { bucket: 1, index: 0 };
+	}
+
+	const aliasPrefix = aliases.findIndex(alias => alias.startsWith(query));
+	if (aliasPrefix !== -1) {
+		return { bucket: 2, index: aliasPrefix };
+	}
+
+	const displayIndex = display.indexOf(query);
+	if (displayIndex !== -1) {
+		return { bucket: 3, index: displayIndex };
+	}
+
+	const internalIndex = internalName.indexOf(query);
+	if (internalIndex !== -1) {
+		return { bucket: 4, index: internalIndex };
+	}
+
+	const aliasContains = aliases
+		.map(alias => alias.indexOf(query))
+		.find(index => index !== -1);
+	if (aliasContains !== undefined) {
+		return { bucket: 5, index: aliasContains };
+	}
+
+	const descriptionIndex = description.indexOf(query);
+	if (descriptionIndex !== -1) {
+		return { bucket: 6, index: descriptionIndex };
+	}
+
+	return null;
+}
+
+function getSlashCommandQuery(value: string): string {
+	if (!value.startsWith('/')) {
+		return '';
+	}
+
+	const trimmed = value.trimStart();
+	if (!trimmed.startsWith('/')) {
+		return '';
+	}
+
+	const body = trimmed.slice(1);
+	return body.includes(' ') ? '' : body;
+}
+
+function getVisibleWindow<T>(
+	items: T[],
+	selectedIndex: number,
+	visibleCount: number
+): { items: T[]; startIndex: number } {
+	if (items.length <= visibleCount) {
+		return { items, startIndex: 0 };
+	}
+
+	const maxStart = Math.max(0, items.length - visibleCount);
+	const centeredStart = selectedIndex - Math.floor(visibleCount / 2);
+	const startIndex = Math.max(0, Math.min(centeredStart, maxStart));
+	return {
+		items: items.slice(startIndex, startIndex + visibleCount),
+		startIndex
+	};
+}
+
+function renderHighlightedText(
+	text: string,
+	query: string,
+	selected = false
+): React.ReactNode {
+	if (!query) {
+		return text;
+	}
+
+	const lowerText = text.toLowerCase();
+	const lowerQuery = query.toLowerCase();
+	const matchIndex = lowerText.indexOf(lowerQuery);
+	if (matchIndex === -1) {
+		return text;
+	}
+
+	const matched = text.slice(matchIndex, matchIndex + query.length);
+	return (
+		<>
+			{text.slice(0, matchIndex)}
+			<Text
+				color={selected ? COMMAND_ROW_SELECTED_FG : 'cyanBright'}
+				bold
+			>
+				{matched}
+			</Text>
+			{text.slice(matchIndex + query.length)}
+		</>
+	);
 }
 
 function splitGraphemes(text: string): string[] {
@@ -206,7 +397,7 @@ function getTranscriptHeaderLines({
 	welcome
 }: {
 	cwd: string;
-	model: string;
+	model: string |null;
 	effort: string;
 	width: number;
 	welcome: boolean;
@@ -396,6 +587,47 @@ function extractToolUseLabels(content: unknown): string[] {
 			return getToolUseFallbackLabel(undefined, typedBlock);
 		})
 		.filter((value): value is string => value !== null);
+}
+
+function buildLocalCommandViewport(
+	content: string,
+	fallbackId: number
+): ViewportMessage | null | 'hidden' {
+	if (content.includes(`<${LOCAL_COMMAND_CAVEAT_TAG}>`)) {
+		return 'hidden';
+	}
+
+	const commandName = extractTag(content, COMMAND_NAME_TAG);
+	if (commandName) {
+		const args = extractTag(content, COMMAND_ARGS_TAG)?.trim() ?? '';
+		return {
+			id: fallbackId,
+			role: 'user',
+			text: args ? `${commandName} ${args}` : commandName
+		};
+	}
+
+	const stdout = extractTag(content, LOCAL_COMMAND_STDOUT_TAG)?.trim();
+	if (stdout) {
+		return {
+			id: fallbackId,
+			role: 'tool',
+			text: stdout,
+			toolPhase: 'done'
+		};
+	}
+
+	const stderr = extractTag(content, LOCAL_COMMAND_STDERR_TAG)?.trim();
+	if (stderr) {
+		return {
+			id: fallbackId,
+			role: 'tool',
+			text: stderr,
+			toolPhase: 'error'
+		};
+	}
+
+	return null;
 }
 
 function parseAssistantToolUse(
@@ -852,6 +1084,15 @@ function messageToViewport(
 		}
 
 		const text = extractTextContent(message.message?.content);
+		const localCommandMessage = text
+			? buildLocalCommandViewport(text, fallbackId)
+			: null;
+		if (localCommandMessage === 'hidden') {
+			return null;
+		}
+		if (localCommandMessage) {
+			return localCommandMessage;
+		}
 		return text
 			? {
 					id: fallbackId,
@@ -938,6 +1179,10 @@ function messageToViewport(
 
 	if (message.type === 'system') {
 		const text = extractTextContent(message.message?.content);
+		if (isSystemLocalCommandMessage(message) && text) {
+			const localCommandMessage = buildLocalCommandViewport(text, fallbackId);
+			return localCommandMessage === 'hidden' ? null : localCommandMessage;
+		}
 		return text
 			? {
 					id: fallbackId,
@@ -1012,14 +1257,17 @@ export default function QueryApp({
 	);
 	// Local state for commands (hot-reloadable when skill files change)
   	const [localCommands, setLocalCommands] = useState(initialCommands);
-	const handleInputChange = useCallback((nextValue: string) => {
-		setInput(nextValue);
-		resetHistory();
-	}, [resetHistory]);
-  	const mainLoopModel = ""
   	const activeTools = initialTools.length > 0 ? initialTools : getAllBaseTools();
   	const mergedCommands = initialCommands
 	const commands = useMemo(() => (disableSlashCommands ? [] : mergedCommands), [disableSlashCommands, mergedCommands]);
+	const handleInputChange = useCallback((nextValue: string) => {
+		const matches = getSlashCommandMatches(nextValue, commands);
+		setInput(nextValue);
+		setFilteredCommands(matches.map(match => match.command));
+		setShowCommandSelector(matches.length > 0);
+		setSelectedCommandIndex(0);
+		resetHistory();
+	}, [commands, resetHistory]);
 	const [alertMessage, setAlertMessage] = useState<string | null>(null);
 	const [exitHint, setExitHint] = useState(false);
 	const [streamingAssistant, setStreamingAssistant] =
@@ -1040,15 +1288,25 @@ export default function QueryApp({
 		store.getState,
 		store.getState
 	);
+	const mainLoopModel = appState.mainLoopModel || getCurrentModel();
 	const [toolUseConfirmQueue, setToolUseConfirmQueue] = useState<
 		ToolUseConfirm[]
 	>([]);
+	const [toolJSX, setToolJSXInternal] = useState<{
+		jsx: React.ReactNode | null;
+		shouldHidePromptInput: boolean;
+		shouldContinueAnimation?: true;
+		showSpinner?: boolean;
+		isLocalJSXCommand?: boolean;
+		isImmediate?: boolean;
+	} | null>(null);
 	const queryGuard = useRef(new QueryGuard()).current;
 	const isQueryActive = React.useSyncExternalStore(
 		queryGuard.subscribe,
 		queryGuard.getSnapshot
 	);
 	const loading = isQueryActive;
+	const showSpinner = loading && (!toolJSX || toolJSX.showSpinner !== false);
 	
 	const messagesRef = useRef(messages);
 	const appStateRef = useRef(appState);
@@ -1061,6 +1319,14 @@ export default function QueryApp({
 	const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const nextPlaceholderIdRef = useRef(1);
 	const scrollRef = useRef<ScrollBoxHandle | null>(null);
+	const localJSXCommandRef = useRef<{
+		jsx: React.ReactNode | null;
+		shouldHidePromptInput: boolean;
+		shouldContinueAnimation?: true;
+		showSpinner?: boolean;
+		isLocalJSXCommand: true;
+		isImmediate?: boolean;
+	} | null>(null);
 	const loadingStartTimeRef = useRef<number | null>(null);
 	const [animationTick, setAnimationTick] = useState(0);
 	useEffect(() => {
@@ -1145,12 +1411,55 @@ export default function QueryApp({
 		appStateRef.current = appState;
 	}, [appState]);
 
+	useEffect(() => {
+		if (!showCommandSelector) {
+			setFilteredCommands(commands);
+		}
+	}, [commands, showCommandSelector]);
 
-	const handleCommandSelect = useCallback((value: string) => {
-		setInput(value);
-		setCursorSyncKey(prev => prev + 1);
-		setShowCommandSelector(false);
+	useEffect(() => {
+		setSelectedCommandIndex(index =>
+			filteredCommands.length === 0
+				? 0
+				: Math.min(index, filteredCommands.length - 1)
+		);
+	}, [filteredCommands]);
+
+	const setToolJSX = useCallback<SetToolJSXFn>(args => {
+		if (args?.isLocalJSXCommand) {
+			const { clearLocalJSX: _clearLocalJSX, ...rest } = args;
+			localJSXCommandRef.current = {
+				...rest,
+				isLocalJSXCommand: true
+			};
+			setToolJSXInternal(rest);
+			return;
+		}
+
+		if (localJSXCommandRef.current) {
+			if (args?.clearLocalJSX) {
+				localJSXCommandRef.current = null;
+				setToolJSXInternal(null);
+			}
+			return;
+		}
+
+		if (args?.clearLocalJSX) {
+			setToolJSXInternal(null);
+			return;
+		}
+
+		setToolJSXInternal(args);
 	}, []);
+
+
+	const handleCommandSelect = useCallback((command: Command) => {
+		const nextValue = `/${getCommandName(command)}${command.argumentHint ? ' ' : ''}`;
+		setInput(nextValue);
+		setCursorSyncKey(prev => prev + 1);
+		setFilteredCommands(commands);
+		setShowCommandSelector(false);
+	}, [commands]);
 
 	const handleCtrlC = useCallback(() => {
 		if (loading) {
@@ -1177,7 +1486,7 @@ export default function QueryApp({
 		exitTimerRef.current = setTimeout(() => {
 			setExitHint(false);
 			exitTimerRef.current = null;
-		}, 3000);
+		}, 300);
 	}, [exit, exitHint, loading, queryGuard]);
 
 	const repinScroll = useCallback(() => {
@@ -1187,6 +1496,27 @@ export default function QueryApp({
 	useInput(
 		(_, key) => {
 			if (!showCommandSelector) {
+				return;
+			}
+
+			if (key.escape) {
+				setShowCommandSelector(false);
+				return;
+			}
+
+			if (key.return) {
+				const selectedCommand = filteredCommands[selectedCommandIndex];
+				if (selectedCommand) {
+					const commandValue = `/${getCommandName(selectedCommand)}`;
+					setInput('');
+					setCursorSyncKey(prev => prev + 1);
+					setFilteredCommands(commands);
+					setShowCommandSelector(false);
+					void onSubmit(commandValue);
+					return;
+
+					handleCommandSelect(selectedCommand);
+				}
 				return;
 			}
 
@@ -1201,7 +1531,6 @@ export default function QueryApp({
 				);
 				return;
 			}
-
 		},
 		{ isActive: showCommandSelector && toolUseConfirmQueue.length === 0 }
 	);
@@ -1331,6 +1660,7 @@ const getToolUseContext = useCallback(
 		return {
 			abortController,
 			options: {
+			commands,
 			tools: activeTools,
 			debug,
 			verbose: false,
@@ -1343,6 +1673,7 @@ const getToolUseContext = useCallback(
 			getAppState: () => store.getState(),
 			setAppState,
 			messages,
+			setToolJSX,
 			setMessages,
 			updateFileHistoryState(updater: (prev: FileHistoryState) => FileHistoryState) {
 			// Perf: skip the setState when the updater returns the same reference
@@ -1368,6 +1699,7 @@ const getToolUseContext = useCallback(
       customSystemPrompt,
       appendSystemPrompt,
       activeTools,
+      setToolJSX,
 		],
 	);
 	const onQueryImpl = useCallback(
@@ -1436,7 +1768,8 @@ const getToolUseContext = useCallback(
 			abortController: AbortController,
 			shouldQuery: boolean,
 			additionalAllowedTools: string[],
-			mainLoopModel: string
+			mainLoopModel: string,
+	
 		): Promise<void> => {
 			const thisGeneration = queryGuard.tryStart();
 			if (thisGeneration === null) {
@@ -1469,14 +1802,10 @@ const getToolUseContext = useCallback(
 						text: '',
 						pendingToolCalls: []
 					});
-					setAppState(prev => ({
-						...prev,
-						mainLoopModel: getCurrentModel()
-					}));
 				}
 			}
 		},
-		[onQueryImpl, queryGuard, setAppState, setMessages]
+		[onQueryImpl, queryGuard, setMessages]
 	);
 
 	const onSubmit = useCallback(
@@ -1629,23 +1958,25 @@ const getToolUseContext = useCallback(
 		}
 	}
 
+	const { model: modelLabel, effort: effortLabel } = useTranscriptHeaderInfo();
+
 	const transcriptHeaderLines = getTranscriptHeaderLines({
 		cwd: process.cwd(),
-		model: getCurrentModel(),
-		effort: getEffortLevel(),
+		model: modelLabel,
+		effort: effortLabel,
 		width: messageWidth,
-		welcome: messages.length === 0 && !loading
+		welcome: messages.length === 0 && !showSpinner
 	});
 
 	const activeToolUseConfirm = toolUseConfirmQueue[0];
-	const statusText = loading
+	const statusText = showSpinner
 		? streamingAssistant.text.trim().length > 0
 			? 'Efrex 正在生成回复...'
 			: streamingAssistant.pendingToolCalls.length > 0
 				? 'Efrex 正在请求工具...'
 				: 'Efrex 正在思考...'
 		: null;
-	const statusMode = loading
+	const statusMode = showSpinner
 		? streamingAssistant.pendingToolCalls.length > 0
 			? 'requesting'
 			: 'default'
@@ -1667,6 +1998,21 @@ const getToolUseContext = useCallback(
 	const statusSegments = statusText
 		? getStatusLabelSegments(statusText, glimmerIndex)
 		: null;
+	const commandSelectorQuery = getSlashCommandQuery(input.trim());
+	const visibleCommandWindow = getVisibleWindow(
+		filteredCommands,
+		selectedCommandIndex,
+		COMMAND_SELECTOR_VISIBLE_COUNT
+	);
+	const commandSelectorWidth = Math.max(20, terminalColumns - 6);
+	const commandNameWidth = Math.max(
+		18,
+		Math.min(40, Math.floor(commandSelectorWidth * 0.42))
+	);
+	const commandDescriptionWidth = Math.max(
+		20,
+		commandSelectorWidth - commandNameWidth - 4
+	);
   // Process queued commands when query completes and queue has items
 
 	const executeQueuedInput = useCallback(
@@ -1712,7 +2058,7 @@ const getToolUseContext = useCallback(
 	});
 	const bottomContent = (
 		<Box flexDirection="column" width="100%">
-			{loading &&
+			{showSpinner &&
 			!activeToolUseConfirm &&
 			statusText &&
 			statusPrefix &&
@@ -1741,65 +2087,154 @@ const getToolUseContext = useCallback(
 				/>
 			) : null}
 
+			{toolJSX?.isLocalJSXCommand && toolJSX.isImmediate ? (
+				<Box flexDirection="column" width="100%">
+					{toolJSX.jsx}
+				</Box>
+			) : null}
+
 			<Box flexDirection="column" flexShrink={0}>
 				<PromptInputQueuedCommands width={terminalColumns} />
-				<Text color={loading ? 'blue' : 'gray'}>{inputRule}</Text>
-				<Box
-					flexDirection="row"
-					flexWrap="nowrap"
-					width={terminalColumns - 2}
-				>
-					<Box flexShrink={0} width={2}>
-						<Text color={loading ? 'blueBright' : 'greenBright'}>
-							›{' '}
-						</Text>
-					</Box>
-					<PromptInput
-						messages={messages}
-						value={input}
-						height={terminalRows}
-						width={promptInputWidth}
-						maxVisibleLines={maxPromptInputRows}
-						cursorSyncKey={cursorSyncKey}
-						isActive={!activeToolUseConfirm}
-						suspendSubmit={showCommandSelector}
-						suspendVerticalArrows={showCommandSelector}
-						onChange={handleInputChange}
-						onSubmit={onSubmit}
-						onHistoryPrev={onHistoryUp}
-						onHistoryNext={onHistoryDown}
-						onCtrlC={handleCtrlC}
-						placeholder={loading ? '等待 query.ts 响应中...' : ''}
-						pastedContents={pastedContents}
-						setPastedContents={setPastedContents}
-					/>
-				</Box>
-				<Text color={loading ? 'blue' : 'gray'}>{inputRule}</Text>
+				{!toolJSX?.shouldHidePromptInput ? (
+					<>
+						<Text color={loading ? 'blue' : 'gray'}>{inputRule}</Text>
+						<Box
+							flexDirection="row"
+							flexWrap="nowrap"
+							width={terminalColumns - 2}
+						>
+							<Box flexShrink={0} width={2}>
+								<Text color={loading ? 'blueBright' : 'greenBright'}>
+									›{' '}
+								</Text>
+							</Box>
+							<PromptInput
+								messages={messages}
+								value={input}
+								height={terminalRows}
+								width={promptInputWidth}
+								maxVisibleLines={maxPromptInputRows}
+								cursorSyncKey={cursorSyncKey}
+								isActive={!activeToolUseConfirm && !toolJSX?.isLocalJSXCommand}
+								suspendSubmit={showCommandSelector}
+								suspendVerticalArrows={showCommandSelector}
+								onChange={handleInputChange}
+								onSubmit={onSubmit}
+								onHistoryPrev={onHistoryUp}
+								onHistoryNext={onHistoryDown}
+								onCtrlC={handleCtrlC}
+								placeholder={showSpinner ? '等待 query.ts 响应中...' : ''}
+								pastedContents={pastedContents}
+								setPastedContents={setPastedContents}
+							/>
+						</Box>
+						<Text color={loading ? 'blue' : 'gray'}>{inputRule}</Text>
+						{showCommandSelector && filteredCommands.length > 0 ? (
+							<Box
+
+	
+								paddingX={1}
+								paddingY={0}
+								marginTop={1}
+								flexDirection="column"
+							>
+								<Text dimColor>
+									{filteredCommands.length > COMMAND_SELECTOR_VISIBLE_COUNT
+										? ` (${visibleCommandWindow.startIndex + 1}-${visibleCommandWindow.startIndex + visibleCommandWindow.items.length}/${filteredCommands.length})`
+										: ''}
+								</Text>
+								{visibleCommandWindow.items.map((command, index) => {
+									const actualIndex =
+										visibleCommandWindow.startIndex + index;
+									const selected = actualIndex === selectedCommandIndex;
+									const displayName = fitDisplay(
+										`/${getCommandName(command)}${command.argumentHint ? ` ${command.argumentHint}` : ''}`,
+										commandNameWidth
+									);
+									const description = fitDisplay(
+										command.description,
+										commandDescriptionWidth
+									);
+									return (
+										<Box
+											key={command.name}
+											flexDirection="row"
+											width="100%"
+										>
+											<Box width={2} flexShrink={0}>
+												<Text
+													color={selected ? COMMAND_ROW_SELECTED_FG : 'gray'}
+												>
+													{selected ? '› ' : '  '}
+												</Text>
+											</Box>
+											<Box width={commandNameWidth} flexShrink={0}>
+												<Text
+													color={selected ? COMMAND_ROW_SELECTED_FG : undefined}
+												>
+													{renderHighlightedText(
+														displayName,
+														commandSelectorQuery,
+														selected
+													)}
+												</Text>
+											</Box>
+											<Box width={2} flexShrink={0}>
+												<Text dimColor={!selected}>
+													{'  '}
+												</Text>
+											</Box>
+											<Box flexGrow={1} flexShrink={1}>
+												<Text
+													dimColor={!selected}
+													color={
+														selected
+															? COMMAND_ROW_SELECTED_DESC
+															: undefined
+													}
+												>
+													{renderHighlightedText(
+														description,
+														commandSelectorQuery,
+														selected
+													)}
+												</Text>
+											</Box>
+										</Box>
+									);
+								})}
+							</Box>
+						) : null}
+					</>
+				) : null}
 			</Box>
 
 			<Box flexDirection="column" flexShrink={0}>
 				<Box>
 					{exitHint ? (
 						<Text dimColor>再按一次 Ctrl+C 确认退出</Text>
-					) : (
-						<Text color="gray">
-							Enter 发送  Ctrl+C 退出
-						</Text>
-					)}
+					) : ""}
 				</Box>
 			</Box>
 		</Box>
 	);
 
 	const scrollableContent = (
-		<MessageViewport
-			headerLines={transcriptHeaderLines}
-			messages={viewportMessages}
-			width={messageWidth}
-			alertMessage={alertMessage}
-			statusLine={null}
-			blinkOn={blinkVisible}
-		/>
+		<Box flexDirection="column">
+			<MessageViewport
+				headerLines={transcriptHeaderLines}
+				messages={viewportMessages}
+				width={messageWidth}
+				alertMessage={alertMessage}
+				statusLine={null}
+				blinkOn={blinkVisible}
+			/>
+			{toolJSX && !(toolJSX.isLocalJSXCommand && toolJSX.isImmediate) ? (
+				<Box flexDirection="column" width="100%">
+					{toolJSX.jsx}
+				</Box>
+			) : null}
+		</Box>
 	);
 
 	if (isFullscreenEnvEnabled()) {

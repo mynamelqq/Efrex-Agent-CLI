@@ -52,7 +52,7 @@ export async function executeUserInput(params: ExecuteUserInputParams): Promise<
       return
     }
 
-    
+
 
     try {
     for (let i = 0; i < commands.length; i++) {
@@ -126,6 +126,7 @@ export async function executeUserInput(params: ExecuteUserInputParams): Promise<
         shouldQuery,
         allowedTools ?? [],
         mainLoopModel,
+
       )
     } else {
       queryGuard.cancelReservation()
