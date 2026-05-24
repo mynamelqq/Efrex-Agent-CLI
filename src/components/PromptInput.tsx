@@ -32,6 +32,7 @@ type Props = {
 	onHistoryPrev?: () => void;
 	onHistoryNext?: () => void;
 	onCtrlC?: () => void;
+	onCyclePermissionMode?: () => void;
 	pastedContents: Record<number, PastedContent>;
 	setPastedContents: React.Dispatch<
 		React.SetStateAction<Record<number, PastedContent>>
@@ -54,6 +55,7 @@ export default function PromptInput({
 	onHistoryPrev,
 	onHistoryNext,
 	onCtrlC,
+	onCyclePermissionMode,
 	pastedContents: _pastedContents,
 	setPastedContents
 }: Props) {
@@ -151,6 +153,7 @@ export default function PromptInput({
 		onHistoryPrev,
 		onHistoryNext,
 		onCtrlC,
+		onCyclePermissionMode,
 		onPasteText: onTextPaste
 	});
 

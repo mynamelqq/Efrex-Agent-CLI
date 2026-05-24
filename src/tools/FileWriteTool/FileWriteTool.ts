@@ -4,6 +4,7 @@ import type { ToolUseContext } from 'src/Tool.js'
 import { writeTextContent } from 'src/utils/file'
 import { buildTool, type ToolDef } from 'src/Tool.js'
 import { countLinesChanged } from 'src/utils/diff'
+import { checkWritePermissionForTool } from 'src/utils/permissions/filesystem'
 import { getCwd } from 'src/utils/cwd.js'
 import { logForDebugging } from 'src/utils/debug.js'
 import {stat}from "fs/promises"
@@ -132,8 +133,8 @@ export const FileWriteTool = buildTool({
    async call(
     { file_path, content },
     { readFileState, updateFileHistoryState },
-    _canUseTool?,
-    assistantMessage?,
+    _canUseTool,
+    assistantMessage,
   ) {
     const fullFilePath = expandPath(file_path)
     const dir = dirname(fullFilePath)

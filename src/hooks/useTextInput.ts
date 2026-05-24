@@ -21,6 +21,7 @@ type Props = {
   onHistoryPrev?: () => void;
   onHistoryNext?: () => void;
   onCtrlC?: () => void;
+  onCyclePermissionMode?: () => void;
   onPasteText?: (text: string) => string | void;
 };
 
@@ -41,6 +42,7 @@ export default function useTextInput({
   onHistoryPrev,
   onHistoryNext,
   onCtrlC,
+  onCyclePermissionMode,
   onPasteText,
 }: Props) {
   const effectiveOffset = Math.min(cursorOffset ?? value.length, value.length);
@@ -63,7 +65,13 @@ export default function useTextInput({
         return;
       }
 
-      if (key.tab || (key.shift && key.tab)) {
+      if ((key.shift && key.tab) || (key.ctrl && textInput === 'g')) {
+        event.stopImmediatePropagation();
+        onCyclePermissionMode?.();
+        return;
+      }
+
+      if (key.tab) {
         return;
       }
 

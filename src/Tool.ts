@@ -257,8 +257,8 @@ export type ToolProgressData = any;
 
 export const getEmptyToolPermissionContext: () => ToolPermissionContext =
 	() => ({
-		mode: 'default',
-		additionalWorkingDirectories: new Map(),
+		mode: 'default',//默认权限模式为default
+		additionalWorkingDirectories: new Map(),//额外的工作文件夹
 		alwaysAllowRules: {},
 		alwaysDenyRules: {},
 		alwaysAskRules: {},

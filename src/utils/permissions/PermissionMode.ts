@@ -23,12 +23,9 @@ export const externalPermissionModeSchema = lazySchema(() =>
 )
 
 type ModeColorKey =
-  | 'text'
-  | 'planMode'
-  | 'permission'
-  | 'autoAccept'
-  | 'error'
-  | 'warning'
+  | 'ansi:blue'
+  | 'ansi:magentaBright'
+  | 'ansi:redBright'
 
 type PermissionModeConfig = {
   title: string
@@ -45,37 +42,43 @@ const PERMISSION_MODE_CONFIG: Partial<
     title: 'Default',
     shortTitle: 'Default',
     symbol: '',
-    color: 'text',
+    color: 'ansi:blue',
     external: 'default',
   },
   acceptEdits: {
     title: 'Accept edits',
     shortTitle: 'Accept',
     symbol: '⏵⏵',
-    color: 'autoAccept',
+    color: 'ansi:magentaBright',
     external: 'acceptEdits',
   },
   bypassPermissions: {
     title: 'Bypass',
     shortTitle: 'Bypass',
     symbol: '⏵⏵',
-    color: 'error',
+    color: 'ansi:redBright',
     external: 'bypassPermissions',
   },
-  dontAsk: {
-    title: "Don't Ask",
-    shortTitle: 'DontAsk',
-    symbol: '⏵⏵',
-    color: 'error',
-    external: 'dontAsk',
-  },
-  auto: {
-    title: 'Auto',
-    shortTitle: 'Auto',
-    symbol: '⏵⏵',
-    color: 'warning' as ModeColorKey,
-    external: 'default' as ExternalPermissionMode,
-  },
+  // dontAsk: {
+  //   title: "Don't Ask",
+  //   shortTitle: 'DontAsk',
+  //   symbol: '⏵⏵',
+  //   color: 'error',
+  //   external: 'dontAsk',
+  // },
+  // auto: {
+  //   title: 'Auto',
+  //   shortTitle: 'Auto',
+  //   symbol: '⏵⏵',
+  //   color: 'warning' as ModeColorKey,
+  //   external: 'default' as ExternalPermissionMode,
+  // },
+}
+
+export function getPermissionModeConfig(
+  mode: PermissionMode,
+): PermissionModeConfig {
+  return PERMISSION_MODE_CONFIG[mode] ?? PERMISSION_MODE_CONFIG.default!
 }
 
 /**
@@ -93,7 +96,7 @@ export function isExternalPermissionMode(
 }
 
 function getModeConfig(mode: PermissionMode): PermissionModeConfig {
-  return PERMISSION_MODE_CONFIG[mode] ?? PERMISSION_MODE_CONFIG.default!
+  return getPermissionModeConfig(mode)
 }
 
 export function toExternalPermissionMode(

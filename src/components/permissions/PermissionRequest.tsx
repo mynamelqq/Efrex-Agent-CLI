@@ -55,12 +55,18 @@ export type ToolUseConfirm<Input extends AnyObject = AnyObject> = {
 
 type PermissionColor =
 	| 'ansi:blackBright'
+	| 'ansi:blue'
+	| 'ansi:blueBright'
 	| 'ansi:cyan'
 	| 'ansi:cyanBright'
+	| 'ansi:green'
 	| 'ansi:greenBright'
 	| 'ansi:magenta'
 	| 'ansi:magentaBright'
+	| 'ansi:red'
 	| 'ansi:redBright'
+	| 'ansi:white'
+	| 'ansi:whiteBright'
 	| 'ansi:yellow'
 	| 'ansi:yellowBright';
 
@@ -75,6 +81,9 @@ type ToolPresentation = {
 	risk?: string;
 	accent: PermissionColor;
 	border: PermissionColor;
+	questionColor: PermissionColor;
+	secondaryAccent: PermissionColor;
+	riskColor: PermissionColor;
 	isDangerous: boolean;
 };
 
@@ -188,6 +197,9 @@ function getToolPresentation(
 				: description || 'Runs a shell command in this workspace',
 			accent: dangerous ? 'ansi:redBright' : 'ansi:yellowBright',
 			border: dangerous ? 'ansi:redBright' : 'ansi:yellow',
+			questionColor: dangerous ? 'ansi:redBright' : 'ansi:whiteBright',
+			secondaryAccent: dangerous ? 'ansi:yellow' : 'ansi:yellow',
+			riskColor: dangerous ? 'ansi:redBright' : 'ansi:yellow',
 			isDangerous: dangerous
 		};
 	}
@@ -212,6 +224,9 @@ function getToolPresentation(
 			risk: description || 'Modifies files in this workspace',
 			accent: 'ansi:magentaBright',
 			border: 'ansi:magenta',
+			questionColor: 'ansi:whiteBright',
+			secondaryAccent: 'ansi:magenta',
+			riskColor: 'ansi:yellow',
 			isDangerous: false
 		};
 	}
@@ -227,6 +242,9 @@ function getToolPresentation(
 			risk: description || 'Reads or searches workspace content',
 			accent: 'ansi:cyanBright',
 			border: 'ansi:cyan',
+			questionColor: 'ansi:whiteBright',
+			secondaryAccent: 'ansi:blueBright',
+			riskColor: 'ansi:blueBright',
 			isDangerous: false
 		};
 	}
@@ -242,6 +260,9 @@ function getToolPresentation(
 			risk: description || 'Allows network access for this request',
 			accent: 'ansi:cyanBright',
 			border: 'ansi:cyan',
+			questionColor: 'ansi:whiteBright',
+			secondaryAccent: 'ansi:blueBright',
+			riskColor: 'ansi:blueBright',
 			isDangerous: false
 		};
 	}
@@ -257,6 +278,9 @@ function getToolPresentation(
 			risk: description || 'Allows a web search for this request',
 			accent: 'ansi:cyanBright',
 			border: 'ansi:cyan',
+			questionColor: 'ansi:whiteBright',
+			secondaryAccent: 'ansi:blueBright',
+			riskColor: 'ansi:blueBright',
 			isDangerous: false
 		};
 	}
@@ -271,6 +295,9 @@ function getToolPresentation(
 		risk: description,
 		accent: 'ansi:cyanBright',
 		border: 'ansi:cyan',
+		questionColor: 'ansi:whiteBright',
+		secondaryAccent: 'ansi:blueBright',
+		riskColor: 'ansi:blueBright',
 		isDangerous: false
 	};
 }
@@ -329,19 +356,21 @@ function InlineField({
 	label,
 	value,
 	width,
-	color
+	color,
+	labelColor = 'ansi:blackBright'
 }: {
 	label: string;
 	value: string;
 	width: number;
 	color?: PermissionColor;
+	labelColor?: PermissionColor;
 }): React.ReactNode {
 	const labelText = `${label}: `;
 	const labelWidth = stringWidth(labelText);
 
 	return (
 		<Box width={width} flexDirection="row">
-			<Text color="ansi:blackBright">{labelText}</Text>
+			<Text color={labelColor}>{labelText}</Text>
 			<Text color={color ?? 'ansi:whiteBright'}>
 				{fitDisplay(value, Math.max(4, width - labelWidth))}
 			</Text>
@@ -351,6 +380,7 @@ function InlineField({
 
 export function PermissionRequest({
 	toolUseConfirm,
+	toolUseContext,
 	onDone,
 	onReject
 }: PermissionRequestProps): React.ReactNode {
@@ -446,6 +476,21 @@ export function PermissionRequest({
 		[startResolution, toolUseConfirm]
 	);
 
+	const allowAllCommands = React.useCallback(() => {
+		toolUseContext.setAppState(prev => ({
+			...prev,
+			toolPermissionContext: {
+				...prev.toolPermissionContext,
+				mode: 'bypassPermissions'
+			}
+		}));
+		allow();
+	}, [allow, toolUseContext]);
+
+	const bypassAvailable =
+		toolUseContext.getAppState().toolPermissionContext
+			.isBypassPermissionsModeAvailable;
+
 	const alwaysCopy = React.useMemo(
 		() => getAlwaysAllowCopy(allowAlwaysUpdates, toolUseConfirm.tool.name),
 		[allowAlwaysUpdates, toolUseConfirm.tool.name]
@@ -466,6 +511,18 @@ export function PermissionRequest({
 				color: 'ansi:redBright',
 				action: reject
 			},
+			...(bypassAvailable
+				? [
+						{
+							key: 'b',
+							hotkey: 'B',
+							label: 'Allow all commands',
+							help: 'Switches permission mode to Bypass',
+							color: 'ansi:yellowBright' as const,
+							action: allowAllCommands
+						}
+					]
+				: []),
 			...(allowAlwaysUpdates.length > 0
 				? [
 						{
@@ -479,7 +536,7 @@ export function PermissionRequest({
 					]
 				: [])
 		],
-		[allow, allowAlwaysUpdates, alwaysCopy, reject]
+		[allow, allowAllCommands, allowAlwaysUpdates, alwaysCopy, bypassAvailable, reject]
 	);
 
 	React.useEffect(() => {
@@ -542,6 +599,7 @@ export function PermissionRequest({
 	);
 	const headerTitleWidth = 20;
 	const headerIntentWidth = Math.max(0, contentWidth - headerTitleWidth - 2);
+	const divider = '─'.repeat(contentWidth);
 	const resolutionSuffix = resolution
 		? RESOLUTION_FRAMES[resolutionFrame % RESOLUTION_FRAMES.length]
 		: '';
@@ -562,7 +620,7 @@ export function PermissionRequest({
 				<Text color={resolution?.color ?? presentation.accent} bold>
 					{resolution ? `${resolution.symbol} ` : '? '}
 				</Text>
-				<Text color="ansi:whiteBright">
+				<Text color={resolution?.color ?? 'ansi:whiteBright'} bold>
 					{fitDisplay(
 						isResolving
 							? `${resolution.label}${resolutionSuffix}`
@@ -570,7 +628,7 @@ export function PermissionRequest({
 						headerTitleWidth
 					)}
 				</Text>
-				<Text color="ansi:blackBright">
+				<Text color={presentation.secondaryAccent}>
 					{fitDisplay(
 						`  ${
 							isResolving
@@ -583,10 +641,15 @@ export function PermissionRequest({
 						)}
 				</Text>
 			</Box>
+			{!isResolving ? (
+				<Text color="ansi:blackBright">{divider}</Text>
+			) : null}
 
 			{!isResolving && presentation.question ? (
 				<Box marginTop={0} marginBottom={0}>
-					<Text color="ansi:whiteBright">{presentation.question}</Text>
+					<Text color={presentation.questionColor} bold>
+						{presentation.question}
+					</Text>
 				</Box>
 			) : null}
 
@@ -596,6 +659,8 @@ export function PermissionRequest({
 						label="Tool"
 						value={presentation.toolLabel}
 						width={leftColumnWidth}
+						color="ansi:white"
+						labelColor={presentation.secondaryAccent}
 					/>
 					<Box width={2} />
 					<InlineField
@@ -610,6 +675,8 @@ export function PermissionRequest({
 						label="Work"
 						value={presentation.working}
 						width={leftColumnWidth}
+						color="ansi:white"
+						labelColor="ansi:blackBright"
 					/>
 					<Box width={2} />
 					{presentation.risk ? (
@@ -617,10 +684,11 @@ export function PermissionRequest({
 							label="Risk"
 							value={presentation.risk}
 							width={rightColumnWidth}
-							color={
+							color={presentation.riskColor}
+							labelColor={
 								presentation.isDangerous
-									? 'ansi:redBright'
-									: 'ansi:blackBright'
+									? 'ansi:red'
+									: presentation.secondaryAccent
 							}
 						/>
 					) : null}
@@ -656,9 +724,7 @@ export function PermissionRequest({
 								marginRight={index === options.length - 1 ? 0 : 2}
 							>
 								<Text
-									color={
-										selected ? option.color : 'ansi:whiteBright'
-									}
+									color={selected ? option.color : 'ansi:blackBright'}
 									bold={selected}
 								>
 									{fitDisplay(
@@ -675,7 +741,13 @@ export function PermissionRequest({
 			)}
 
 			<Box marginTop={0}>
-				<Text color={isResolving ? 'ansi:blackBright' : 'ansi:blackBright'}>
+				<Text
+					color={
+						isResolving
+							? 'ansi:blackBright'
+							: selectedOption?.color ?? 'ansi:blackBright'
+					}
+				>
 					{fitDisplay(
 						isResolving
 							? resolution.kind === 'allow'
@@ -683,7 +755,7 @@ export function PermissionRequest({
 								: 'Returning to the conversation'
 							: selectedOption?.help
 								? `${selectedOption.help} · Enter confirm`
-								: 'A/D/S select · ←→ navigate · Enter confirm',
+								: 'A/D/B select · ←→ navigate · Enter confirm',
 						contentWidth
 					)}
 				</Text>

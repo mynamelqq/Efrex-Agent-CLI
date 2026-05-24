@@ -204,6 +204,7 @@ export async function* runToolUse(
 	const permissionDecision = resolved.decision
 	processedInput = resolved.input
 	const permissionDurationMs = Date.now() - permissionStart
+	
 
 
 	if (permissionDecision && permissionDecision.behavior !== 'allow') {

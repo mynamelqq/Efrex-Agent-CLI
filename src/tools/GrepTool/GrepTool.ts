@@ -5,6 +5,7 @@ import { lazySchema } from '../../utils/lazySchema.js'
 import { plural } from 'src/utils/stringUtils.js'
 import { expandPath, toRelativePath } from '../../utils/path.js'
 import { ripGrep } from '../../utils/ripgrep.js'
+import { checkReadPermissionForTool } from 'src/utils/permissions/filesystem.js'
 import { isENOENT } from 'src/utils/errors.js'
 import { semanticBoolean } from '../../utils/semanticBoolean.js'
 import {stat}from "fs/promises"

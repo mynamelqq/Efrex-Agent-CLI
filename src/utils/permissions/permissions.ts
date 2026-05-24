@@ -338,30 +338,57 @@ export const hasPermissionsToUseTool: CanUseToolFn = async (
         message: DONT_ASK_REJECT_MESSAGE(tool.name),
       }
     }
-    // When permission prompts should be avoided (e.g., background/headless agents),
-    // run PermissionRequest hooks first to give them a chance to allow/deny.
-    // Only auto-deny if no hook provides a decision.
-    // if (appState.toolPermissionContext.shouldAvoidPermissionPrompts) {//后台agent直接拒绝
-    //   const hookDecision = await runPermissionRequestHooksForHeadlessAgent(
-    //     tool,
-    //     input,
-    //     toolUseID,
-    //     context,
-    //     appState.toolPermissionContext.mode,
-    //     result.suggestions,
-    //   )
-    //   if (hookDecision) {
-    //     return hookDecision
-    //   }
-    //   return {
-    //     behavior: 'deny',
-    //     decisionReason: {
-    //       type: 'asyncAgent',
-    //       reason: 'Permission prompts are not available in this context',
-    //     },
-    //     message: AUTO_REJECT_MESSAGE(tool.name),
-    //   }
-    // }
+    if (
+      result.decisionReason?.type === 'safetyCheck' &&
+      !result.decisionReason.classifierApprovable
+    ) {
+      if (appState.toolPermissionContext.shouldAvoidPermissionPrompts) {
+        return {
+          behavior: 'deny',
+          message: result.message,
+          decisionReason: {
+            type: 'asyncAgent',
+            reason:
+              'Safety check requires interactive approval and permission prompts are not available in this context',
+          },
+        }
+      }
+      return result
+    }
+    if (result.behavior === 'ask' ) {
+      try {
+        const parsedInput = tool.inputSchema.parse(input)
+        const acceptEditsResult = await tool.checkPermissions(parsedInput, {
+          ...context,
+          getAppState: () => {
+            const state = context.getAppState()
+            return {
+              ...state,
+              toolPermissionContext: {
+                ...state.toolPermissionContext,
+                mode: 'acceptEdits' as const,
+              },
+            }
+          },
+        })
+        if (acceptEditsResult.behavior === 'allow') {
+          return {
+            behavior: 'allow',
+            updatedInput: acceptEditsResult.updatedInput ?? input,
+            decisionReason: {
+              type: 'mode',
+              mode: 'auto',
+            },
+          }
+        }
+      } catch (e) {
+        if (e instanceof AbortError || e instanceof APIUserAbortError) {
+          throw e
+        }
+        // If the acceptEdits check fails, fall through to the classifier
+      }
+    }
+
   }
 
   return result
@@ -379,7 +406,7 @@ async function hasPermissionsToUseToolInner(
   let appState = context.getAppState()
 
   // 1. Check if the tool is denied
-  // 1a. Entire tool is denied
+  // 1a. Entire tool is denied 先检查有没有之前拒绝过的先例
   const denyRule = getDenyRuleForTool(appState.toolPermissionContext, tool)
   if (denyRule) {
     return {
@@ -392,7 +419,7 @@ async function hasPermissionsToUseToolInner(
     }
   }
 
-  // 1b. Check if the entire tool should always ask for permission
+  // 1b. Check if the entire tool should always ask for permission之前决策询问过的命令
   const askRule = getAskRuleForTool(appState.toolPermissionContext, tool)
   if (askRule) {
     return {
@@ -410,7 +437,7 @@ async function hasPermissionsToUseToolInner(
     behavior: 'passthrough',
     message: createPermissionRequestMessage(tool.name),
   }
-  try {
+  try {//一般走这个
     const parsedInput = tool.inputSchema.parse(input)
     toolPermissionResult = await tool.checkPermissions(parsedInput, context)//每个工具参数不同，认证逻辑不同，需要分别归类然后检查是否命中权限
   } catch (e) {
@@ -422,7 +449,7 @@ async function hasPermissionsToUseToolInner(
   }
 
   // 1d. Tool implementation denied permission
-  if (toolPermissionResult?.behavior === 'deny') {
+  if (toolPermissionResult?.behavior === 'deny') {//如果查询访问权限不对，直接拒绝
     return toolPermissionResult
   }
 
@@ -453,24 +480,24 @@ async function hasPermissionsToUseToolInner(
 
 //   // 2a. Check if mode allows the tool to run
 //   // IMPORTANT: Call getAppState() to get the latest value
-//   appState = context.getAppState()
+  appState = context.getAppState()
 //   // Check if permissions should be bypassed:
 //   // - Direct bypassPermissions mode
 //   // - Plan mode when the user originally started with bypass mode (isBypassPermissionsModeAvailable)
-//   const shouldBypassPermissions =
-//     appState.toolPermissionContext.mode === 'bypassPermissions' ||
-//     (appState.toolPermissionContext.mode === 'plan' &&
-//       appState.toolPermissionContext.isBypassPermissionsModeAvailable)
-//   if (shouldBypassPermissions) {
-//     return {
-//       behavior: 'allow',
-//       updatedInput: getUpdatedInputOrFallback(toolPermissionResult, input),
-//       decisionReason: {
-//         type: 'mode',
-//         mode: appState.toolPermissionContext.mode,
-//       },
-//     }
-//   }
+  const shouldBypassPermissions =
+    appState.toolPermissionContext.mode === 'bypassPermissions' ||
+    (appState.toolPermissionContext.mode === 'plan' &&
+      appState.toolPermissionContext.isBypassPermissionsModeAvailable)
+  if (shouldBypassPermissions) {
+    return {//bypassPermissions到这里直接允许,plan和isBypassPermissionsModeAvailable
+      behavior: 'allow',
+      updatedInput: getUpdatedInputOrFallback(toolPermissionResult, input),
+      decisionReason: {
+        type: 'mode',
+        mode: appState.toolPermissionContext.mode,
+      },
+    }
+  }
 
   // 2b. Entire tool is allowed
   const alwaysAllowedRule = toolAlwaysAllowedRule(
@@ -488,7 +515,7 @@ async function hasPermissionsToUseToolInner(
     }
   }
 
-  // 3. Convert "passthrough" to "ask"
+  // 3. Convert "passthrough" to "ask"转换passthrough为ask行为
   const result: PermissionDecision =
     toolPermissionResult.behavior === 'passthrough'
       ? {
@@ -500,12 +527,6 @@ async function hasPermissionsToUseToolInner(
           ),
         }
       : toolPermissionResult
-
-  if (result.behavior === 'ask' && result.suggestions) {
-    logForDebugging(
-      `Permission suggestions for ${tool.name}: ${JSON.stringify(result.suggestions, null, 2)}`,
-    )
-  }
 
   return result
 }

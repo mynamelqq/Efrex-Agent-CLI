@@ -250,3 +250,8 @@ src/launcher.tsx 构造并传入 AppStateProvider initialState；
 加入了PowerShellTool原来的Claude是默认不使用这个的，为了提升容错还是把这个加进来了。改的挺快的也有之前改BashTool代码的功劳，
 中途发现了一个问题执行Python --version和git status都失败了，而我电脑本机是能执行的，后来才知道是因为在子进程swawn内，没有对当前的系统变量做一个快照然后传入子进程
 原来的代码我注释调了，改完果然好了。powershell和bashtool有好多代码没加，比如后台任务执行、沙箱、安全检查等等这方面代码以后还要好好看看，还有很多优化的地方
+5.24
+主要实现了claude左下角的切换权限模式，同时也增加了前端渲染的UI，先加入了default、acceptEdits、passthrough三种模式，按下shift+tab时会通过一个提前设定的which函数获取下一个模式，更改ToolPermisionContext的mode然后重新更改AppState,
+这样就改掉了应用的状态，在useCanUseTool钩子中，acceptEdit会跳过所有编辑需要同意的命令
+完善了一点工具执行的鉴权，虽然还是有挺多问题
+

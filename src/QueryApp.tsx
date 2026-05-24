@@ -54,6 +54,10 @@ import { useTranscriptHeaderInfo } from './hooks/useTranscriptHeaderInfo.js';
 import type { QueuedCommand } from './types/textInputTypes.js';
 import { PromptInputQueuedCommands } from './components/PromptInput/PromptInputQueuedCommands.js';
 import { isFullscreenEnvEnabled } from './utils/fullscreen.js';
+import { cyclePermissionMode } from './utils/permissions/getNextPermissionMode.js';
+import {
+	getPermissionModeConfig
+} from './utils/permissions/PermissionMode.js';
 import {
 	PermissionRequest,
 	type ToolUseConfirm
@@ -1465,6 +1469,26 @@ export default function QueryApp({
 		},
 		[setAppState]
 	);
+	const handleCyclePermissionMode = useCallback(() => {
+		const { nextMode, context: preparedContext } =
+			cyclePermissionMode(toolPermissionContext);
+
+		// Set the mode via setAppState directly because setToolPermissionContext
+		// intentionally preserves the existing mode (to prevent coordinator mode
+		// corruption from workers). Then call setToolPermissionContext to trigger
+		// recheck of queued permission prompts.
+		setAppState(prev => ({
+			...prev,
+			toolPermissionContext: {
+				...preparedContext,
+				mode: nextMode
+			}
+		}));
+		setToolPermissionContext({
+			...preparedContext,
+			mode: nextMode
+		});
+	}, [setAppState, setToolPermissionContext, toolPermissionContext]);
 	const shiftToolUseConfirmQueue = useCallback(() => {
 		setToolUseConfirmQueue(([, ...tail]) => tail);
 	}, []);
@@ -2024,6 +2048,11 @@ const getToolUseContext = useCallback(
 	const promptInputWidth = Math.max(8, terminalColumns - 4);
 	const inputRule = '─'.repeat(Math.max(8, terminalColumns - 2));
 	const maxPromptInputRows = Math.max(1, MAX_PROMPT_INPUT_ROWS);
+	const permissionModeConfig = getPermissionModeConfig(
+		toolPermissionContext.mode
+	);
+	const permissionModeLabel = permissionModeConfig.title;
+	const permissionModeColor = permissionModeConfig.color;
 
 	const renderTools = activeTools;
 	const viewportMessages = buildViewportMessages(
@@ -2217,12 +2246,19 @@ const getToolUseContext = useCallback(
 								onHistoryPrev={onHistoryUp}
 								onHistoryNext={onHistoryDown}
 								onCtrlC={handleCtrlC}
+								onCyclePermissionMode={handleCyclePermissionMode}
 								placeholder={showSpinner ? '等待 query.ts 响应中...' : 'Ask efrex anything...'}
 								pastedContents={pastedContents}
 								setPastedContents={setPastedContents}
 							/>
 						</Box>
 						<Text color={loading ? 'blue' : 'gray'}>{inputRule}</Text>
+						<Box paddingLeft={2}>
+							<Text color={permissionModeColor}>
+								{permissionModeLabel}
+								<Text dimColor> · Shift+Tab</Text>
+							</Text>
+						</Box>
 						{showCommandSelector && filteredCommands.length > 0 ? (
 							<Box
 
