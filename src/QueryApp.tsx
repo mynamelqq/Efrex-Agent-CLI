@@ -6,6 +6,7 @@ import { Command,getCommandName } from './types/command.js';
 import { useQueueProcessor } from './hooks/useQueueProcessor.js';
 import { randomUUID } from 'node:crypto';
 import { FileHistoryState } from './utils/fileHistory.js';
+
 import { Box, Text, useApp, useInput, useWindowSize } from './ink.js';
 import { stringWidth } from './ink/stringWidth.js';
 import { createAbortController } from './utils/abortController.js';
@@ -73,7 +74,7 @@ import StatusAnimationRow from './components/StatusAnimationRow.js';
 import { CLI_APP_VERSION } from 'utils/load.js';
 type ViewportMessage = {
 	id: number;
-	role: 'user' | 'assistant' | 'tool';
+	role: 'user' | 'assistant' | 'tool' | 'meta';
 	text: string;
 	content?: React.ReactNode;
 	toolPhase?: 'call' | 'done' | 'error';
@@ -100,6 +101,11 @@ type StreamingAssistantState = {
 	pendingToolCalls: string[];
 };
 
+type CompletedTurnFooter = {
+	afterMessageCount: number;
+	text: string;
+};
+
 type SlashCommandMatch = {
 	command: Command;
 	displayName: string;
@@ -111,7 +117,7 @@ const APP_BRAND = 'efrex code';
 const APP_VERSION = CLI_APP_VERSION;
 const COMMAND_ROW_SELECTED_FG = '#7dd3fc';
 const COMMAND_ROW_SELECTED_DESC = '#b7c9d3';
-
+const TURN_META_ID_BASE = 1_000_000_000;
 
 const GLIMMER_PAD_COLUMNS = 10;
 const GLIMMER_WIDTH_COLUMNS = 8;
@@ -343,7 +349,15 @@ function getShimmerSegments(
 		after: after.join('')
 	};
 }
+function padDisplay(text: string, width: number): string {
+    return `${text}${' '.repeat(Math.max(0, width - stringWidth(text)))}`;
+}
 
+function centerDisplay(text: string, width: number): string {
+    const textWidth = stringWidth(text);
+    const leftPad = Math.max(0, Math.floor((width - textWidth) / 2));
+    return `${' '.repeat(leftPad)}${text}${' '.repeat(Math.max(0, width - textWidth - leftPad))}`;
+}
 function getStatusLabelSegments(
 	text: string,
 	glimmerIndex: number
@@ -379,14 +393,27 @@ function fitDisplay(text: string, width: number): string {
 	return `${next}…`;
 }
 
-function padDisplay(text: string, width: number): string {
-	return `${text}${' '.repeat(Math.max(0, width - stringWidth(text)))}`;
+function formatWorkedDuration(ms: number): string {
+	if (ms < 60000) {
+		return `${Math.max(0, Math.floor(ms / 1000))}s`;
+	}
+
+	const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+	const seconds = totalSeconds % 60;
+	const totalMinutes = Math.floor(totalSeconds / 60);
+	const minutes = totalMinutes % 60;
+	const hours = Math.floor(totalMinutes / 60);
+
+	if (hours > 0) {
+		return `${hours}h ${String(minutes).padStart(2, '0')}m ${String(seconds).padStart(2, '0')}s`;
+	}
+
+	return `${totalMinutes}m ${String(seconds).padStart(2, '0')}s`;
 }
 
-function centerDisplay(text: string, width: number): string {
-	const textWidth = stringWidth(text);
-	const leftPad = Math.max(0, Math.floor((width - textWidth) / 2));
-	return `${' '.repeat(leftPad)}${text}${' '.repeat(Math.max(0, width - textWidth - leftPad))}`;
+function buildTurnDurationLine(durationMs: number, width: number): string {
+	const label = `Worked for ${formatWorkedDuration(durationMs)}`;
+	return chalk.gray(label);
 }
 
 function getTranscriptHeaderLines({
@@ -408,9 +435,13 @@ function getTranscriptHeaderLines({
 		`${cwd}  ·  model: ${model}  ·  effort: ${effort}`,
 		innerWidth
 	);
-	const brand = `${chalk.cyanBright.bold('»')} ${chalk.cyanBright.bold(APP_BRAND)} ${chalk.gray(APP_VERSION)}`;
+	model = truncateDisplay(model as string, 21);
+	const primary = chalk.hex('#23d3b6');
+	const brandColor = chalk.hex('#4da3ff');
+	const muted = chalk.gray;
+	const brand = `${primary.bold('»')} ${brandColor.bold(APP_BRAND)} ${muted(APP_VERSION)}`;
 	const brandPlain = `» ${APP_BRAND} ${APP_VERSION}`;
-	const rule = chalk.gray(
+	const rule = muted(
 		` ${'─'.repeat(Math.max(0, boxWidth - stringWidth(brandPlain) - 2))}`
 	);
 
@@ -420,15 +451,17 @@ function getTranscriptHeaderLines({
 
 	const leftWidth = Math.max(28, Math.min(52, Math.floor(innerWidth * 0.42)));
 	const rightWidth = Math.max(20, innerWidth - leftWidth - 1);
-	const top = `${chalk.blue(`╭${'─'.repeat(leftWidth)}`)}${chalk.green(`┬${'─'.repeat(rightWidth)}╮`)}`;
-	const bottom = `${chalk.blue(`╰${'─'.repeat(leftWidth)}`)}${chalk.green(`┴${'─'.repeat(rightWidth)}╯`)}`;
+	const border = chalk.hex('#2f6f89');
+	const divider = chalk.hex('#2b9c8c');
+	const top = `${border(`╭${'─'.repeat(leftWidth)}`)}${divider(`┬${'─'.repeat(rightWidth)}╮`)}`;
+	const bottom = `${border(`╰${'─'.repeat(leftWidth)}`)}${divider(`┴${'─'.repeat(rightWidth)}╯`)}`;
 	const row = (
 		leftPlain: string,
 		leftStyled: string,
 		rightPlain: string,
 		rightStyled: string
 	) =>
-		`${chalk.blue('│')}${leftStyled}${' '.repeat(Math.max(0, leftWidth - stringWidth(leftPlain)))}${chalk.green('│')}${rightStyled}${' '.repeat(Math.max(0, rightWidth - stringWidth(rightPlain)))}${chalk.green('│')}`;
+		`${border('│')}${leftStyled}${' '.repeat(Math.max(0, leftWidth - stringWidth(leftPlain)))}${divider('│')}${rightStyled}${' '.repeat(Math.max(0, rightWidth - stringWidth(rightPlain)))}${divider('│')}`;
 	const left = (
 		text: string,
 		style: (value: string) => string = value => value
@@ -463,14 +496,16 @@ function getTranscriptHeaderLines({
 			`  ${fitDisplay(leftText, Math.max(1, leftWidth - 4))}`,
 			leftWidth
 		);
-		const rightCell = right(rightText, value => chalk.gray(value));
+		const rightCell = right(rightText, value => muted(value));
 		return row(
 			leftPlain,
-			chalk.gray(leftPlain),
+			muted(leftPlain),
 			rightCell.plain,
 			rightCell.styled
 		);
 	};
+	const action = (value: string) =>
+		muted(value.replace('→', primary.bold('→')));
 
 	return [
 		`${brand}${rule}`,
@@ -478,53 +513,48 @@ function getTranscriptHeaderLines({
 		makeRow(
 			'efrex code',
 			'✦  Getting Started',
-			value => chalk.hex('#8f7cff').bold(value),
-			value => chalk.greenBright.bold(value)
+			value => brandColor.bold(value),
+			value => primary.bold(value)
 		),
 		makeRow(
 			'AI Coding Assistant',
 			'Ask anything, edit code, run commands.',
-			value => chalk.gray(value),
-			value => chalk.gray(value)
+			value => muted(value),
+			value => muted(value)
 		),
 		makeRow(
 			'Power your ideas with code.',
 			'Let efrex code handle the rest.',
-			value => chalk.gray(value),
-			value => chalk.gray(value)
+			value => muted(value),
+			value => muted(value)
 		),
 		makeRow(
 			'╭ ────── ╮',
 			'Tips',
-			value => chalk.blueBright(value),
-			value => chalk.yellowBright.bold(`${value}`)
+			value => brandColor(value),
+			value => primary.bold(`${value}`)
 		),
-		makeRow(
-			'│  •  •  │',
-			'────────────────────────────────────────',
-			value => chalk.blueBright(value),
-			value => chalk.green(value)
-		),
-		makeRow('│  ────  │', '', value => chalk.blueBright(value)),
+		makeRow('│  •  •  │', '', value => brandColor(value)),
+		makeRow('│  ────  │', '', value => brandColor(value)),
 		makeRow(
 			'─────  ─────',
 			'→  Ask questions about your codebase',
-			value => chalk.blueBright(value),
-			value => chalk.gray(value.replace('→', chalk.yellowBright('→')))
+			value => brandColor(value),
+			action
 		),
 		// makeRow('╰─┬──┬─╯', '→  Ask questions about your codebase', value => chalk.blueBright(value), value => chalk.gray(value.replace('→', chalk.yellowBright('→')))),
 		// makeRow('      ', '', value => chalk.blueBright(value)),
 		makeRow(
 			`model: ${model} | effort: ${effort} `,
 			'→  Generate or refactor code',
-			value => chalk.gray(value),
-			value => chalk.gray(value.replace('→', chalk.yellowBright('→')))
+			value => muted(value),
+			action
 		),
 		makeRow(
 			`${cwd}`,
 			'→  Run shell commands and analyze results',
-			value => chalk.hex('#438bcc').bold(value),
-			value => chalk.gray(value.replace('→', chalk.yellowBright('→')))
+			value => brandColor.bold(value),
+			action
 		),
 		// makeRow('Type /help to see available commands', '→  Use natural language to automate tasks', value => chalk.gray(value.replace('/help', chalk.cyanBright('/help'))), value => chalk.gray(value.replace('→', chalk.yellowBright('→')))),
 		bottom,
@@ -588,6 +618,7 @@ function extractToolUseLabels(content: unknown): string[] {
 		})
 		.filter((value): value is string => value !== null);
 }
+
 
 function buildLocalCommandViewport(
 	content: string,
@@ -752,10 +783,29 @@ function updateAssistantToolUseViewportMessage(
 
 function buildViewportMessages(
 	messages: MessageType[],
-	tools: readonly Tool[]
+	tools: readonly Tool[],
+	completedTurnFooters: CompletedTurnFooter[] = []
 ): ViewportMessage[] {
 	const viewportMessages: ViewportMessage[] = [];
 	const toolUseMessagesById = new Map<string, ViewportMessage>();
+	const pendingFooters = [...completedTurnFooters];
+	const appendCompletedTurnFooter = (messageCount: number) => {
+		while (
+			pendingFooters.length > 0 &&
+			pendingFooters[0].afterMessageCount === messageCount
+		) {
+			const footer = pendingFooters.shift();
+			if (!footer) {
+				break;
+			}
+
+			viewportMessages.push({
+				id: TURN_META_ID_BASE + viewportMessages.length + 1,
+				role: 'meta',
+				text: footer.text
+			});
+		}
+	};
 
 	messages.forEach((message, index) => {
 		const fallbackId = index + 1;
@@ -788,6 +838,7 @@ function buildViewportMessages(
 			}
 
 			if (text || toolUseMessages.length > 0) {
+				appendCompletedTurnFooter(fallbackId);
 				return;
 			}
 		}
@@ -816,6 +867,7 @@ function buildViewportMessages(
 				viewportMessage.toolDisplayStyle = 'result';
 				viewportMessages.push(viewportMessage);
 			}
+			appendCompletedTurnFooter(fallbackId);
 			return;
 		}
 
@@ -830,6 +882,7 @@ function buildViewportMessages(
 				viewportMessage.toolDisplayStyle = 'progress';
 				viewportMessages.push(viewportMessage);
 			}
+			appendCompletedTurnFooter(fallbackId);
 			return;
 		}
 
@@ -842,7 +895,21 @@ function buildViewportMessages(
 		if (viewportMessage) {
 			viewportMessages.push(viewportMessage);
 		}
+		appendCompletedTurnFooter(fallbackId);
 	});
+
+	while (pendingFooters.length > 0) {
+		const footer = pendingFooters.shift();
+		if (!footer) {
+			break;
+		}
+
+		viewportMessages.push({
+			id: TURN_META_ID_BASE + viewportMessages.length + 1,
+			role: 'meta',
+			text: footer.text
+		});
+	}
 
 	return viewportMessages;
 }
@@ -1178,7 +1245,9 @@ function messageToViewport(
 	}
 
 	if (message.type === 'system') {
-		const text = extractTextContent(message.message?.content);
+		const systemContent =
+			typeof message.content === 'string' ? message.content : null;
+		const text = systemContent ?? extractTextContent(message.message?.content);
 		if (isSystemLocalCommandMessage(message) && text) {
 			const localCommandMessage = buildLocalCommandViewport(text, fallbackId);
 			return localCommandMessage === 'hidden' ? null : localCommandMessage;
@@ -1278,6 +1347,9 @@ export default function QueryApp({
 			pendingToolCalls: []
 		});
 	const [messages, rawSetMessages] = useState<MessageType[]>([]);
+	const [completedTurnFooters, setCompletedTurnFooters] = useState<
+		CompletedTurnFooter[]
+	>([]);
 	const [showCommandSelector, setShowCommandSelector] = useState(false);
 	const [filteredCommands, setFilteredCommands] = useState(commands);
 	  const [initialReadFileState] = useState(() => createFileStateCacheWithSizeLimit(READ_FILE_STATE_CACHE_SIZE));
@@ -1410,6 +1482,12 @@ export default function QueryApp({
 	useEffect(() => {
 		appStateRef.current = appState;
 	}, [appState]);
+
+	useEffect(() => {
+		if (completedTurnFooters.length > 0) {
+			scrollRef.current?.scrollToBottom();
+		}
+	}, [completedTurnFooters.length]);
 
 	useEffect(() => {
 		if (!showCommandSelector) {
@@ -1775,6 +1853,7 @@ const getToolUseContext = useCallback(
 			if (thisGeneration === null) {
 				return;
 			}
+			const startedAt = Date.now();
 			setMessages(oldMessages => [...oldMessages, ...newMessages]);
 			setInput('');
 			setStreamingAssistant({
@@ -1796,6 +1875,17 @@ const getToolUseContext = useCallback(
 				);
 			} finally {
 				if (queryGuard.end(thisGeneration) && shouldQuery) {
+					const durationMs = Date.now() - startedAt;
+					setCompletedTurnFooters(oldFooters => [
+						...oldFooters,
+						{
+							afterMessageCount: messagesRef.current.length,
+							text: buildTurnDurationLine(
+								durationMs,
+								Math.max(8, (columns || process.stdout.columns || 80) - 4)
+							)
+						}
+					]);
 					setStreamingAssistant({
 						active: false,
 						placeholderId: null,
@@ -1805,7 +1895,7 @@ const getToolUseContext = useCallback(
 				}
 			}
 		},
-		[onQueryImpl, queryGuard, setMessages]
+		[columns, onQueryImpl, queryGuard]
 	);
 
 	const onSubmit = useCallback(
@@ -1936,7 +2026,11 @@ const getToolUseContext = useCallback(
 	const maxPromptInputRows = Math.max(1, MAX_PROMPT_INPUT_ROWS);
 
 	const renderTools = activeTools;
-	const viewportMessages = buildViewportMessages(messages, renderTools);
+	const viewportMessages = buildViewportMessages(
+		messages,
+		renderTools,
+		completedTurnFooters
+	);
 
 	if (loading && streamingAssistant.placeholderId !== null) {
 		if (streamingAssistant.text.trim().length > 0) {
@@ -2123,7 +2217,7 @@ const getToolUseContext = useCallback(
 								onHistoryPrev={onHistoryUp}
 								onHistoryNext={onHistoryDown}
 								onCtrlC={handleCtrlC}
-								placeholder={showSpinner ? '等待 query.ts 响应中...' : ''}
+								placeholder={showSpinner ? '等待 query.ts 响应中...' : 'Ask efrex anything...'}
 								pastedContents={pastedContents}
 								setPastedContents={setPastedContents}
 							/>

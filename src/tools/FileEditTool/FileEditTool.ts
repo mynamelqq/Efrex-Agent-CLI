@@ -249,8 +249,8 @@ export const FileEditTool = buildTool({
       userModified,
       updateFileHistoryState,
     },
-    _canUseTool?,
-    assistantMessage?,
+    _canUseTool,
+    assistantMessage,
   ) {
     const { file_path, old_string, new_string, replace_all = false } = input
 
@@ -272,32 +272,33 @@ export const FileEditTool = buildTool({
       await fileHistoryTrackEdit(
         updateFileHistoryState,
         absoluteFilePath,
-        parentMessage.uuid,
+        assistantMessage?.uuid,
       )
     }
 
     // 2. Load current state and confirm no changes since last read
+    //加载最近的状态确保上次阅读后没有改变
     // Please avoid async operations between here and writing to disk to preserve atomicity
     const {
       content: originalFileContents,
       fileExists,
       encoding,
       lineEndings: endings,
-    } = readFileForEdit(absoluteFilePath)
+    } = readFileForEdit(absoluteFilePath)//stat获取文件信息
 
     if (fileExists) {
       const lastWriteTime = getFileModificationTime(absoluteFilePath)
       const lastRead = readFileState.get(absoluteFilePath)
-      if (!lastRead || lastWriteTime > lastRead.timestamp) {
+      if (!lastRead || lastWriteTime > lastRead.timestamp) {//如果没有读过或者写入的时间大于缓存读的时间 
         // Timestamp indicates modification, but on Windows timestamps can change
         // without content changes (cloud sync, antivirus, etc.). For full reads,
         // compare content as a fallback to avoid false positives.
         const isFullRead =
           lastRead &&
           lastRead.offset === undefined &&
-          lastRead.limit === undefined
+          lastRead.limit === undefined//是否全部读
         const contentUnchanged =
-          isFullRead && originalFileContents === lastRead.content
+          isFullRead && originalFileContents === lastRead.content//全部读并且内容一致 否则就报错
         if (!contentUnchanged) {
           throw new Error(FILE_UNEXPECTEDLY_MODIFIED_ERROR)
         }

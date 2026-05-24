@@ -1,6 +1,10 @@
 import * as React from 'react';
-import { Text } from '@anthropic/ink';
+import type { StructuredPatchHunk } from 'diff';
+import { Box, Text } from '@anthropic/ink';
 import { MessageResponse } from './MessageResponse.js';
+import { StructuredDiffList } from './StructuredDiffList.js';
+import { firstLineOf } from '../utils/stringUtils.js';
+import { useWindowSize } from '../ink.js';
 export function count<T>(arr: readonly T[], pred: (x: T) => unknown): number {
   let n = 0
   for (const x of arr) n += +!!pred(x)
@@ -9,10 +13,11 @@ export function count<T>(arr: readonly T[], pred: (x: T) => unknown): number {
 
 type Props = {
   filePath: string;
-  structuredPatch: { lines: string[] }[];
+  structuredPatch: StructuredPatchHunk[];
   style?: 'condensed';
   verbose: boolean;
   previewHint?: string;
+  originalFile?: string;
 };
 
 export function FileEditToolUpdatedMessage({
@@ -21,9 +26,16 @@ export function FileEditToolUpdatedMessage({
   style,
   verbose,
   previewHint,
+  originalFile,
 }: Props): React.ReactNode {
+  const { columns } = useWindowSize();
   const numAdditions = structuredPatch.reduce((acc, hunk) => acc + count(hunk.lines, _ => _.startsWith('+')), 0);
   const numRemovals = structuredPatch.reduce((acc, hunk) => acc + count(hunk.lines, _ => _.startsWith('-')), 0);
+  // This message is often rendered inside prefixed containers (tree bullets,
+  // permission flow rows, etc.). Using near-full terminal width can overflow
+  // those containers and smear border glyphs across nearby UI.
+  const diffWidth = Math.max(20, columns - 8);
+  const firstLine = originalFile ? firstLineOf(originalFile) : null;
 
   const text = (
     <Text>
@@ -56,5 +68,21 @@ export function FileEditToolUpdatedMessage({
     return text;
   }
 
-  return <MessageResponse>{text}</MessageResponse>;
+  return (
+    <MessageResponse>
+      <Box flexDirection="column">
+        {text}
+        {structuredPatch.length > 0 ? (
+          <StructuredDiffList
+            hunks={structuredPatch}
+            dim={false}
+            width={diffWidth}
+            filePath={filePath}
+            firstLine={firstLine}
+            fileContent={originalFile}
+          />
+        ) : null}
+      </Box>
+    </MessageResponse>
+  );
 }

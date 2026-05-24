@@ -243,3 +243,10 @@ AppState.tsx有点复杂，主要是监听配置文件的变化，使用chokidar
 斜杠命令主要通过setToolJSX,把本地JSX命令UI接进主循环：src/Tool.ts 给 ToolUseContext 增加 commands 和 setToolJSX 能力
 
 src/launcher.tsx 构造并传入 AppStateProvider initialState；
+5.23
+重新看了下FileEditTool的代码，发现计算补丁块的代码也不是很复杂，循环每个编辑，逐步替代旧串，中间是会记录新串防止循环替代，主要还是通过diff库，
+前端UI优化较多，增加了前端补丁行的UI显示和权限询问时的显示，每一轮会话结束后会显示worked for 0s
+
+加入了PowerShellTool原来的Claude是默认不使用这个的，为了提升容错还是把这个加进来了。改的挺快的也有之前改BashTool代码的功劳，
+中途发现了一个问题执行Python --version和git status都失败了，而我电脑本机是能执行的，后来才知道是因为在子进程swawn内，没有对当前的系统变量做一个快照然后传入子进程
+原来的代码我注释调了，改完果然好了。powershell和bashtool有好多代码没加，比如后台任务执行、沙箱、安全检查等等这方面代码以后还要好好看看，还有很多优化的地方

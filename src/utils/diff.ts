@@ -8,13 +8,12 @@ export const CONTEXT_LINES = 3
 import { FileEdit } from 'src/tools/FileEditTool/types'
 export const DIFF_TIMEOUT_MS = 5_000
 
-// For some reason, & confuses the diff library, so we replace it with a token,
-// then substitute it back in after the diff is computed.
+// 由于某种原因，& 会令差异库产生混淆，所以我们用一个标记来替代它，// 然后在计算出差异后再将其替换回来。
 const AMPERSAND_TOKEN = '<<:AMPERSAND_TOKEN:>>'
 
 const DOLLAR_TOKEN = '<<:DOLLAR_TOKEN:>>'
 function escapeForDiff(s: string): string {
-  return s.replaceAll('&', AMPERSAND_TOKEN).replaceAll('$', DOLLAR_TOKEN)
+  return s.replaceAll('&', AMPERSAND_TOKEN).replaceAll('$', DOLLAR_TOKEN)//将字符串中的特定字符替换成占位符（token），
 }
 
 function unescapeFromDiff(s: string): string {
@@ -101,7 +100,7 @@ export function getPatchForDisplay({
     filePath,
     filePath,
     preparedFileContents,
-    edits.reduce((p, edit) => {
+    edits.reduce((p, edit) => {// 应用所有编辑后的内容
       const { old_string, new_string } = edit
       const replace_all = 'replace_all' in edit ? edit.replace_all : false
       const escapedOldString = escapeForDiff(
@@ -117,12 +116,12 @@ export function getPatchForDisplay({
         return p.replace(escapedOldString, () => escapedNewString)
       }
     }, preparedFileContents),
-    undefined,
+    undefined, // oldHeader（可选，原文件头部信息）
     undefined,
     {
-      context: CONTEXT_LINES,
-      ignoreWhitespace,
-      timeout: DIFF_TIMEOUT_MS,
+      context: CONTEXT_LINES,  // diff 上下文的行数
+      ignoreWhitespace,// 是否忽略空白字符
+      timeout: DIFF_TIMEOUT_MS, // diff 计算的超时时间（毫秒）
     },
   )
   if (!result) {

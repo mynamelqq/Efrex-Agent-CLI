@@ -8,7 +8,7 @@ const USER_MESSAGE_FG = '#f0f0ea';
 
 export type ViewportMessage = {
   id: number;
-  role: 'user' | 'assistant' | 'tool';
+  role: 'user' | 'assistant' | 'tool' | 'meta';
   text: string;
   content?: React.ReactNode;
   toolPhase?: 'call' | 'done' | 'error';
@@ -73,6 +73,9 @@ export default function MessageViewport({
         <Box key={message.id} flexDirection="column" width="100%">
           {index > 0 ? <Text>{' '}</Text> : null}
           {renderMessageNode(message, width, blinkOn)}
+          {message.role === 'meta' && index < messages.length - 1 ? (
+            <Text>{' '}</Text>
+          ) : null}
         </Box>
       ))}
       {statusLine ? (
@@ -83,6 +86,14 @@ export default function MessageViewport({
 }
 
 function renderMessageNode(message: ViewportMessage, width: number, blinkOn: boolean): React.ReactNode {
+  if (message.role === 'meta') {
+    return (
+      <Text key={message.id} dimColor wrap="truncate-end">
+        {message.text || ' '}
+      </Text>
+    );
+  }
+
   if (!message.content) {
     return renderMessage(message, width, blinkOn).map((line, index) => (
       <Text key={`${message.id}-${index}`} wrap="truncate-end">
@@ -146,6 +157,10 @@ function renderMessageNode(message: ViewportMessage, width: number, blinkOn: boo
 }
 
 function renderMessage(message: ViewportMessage, width: number, blinkOn: boolean): string[] {
+  if (message.role === 'meta') {
+    return [message.text];
+  }
+
   if (message.role === 'user') {
     const contentWidth = Math.max(1, width - 2);
     return [

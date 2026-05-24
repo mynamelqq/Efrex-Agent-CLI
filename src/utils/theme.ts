@@ -1,4 +1,11 @@
-import { THEME_NAMES } from "packages/@ant/ink/src/theme/theme-types"
+export const THEME_NAMES = [
+  'dark',
+  'light',
+  'light-daltonized',
+  'dark-daltonized',
+  'light-ansi',
+  'dark-ansi',
+] as const
 
 export type Theme = {
   autoAccept: string
@@ -252,5 +259,8 @@ export const lightAnsiTheme: Theme = {
 }
 
 export const defaultToolRenderTheme = lightAnsiTheme
+/** A renderable theme. Always resolvable to a concrete color palette. */
+
+
 /** A renderable theme. Always resolvable to a concrete color palette. */
 export type ThemeName = (typeof THEME_NAMES)[number]

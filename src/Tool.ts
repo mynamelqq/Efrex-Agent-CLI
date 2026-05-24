@@ -98,7 +98,7 @@ export type ToolUseContext = {
 	/** Custom system prompt that replaces the default system prompt */
 	contentReplacementState?: ContentReplacementState;
 	userModified?: boolean;
-
+  	toolUseId?: string
 	updateFileHistoryState: (
 		updater: (prev: FileHistoryState) => FileHistoryState
 	) => void;
@@ -197,6 +197,30 @@ export type Tool<
 		input: Partial<z.infer<Input>>,
 		options: { theme: ThemeName; verbose: boolean; commands?: unknown[] }
 	): ReactNode;
+	/**
+   * Returns information about whether this tool use is a search or read operation
+   * that should be collapsed into a condensed display in the UI. Examples include
+   * file searching (Grep, Glob), file reading (Read), and bash commands like find,
+   * grep, wc, etc.
+   *
+   * Returns an object indicating whether the operation is a search or read operation:
+   * - `isSearch: true` for search operations (grep, find, glob patterns)
+   * - `isRead: true` for read operations (cat, head, tail, file read)
+   * - `isList: true` for directory-listing operations (ls, tree, du)
+   * - All can be false if the operation shouldn't be collapsed
+   */
+  isSearchOrReadCommand?(input: z.infer<Input>): {
+    isSearch: boolean
+    isRead: boolean
+    isList?: boolean
+  },
+    /**
+   * Returns true when the non-verbose rendering of this output is truncated
+   * (i.e., clicking to expand would reveal more content). Gates
+   * click-to-expand in fullscreen — only messages where verbose actually
+   * shows more get a hover/click affordance. Unset means never truncated.
+   */
+  isResultTruncated?(output: Output): boolean
 };
 export type ToolDef<
 	Input extends AnyObject = AnyObject,

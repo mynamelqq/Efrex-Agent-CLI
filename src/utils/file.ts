@@ -160,7 +160,7 @@ export async function pathExists(path: string): Promise<boolean> {
 }
 export function convertLeadingTabsToSpaces(content: string): string {
   // The /gm regex scans every line even on no-match; skip it entirely
-  // for the common tab-free case.
+  // for the common tab-free case.将每行开头的制表符（\t）转换为两个空格    将制表符转空格
   if (!content.includes('\t')) return content
   return content.replace(/^\t+/gm, _ => '  '.repeat(_.length))
 }

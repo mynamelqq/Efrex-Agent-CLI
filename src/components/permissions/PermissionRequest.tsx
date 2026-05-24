@@ -7,9 +7,12 @@ import type {
 	PermissionUpdate
 } from 'src/types/permissions.js';
 import * as React from 'react';
+import { basename } from 'path';
 import { Box, Text, useInput, useWindowSize } from '../../ink.js';
 import { stringWidth } from '../../ink/stringWidth.js';
 import { getCwd } from 'src/utils/cwd.js';
+import { FileToolPermissionPreview } from './FileToolPermissionPreview.js';
+import { getDisplayPath } from 'src/utils/file.js';
 
 type PermissionRequestProps<Input extends AnyObject = AnyObject> = {
 	toolUseConfirm: ToolUseConfirm<Input>;
@@ -63,7 +66,9 @@ type PermissionColor =
 
 type ToolPresentation = {
 	toolLabel: string;
+	title: string;
 	intent: string;
+	question?: string;
 	primaryLabel: string;
 	primary: string;
 	working: string;
@@ -173,6 +178,7 @@ function getToolPresentation(
 		const dangerous = isDangerousCommand(command);
 		return {
 			toolLabel: 'Bash',
+			title: 'Permission required',
 			intent: 'efrex code wants to run a shell command',
 			primaryLabel: 'Command',
 			primary: `$ ${command || stringifyPermissionInput(input)}`,
@@ -187,13 +193,21 @@ function getToolPresentation(
 	}
 
 	if (toolName === 'Edit' || toolName === 'Write') {
+		const displayPath = path ? getDisplayPath(path) : stringifyPermissionInput(input);
+		const fileName = path ? basename(path) : 'this file';
 		return {
 			toolLabel: toolName,
-			intent: `efrex code wants to ${
-				toolName === 'Write' ? 'write a file' : 'edit a file'
-			}`,
+			title: toolName === 'Write' ? 'Write file' : 'Edit file',
+			intent:
+				toolName === 'Write'
+					? 'Review the file change before continuing'
+					: 'Review the proposed edit before continuing',
+			question:
+				toolName === 'Write'
+					? `Do you want to write to ${fileName}?`
+					: `Do you want to make this edit to ${fileName}?`,
 			primaryLabel: 'File',
-			primary: path || stringifyPermissionInput(input),
+			primary: displayPath,
 			working,
 			risk: description || 'Modifies files in this workspace',
 			accent: 'ansi:magentaBright',
@@ -205,6 +219,7 @@ function getToolPresentation(
 	if (toolName === 'Read' || toolName === 'glob' || toolName === 'Grep') {
 		return {
 			toolLabel: toolName === 'glob' ? 'Glob' : toolName,
+			title: 'Permission required',
 			intent: 'efrex code wants to inspect files',
 			primaryLabel: toolName === 'Grep' ? 'Pattern' : 'Path',
 			primary: path || stringifyPermissionInput(input),
@@ -219,6 +234,7 @@ function getToolPresentation(
 	if (toolName === 'WebFetch') {
 		return {
 			toolLabel: 'WebFetch',
+			title: 'Permission required',
 			intent: 'efrex code wants to fetch a URL',
 			primaryLabel: 'URL',
 			primary: path || stringifyPermissionInput(input),
@@ -233,6 +249,7 @@ function getToolPresentation(
 	if (toolName === 'WebSearch') {
 		return {
 			toolLabel: 'WebSearch',
+			title: 'Permission required',
 			intent: 'efrex code wants to search the web',
 			primaryLabel: 'Query',
 			primary: query || stringifyPermissionInput(input),
@@ -246,6 +263,7 @@ function getToolPresentation(
 
 	return {
 		toolLabel: toolName,
+		title: 'Permission required',
 		intent: `efrex code wants to use ${toolName}`,
 		primaryLabel: 'Input',
 		primary: stringifyPermissionInput(input),
@@ -548,7 +566,7 @@ export function PermissionRequest({
 					{fitDisplay(
 						isResolving
 							? `${resolution.label}${resolutionSuffix}`
-							: 'Permission required',
+							: presentation.title,
 						headerTitleWidth
 					)}
 				</Text>
@@ -562,9 +580,15 @@ export function PermissionRequest({
 								: presentation.intent
 						}`,
 						headerIntentWidth
-					)}
+						)}
 				</Text>
 			</Box>
+
+			{!isResolving && presentation.question ? (
+				<Box marginTop={0} marginBottom={0}>
+					<Text color="ansi:whiteBright">{presentation.question}</Text>
+				</Box>
+			) : null}
 
 			<Box flexDirection="column">
 				<Box flexDirection="row">
@@ -602,6 +626,12 @@ export function PermissionRequest({
 					) : null}
 				</Box>
 			</Box>
+
+			<FileToolPermissionPreview
+				toolName={toolUseConfirm.tool.name}
+				input={toolUseConfirm.input}
+				width={contentWidth}
+			/>
 
 			{isResolving ? (
 				<Box flexDirection="row">

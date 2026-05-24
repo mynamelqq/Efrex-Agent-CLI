@@ -9,8 +9,11 @@ import { WebFetchTool } from './tools/WebFetchTool/WebFetchTool'
 import { BashTool } from './tools/BashTool/BashTools'
 import { FileWriteTool } from './tools/FileWriteTool/FileWriteTool'
 import { FileEditTool } from './tools/FileEditTool/FileEditTool'
+import { PowerShellTool } from './tools/PowerShellTool/PowerShellTool'
+import { findGitBashPath } from './utils/windowsPaths'
 export function getAllBaseTools():Tools{
-    return [GlobTool,GrepTool,FileReadTool,FileEditTool,BashTool,WebFetchTool,WebSearchTool,FileWriteTool]
+    return [PowerShellTool
+    ]//GlobTool,GrepTool,FileReadTool,FileEditTool,BashTool,WebFetchTool,WebSearchTool,FileWriteTool
 }
 
 export type BashProgress = any

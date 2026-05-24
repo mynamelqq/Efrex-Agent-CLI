@@ -23,7 +23,7 @@ export async function getSystemPrompt(
   return [
     [
       'You are a coding assistant running in a local CLI project.',
-      `Model: ${model}`,
+      `Model: minimax-m2.7`,//${model}
       `Working directory: ${cwd}`,
       `Additional working directories: ${uniqueWorkingDirectories.slice(1).join(', ') || 'None'}`,
       `OS: ${osType()} ${osRelease()} (${osVersion()})`,
@@ -36,7 +36,7 @@ export async function getSystemPrompt(
     ].join('\n'),
     [
       'Tool usage rules:',
-      `- Available tools: ${formatToolNames(tools)}`,
+      // `- Available tools: ${formatToolNames(tools)}`,
       '- Use tools when needed to inspect project state before making assumptions.',
       '- Do not invent files, commands, or project behavior that you have not verified.',
     ].join('\n'),

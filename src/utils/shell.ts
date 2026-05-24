@@ -28,6 +28,7 @@ import { posixPathToWindowsPath} from './windowsPaths.js'
 import { isENOENT } from './errors.js'
 import { getSessionId } from '../bootstrap/state.js'
 import { createBashShellProvider } from './bash/bashProvider.js'
+import { subprocessEnv } from './subprocessEnv.js'
 const DEFAULT_TIMEOUT = 30 * 60 * 1000 // 30 minutes
 export type ShellConfig = {
   provider: ShellProvider
@@ -55,7 +56,7 @@ export function setCwd(path: string, relativeTo?: string): void {//得到真实�
 }
 
 /**
- * Execute a shell command using the environment snapshot
+ * Execute a shell command using the environment snapshot 环境快照
  * Creates a new shell process for each command execution
  */
 export async function exec(
@@ -117,7 +118,7 @@ export async function exec(
   try {
     const childProcess = spawn(binShell, shellArgs, {
       env: {
-        // ...subprocessEnv(),
+        ...subprocessEnv(),
         SHELL: shellType === 'bash' ? binShell : undefined,
         GIT_EDITOR: 'true',
         CLAUDECODE: '1',

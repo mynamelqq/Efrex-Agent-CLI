@@ -386,9 +386,9 @@ export function getPatchForEdits({
   edits,
 }: {
   filePath: string
-  fileContents: string
-  edits: FileEdit[]
-}): { patch: StructuredPatchHunk[]; updatedFile: string } {
+  fileContents: string//原文件
+  edits: FileEdit[]//编辑块编辑工具就一个块
+}): { patch: StructuredPatchHunk[]; updatedFile: string } {//修改过的文件内容 补丁块
   let updatedFile = fileContents
   const appliedNewStrings: string[] = []
 
@@ -399,7 +399,7 @@ export function getPatchForEdits({
     edits[0] &&
     edits[0].old_string === '' &&
     edits[0].new_string === ''
-  ) {
+  ) {//特判 空文件
     const patch = getPatchForDisplay({
       filePath,
       fileContents,
@@ -414,13 +414,13 @@ export function getPatchForEdits({
     return { patch, updatedFile: '' }
   }
 
-  // Apply each edit and check if it actually changes the file
+  //应用每一个编辑并且检查是否真的改变了文件
   for (const edit of edits) {
     // Strip trailing newlines from old_string before checking
     const oldStringToCheck = edit.old_string.replace(/\n+$/, '')
 
-    // Check if old_string is a substring of any previously applied new_string
-    for (const previousNewString of appliedNewStrings) {
+    // 检查旧字符串是否是之前应用的任何新字符串的子串。
+    for (const previousNewString of appliedNewStrings) {//避免循环修改
       if (
         oldStringToCheck !== '' &&
         previousNewString.includes(oldStringToCheck)
@@ -433,8 +433,8 @@ export function getPatchForEdits({
 
     const previousContent = updatedFile
     updatedFile =
-      edit.old_string === ''
-        ? edit.new_string
+      edit.old_string === ''//空串
+        ? edit.new_string//直接返回新串
         : applyEditToFile(
             updatedFile,
             edit.old_string,
@@ -448,7 +448,7 @@ export function getPatchForEdits({
     }
 
     // Track the new string that was applied
-    appliedNewStrings.push(edit.new_string)
+    appliedNewStrings.push(edit.new_string)//跟踪新串
   }
 
   if (updatedFile === fileContents) {
@@ -457,14 +457,14 @@ export function getPatchForEdits({
     )
   }
 
-  // We already have before/after content, so call getPatchFromContents directly.
-  // Previously this went through getPatchForDisplay with edits=[{old:fileContents,new:updatedFile}],
-  // which transforms fileContents twice (once as preparedFileContents, again as escapedOldString
-  // inside the reduce) and runs a no-op full-content .replace(). This saves ~20% on large files.
-  const patch = getPatchFromContents({
+// 我们已经有了前置/后置内容，所以可以直接调用 getPatchFromContents 方法。
+ // 之前是通过 getPatchForDisplay 方法来实现的，参数中包含 edits = [{old： 文件内容， new： 更新后的文件}]，
+  // 这会将文件内容转换两次（一次转换为 preparedFileContents，再次在 reduce 函数内部转换为 escapedOldString）， 
+// 并执行一个无操作的完整内容替换操作。这在处理大型文件时能节省约 20% 的资源。
+  const patch = getPatchFromContents({// 性能优化的补丁生成 ：直接比较原文件和新文件内容生成补丁，而不是通过构造单个"全文件替换"编辑来生成
     filePath,
     oldContent: convertLeadingTabsToSpaces(fileContents),
-    newContent: convertLeadingTabsToSpaces(updatedFile),
+    newContent: convertLeadingTabsToSpaces(updatedFile),//将所有行首的制表符（tab）转换为空格，因为返回的补丁仅用于显示目的
   })
 
   return { patch, updatedFile }

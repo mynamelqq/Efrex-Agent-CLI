@@ -96,9 +96,9 @@ export function createPowerShellProvider(shellPath: string): ShellProvider {
       // Ordering: session vars FIRST so the sandbox TMPDIR below can't be
       // overridden by `/env TMPDIR=...`. bashProvider.ts has these in the
       // opposite order (pre-existing), but sandbox isolation should win.
-    //   for (const [key, value] of getSessionEnvVars()) {
-    //     env[key] = value
-    //   }
+      // for (const [key, value] of getSessionEnvVars()) {
+      //   env[key] = value
+      // }
       // if (currentSandboxTmpDir) {
       //   // PowerShell on Linux/macOS honors TMPDIR for [System.IO.Path]::GetTempPath()
       //   env.TMPDIR = currentSandboxTmpDir

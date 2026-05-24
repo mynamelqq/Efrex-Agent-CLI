@@ -47,3 +47,10 @@ export function isEnvDefinedFalsy(value: string | undefined): boolean {
 }
 
 export const getClaudeConfigHomeDir = getEfrexConfigHomeDir
+/**
+ * Check if bash commands should maintain project working directory (reset to original after each command)
+ * @returns true if CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR is set to a truthy value
+ */
+export function shouldMaintainProjectWorkingDir(): boolean {
+  return isEnvTruthy(process.env.BASH_MAINTAIN_PROJECT_WORKING_DIR)//是否保持工作目录
+}

@@ -3,9 +3,12 @@ import type {
   ContentBlockParam,
   ToolResultBlockParam,
 } from '@anthropic-ai/sdk/resources/index.mjs'
+import { shouldMaintainProjectWorkingDir } from 'src/utils/envUtils'
 import { readFile, stat } from 'fs/promises'
+import { setCwd } from 'src/utils/shell'
+import { pathInAllowedWorkingPath } from 'src/utils/permissions/filesystem'
 import { getOriginalCwd } from 'src/bootstrap/state.js'
-
+import { ToolPermissionContext } from 'src/Tool'
 import { getCwd } from 'src/utils/cwd.js'
 import { maybeResizeAndDownsampleImageBuffer } from 'src/utils/imageResizer.js'
 import { countCharInString, plural } from 'src/utils/stringUtils.js'
@@ -192,4 +195,28 @@ export function createContentSummary(content: ContentBlockParam[]): string {
   }
 
   return `MCP Result: ${summary.join(', ')}${parts.length > 0 ? '\n\n' + parts.join('\n\n') : ''}`
+}
+
+
+export function resetCwdIfOutsideProject(
+  toolPermissionContext: ToolPermissionContext,
+): boolean {
+  const cwd = getCwd()
+  const originalCwd = getOriginalCwd()
+  const shouldMaintain = shouldMaintainProjectWorkingDir()
+  if (
+    shouldMaintain ||
+    // Fast path: originalCwd is unconditionally in allWorkingDirectories
+    // (filesystem.ts), so when cwd hasn't moved, pathInAllowedWorkingPath is
+    // trivially true — skip its syscalls for the no-cd common case.
+    (cwd !== originalCwd &&
+      !pathInAllowedWorkingPath(cwd, toolPermissionContext))
+  ) {
+    // Reset to original directory if maintaining project dir OR outside allowed working directory
+    setCwd(originalCwd)
+    if (!shouldMaintain) {
+      return true
+    }
+  }
+  return false
 }
