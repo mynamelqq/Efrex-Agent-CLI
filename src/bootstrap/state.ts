@@ -396,3 +396,10 @@ export function getInitialMainLoopModel(): string {
   return STATE.initialMainLoopModel
 }
 
+export function getLastApiCompletionTimestamp(): number | null {
+  return STATE.lastApiCompletionTimestamp
+}
+
+export function setLastApiCompletionTimestamp(timestamp: number): void {
+  STATE.lastApiCompletionTimestamp = timestamp
+}

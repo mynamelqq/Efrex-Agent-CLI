@@ -1,7 +1,8 @@
 import type { Attachment } from '../utils/attachments.js'
 import type { Message } from '../package/message.js'
+import { ContentBlock,ContentBlockParam } from '../package/message.js'
 
-export function roughTokenCountEstimation(
+export function roughTokenCountEstimation(//来估算 token 数。默认认为 大约 4 个字符 ≈ 1 个 token。
   content: string,
   bytesPerToken: number = 4,
 ): number {
@@ -12,9 +13,13 @@ export function roughTokenCountEstimation(
  * Returns an estimated bytes-per-token ratio for a given file extension.
  * Dense JSON has many single-character tokens (`{`, `}`, `:`, `,`, `"`)
  * which makes the real ratio closer to 2 rather than the default 4.
+ * 根据文件扩展名决定 bytesPerToken：
+
+json / jsonl / jsonc：用 2
+其他类型：用 4
  */
 export function bytesPerTokenForFileType(fileExtension: string): number {
-  switch (fileExtension) {
+  switch (fileExtension) {//
     case 'json':
     case 'jsonl':
     case 'jsonc':
@@ -41,9 +46,13 @@ export function roughTokenCountEstimationForFileType(
     bytesPerTokenForFileType(fileExtension),
   )
 }
-
+// 遍历所有 messages，把每条消息的估算 token 加起来。
 export function roughTokenCountEstimationForMessages(
-  messages: readonly Pick<Message, 'type' | 'message' | 'attachment'>[],
+  messages: readonly {
+    type: string
+    message?: { content?: unknown }
+    attachment?: Attachment
+  }[],
 ): number {
   let totalTokens = 0
   for (const message of messages) {
@@ -52,20 +61,35 @@ export function roughTokenCountEstimationForMessages(
   return totalTokens
 }
 
-export function roughTokenCountEstimationForMessage(
-  message: Pick<Message, 'type' | 'message' | 'attachment'>,
-): number {
-  let totalTokens = 0
 
-  if (message.message) {
-    totalTokens += roughTokenCountEstimationForMessageContent(message.message)
+export function roughTokenCountEstimationForMessage(message: {//roughTokenCountEstimationForBlock(block)
+  type: string
+  message?: { content?: unknown }
+  attachment?: Attachment
+}): number {
+  if (
+    (message.type === 'assistant' || message.type === 'user') &&
+    message.message?.content
+  ) {
+    return roughTokenCountEstimationForContent(
+      message.message?.content as
+        | string
+        | Array<ContentBlock>
+        | Array<ContentBlockParam>
+        | undefined,
+    )
   }
 
-  if (message.type === 'attachment' && message.attachment) {
-    totalTokens += roughTokenCountEstimationForAttachment(message.attachment)
-  }
+  // if (message.type === 'attachment' && message.attachment) {
+  //   const userMessages = normalizeAttachmentForAPI(message.attachment)
+  //   let total = 0
+  //   for (const userMsg of userMessages) {
+  //     total += roughTokenCountEstimationForContent(userMsg.message.content)
+  //   }
+  //   return total
+  // }
 
-  return totalTokens
+  return 0
 }
 
 function roughTokenCountEstimationForMessageContent(
@@ -92,111 +116,70 @@ function roughTokenCountEstimationForMessageContent(
 
 function roughTokenCountEstimationForContent(
   content:
-    | NonNullable<Message['message']>['content']
-    | Array<Record<string, unknown>>
-    | null
+    | string
+    | Array<ContentBlock>
+    | Array<ContentBlockParam>
     | undefined,
 ): number {
-  if (content == null) {
+  if (!content) {
     return 0
   }
-
   if (typeof content === 'string') {
     return roughTokenCountEstimation(content)
   }
-
-  if (Array.isArray(content)) {
-    let totalTokens = 0
-    for (const block of content) {
-      totalTokens += roughTokenCountEstimationForBlock(block)
-    }
-    return totalTokens
+  let totalTokens = 0
+  for (const block of content) {
+    totalTokens += roughTokenCountEstimationForBlock(block)
   }
-
-  return roughTokenCountEstimationForBlock(content)
+  return totalTokens
 }
 
-function roughTokenCountEstimationForBlock(block: unknown): number {
-  if (block == null) {
-    return 0
-  }
-
+function roughTokenCountEstimationForBlock(
+  block: string | ContentBlock | ContentBlockParam,
+): number {
   if (typeof block === 'string') {
     return roughTokenCountEstimation(block)
   }
-
-  if (typeof block !== 'object') {
-    return roughTokenCountEstimation(String(block))
+  if (block.type === 'text') {
+    return roughTokenCountEstimation(block.text)
   }
-
-  const record = block as Record<string, unknown>
-  const type = record.type
-
-  if (type === 'text' && typeof record.text === 'string') {
-    return roughTokenCountEstimation(record.text)
-  }
-
-  if (type === 'refusal' && typeof record.refusal === 'string') {
-    return roughTokenCountEstimation(record.refusal)
-  }
-
-  if (
-    type === 'image' ||
-    type === 'image_url' ||
-    type === 'document' ||
-    type === 'input_image'
-  ) {
-    // Images and documents are expensive but their serialized form is not a
-    // useful proxy for token count. Use a conservative fixed cost so we do not
-    // undercount and miss compaction thresholds.
+  if (block.type === 'image' || block.type === 'document') {
+    // https://platform.claude.com/docs/en/build-with-claude/vision#calculate-image-costs
+    // tokens = (width px * height px)/750
+    // Images are resized to max 2000x2000 (5333 tokens). Use a conservative
+    // estimate that matches microCompact's IMAGE_MAX_TOKEN_SIZE to avoid
+    // underestimating and triggering auto-compact too late.
+    //
+    // document: base64 PDF in source.data.  Must NOT reach the
+    // jsonStringify catch-all — a 1MB PDF is ~1.33M base64 chars →
+    // ~325k estimated tokens, vs the ~2000 the API actually charges.
+    // Same constant as microCompact's calculateToolResultTokens.
     return 2000
   }
-
-  if (type === 'input_audio') {
-    const inputAudio = record.input_audio as Record<string, unknown> | undefined
-    if (inputAudio && typeof inputAudio.data === 'string') {
-      return roughTokenCountEstimation(inputAudio.data)
-    }
-    return roughTokenCountEstimation(JSON.stringify(record))
+  if (block.type === 'tool_result') {
+    return roughTokenCountEstimationForContent(block.content as any)
   }
-
-  if (type === 'tool_use') {
+  if (block.type === 'tool_use') {
+    // input is the JSON the model generated — arbitrarily large (bash
+    // commands, Edit diffs, file contents).  Stringify once for the
+    // char count; the API re-serializes anyway so this is what it sees.
     return roughTokenCountEstimation(
-      String(record.name ?? '') + JSON.stringify(record.input ?? {}),
+      block.name + JSON.stringify(block.input ?? {}),
     )
   }
-
-  if (type === 'tool_result') {
-    return roughTokenCountEstimationForContent(record.content)
+  if (block.type === 'thinking') {
+    return roughTokenCountEstimation(block.thinking)
   }
-
-  if (type === 'thinking') {
-    const thinking = record.thinking
-    return typeof thinking === 'string'
-      ? roughTokenCountEstimation(thinking)
-      : roughTokenCountEstimation(JSON.stringify(record))
+  if (block.type === 'redacted_thinking') {
+    return roughTokenCountEstimation(block.data)
   }
-
-  if (type === 'redacted_thinking') {
-    return typeof record.data === 'string'
-      ? roughTokenCountEstimation(record.data)
-      : roughTokenCountEstimation(JSON.stringify(record))
-  }
-
-  if (type === 'file') {
-    const file = record.file as Record<string, unknown> | undefined
-    if (file && typeof file.file_data === 'string') {
-      return roughTokenCountEstimation(file.file_data)
-    }
-    return roughTokenCountEstimation(JSON.stringify(record))
-  }
-
-  if (type === 'tool_calls' && Array.isArray(record.tool_calls)) {
-    return roughTokenCountEstimation(JSON.stringify(record.tool_calls))
-  }
-
-  return roughTokenCountEstimation(JSON.stringify(record))
+  // server_tool_use, web_search_tool_result, mcp_tool_use, etc. —
+  // text-like payloads (tool inputs, search results, no base64).
+  // Stringify-length tracks the serialized form the API sees; the
+  // key/bracket overhead is single-digit percent on real blocks.
+  return roughTokenCountEstimation(JSON.stringify(block))
 }
+
 
 function roughTokenCountEstimationForAttachment(
   attachment: Attachment,

@@ -1,7 +1,10 @@
 import chalk from 'chalk';
 import * as React from 'react';
 import { Box, Text, useInput } from '../../ink.js';
+import { COMMON_HELP_ARGS, COMMON_INFO_ARGS } from '../../constants/xml.js';
 import { useAppState, useSetAppState } from '../../state/AppState.js';
+import { getInitialSettings } from '../../utils/settings/settings.js';
+import { validateModel } from '../../utils/model/validateModel.js';
 import type {
 	CommandResultDisplay,
 	LocalJSXCommandCall,
@@ -31,12 +34,29 @@ const MODEL_SUMMARIES: Record<(typeof MODEL_OPTIONS)[number], string> = {
 	'gpt-4o': 'Multimodal GPT-4o line with balanced responsiveness.',
 };
 
+function getDefaultModel(): string {
+	return getInitialSettings().model as string;
+}
+
 function renderModelLabel(model: string | null): string {
-	return model ?? 'default';
+	if (!model || model === getDefaultModel()) {
+		return `${model ?? getDefaultModel()} (default)`;
+	}
+	return model;
+}
+
+function ShowCurrentModel({
+	onDone,
+}: {
+	onDone: (result?: string, options?: { display?: CommandResultDisplay }) => void;
+}): React.ReactNode {
+	const model = useAppState(s => s.mainLoopModel);
+	onDone(`Current model: ${chalk.bold(renderModelLabel(model))}`);
+	return null;
 }
 
 function ModelPicker({
-	onDone
+	onDone,
 }: {
 	onDone: (result?: string, options?: { display?: CommandResultDisplay }) => void;
 }): React.ReactNode {
@@ -47,8 +67,13 @@ function ModelPicker({
 		MODEL_OPTIONS.findIndex(option => option === mainLoopModel)
 	);
 	const [selectedIndex, setSelectedIndex] = React.useState(currentIndex);
+	const [submitted, setSubmitted] = React.useState(false);
 
 	useInput((input, key) => {
+		if (submitted) {
+			return;
+		}
+
 		if (key.leftArrow || key.upArrow) {
 			setSelectedIndex(index =>
 				index <= 0 ? MODEL_OPTIONS.length - 1 : index - 1
@@ -63,18 +88,19 @@ function ModelPicker({
 			return;
 		}
 
-		if (key.escape||(key.ctrl&&input=='c')) {
+		if (key.escape || (key.ctrl && input === 'c')) {
 			onDone(`Kept model as ${chalk.bold(renderModelLabel(mainLoopModel))}`, {
-				display: 'system'
+				display: 'system',
 			});
 			return;
 		}
 
 		if (key.return) {
 			const nextModel = MODEL_OPTIONS[selectedIndex] ?? MODEL_OPTIONS[0];
+			setSubmitted(true);
 			setAppState(prev => ({
 				...prev,
-				mainLoopModel: nextModel
+				mainLoopModel: nextModel,
 			}));
 			onDone(`Set model to ${chalk.bold(nextModel)}`);
 			return;
@@ -82,7 +108,7 @@ function ModelPicker({
 
 		if (input === 'q') {
 			onDone(`Kept model as ${chalk.bold(renderModelLabel(mainLoopModel))}`, {
-				display: 'system'
+				display: 'system',
 			});
 		}
 	});
@@ -106,57 +132,142 @@ function ModelPicker({
 					const isCurrent = option === mainLoopModel;
 					const accent = MODEL_ACCENTS[option];
 					return (
-						<Box key={option}>
-							<Text color={isSelected ? accent : 'gray'}>
-								{isSelected ? '› ' : '  '}
-							</Text>
-							<Text color={accent}>● </Text>
-							<Text color={isSelected ? accent : undefined} bold={isSelected}>
-								{option}
-							</Text>
-							{isCurrent ? (
-								<Text color="gray">{isSelected ? ' current' : ' · current'}</Text>
+						<Box key={option} flexDirection="column">
+							<Box>
+								<Text color={isSelected ? accent : 'gray'}>
+									{isSelected ? '› ' : '  '}
+								</Text>
+								<Text color={accent}>● </Text>
+								<Text color={isSelected ? accent : undefined} bold={isSelected}>
+									{option}
+								</Text>
+								{isCurrent ? (
+									<Text color="gray">
+										{isSelected ? ' current' : ' · current'}
+									</Text>
+								) : null}
+							</Box>
+							{isSelected ? (
+								<Text dimColor>{MODEL_SUMMARIES[option]}</Text>
 							) : null}
 						</Box>
 					);
 				})}
 			</Box>
+			<Text dimColor>
+				Selected: {chalk.bold(selectedModel)}
+			</Text>
 		</Box>
 	);
 }
 
 function SetModelAndClose({
 	args,
-	onDone
+	onDone,
 }: {
 	args: string;
 	onDone: (result?: string, options?: { display?: CommandResultDisplay }) => void;
 }): React.ReactNode {
 	const setAppState = useSetAppState();
+	const [phase, setPhase] = React.useState<'checking' | 'done' | 'error'>(
+		'checking'
+	);
+	const [message, setMessage] = React.useState<string>(
+		`Checking model ${chalk.bold(args.trim() || '...')}...`
+	);
 
 	React.useEffect(() => {
-		const model = args.trim();
-		if (!model) {
-			onDone('Missing model name.', { display: 'system' });
-			return;
+		async function handleModelChange(): Promise<void> {
+			const model = args.trim();
+			if (!model) {
+				setPhase('error');
+				setMessage('Missing model name.');
+				onDone('Missing model name.', { display: 'system' });
+				return;
+			}
+
+			const normalized = model.toLowerCase();
+			if (normalized === 'default' || normalized === 'auto') {
+				const defaultModel = getDefaultModel();
+				setAppState(prev => ({
+					...prev,
+					mainLoopModel: defaultModel,
+				}));
+				setPhase('done');
+				setMessage(`Model switched to ${chalk.bold(renderModelLabel(defaultModel))}`);
+				onDone(`Model switched to ${chalk.bold(renderModelLabel(defaultModel))}`);
+				return;
+			}
+
+			try {
+				const { valid, error } = await validateModel(model);
+				if (!valid) {
+					setPhase('error');
+					setMessage(error || `Model '${model}' not found`);
+					onDone(error || `Model '${model}' not found`, {
+						display: 'system',
+					});
+					return;
+				}
+
+				setAppState(prev => ({
+					...prev,
+					mainLoopModel: model,
+				}));
+				setPhase('done');
+				setMessage(`Model switched to ${chalk.bold(model)}`);
+				onDone(`Model switched to ${chalk.bold(model)}`);
+			} catch (error) {
+				const errorMessage = `Failed to validate model: ${(error as Error).message}`;
+				setPhase('error');
+				setMessage(errorMessage);
+				onDone(errorMessage, {
+					display: 'system',
+				});
+			}
 		}
 
-		setAppState(prev => ({
-			...prev,
-			mainLoopModel: model === 'default' ? "" : model
-		}));
-		onDone(
-			`Set model to ${chalk.bold(
-				renderModelLabel(model === 'default' ? null : model)
-			)}`
-		);
+		void handleModelChange();
 	}, [args, onDone, setAppState]);
 
+	return (
+		<Box marginTop={1} paddingX={1} flexDirection="column">
+			<Text color={phase === 'error' ? 'redBright' : 'cyanBright'}>
+				{phase === 'checking'
+					? 'Checking model…'
+					: phase === 'done'
+						? 'Done'
+						: 'Unable to switch model'}
+			</Text>
+			<Text dimColor>{message}</Text>
+		</Box>
+	);
+}
+
+function ShowHelp({
+	onDone,
+}: {
+	onDone: (result?: string, options?: { display?: CommandResultDisplay }) => void;
+}): React.ReactNode {
+	onDone(
+		'Usage: /model [modelName]\n\nUse /model without arguments to open the picker. Supported quick values: default, auto.',
+		{
+			display: 'system',
+		}
+	);
 	return null;
 }
 
 export const call: LocalJSXCommandCall = async (onDone, _context, args) => {
 	const trimmedArgs = args?.trim() || '';
+
+	if (COMMON_HELP_ARGS.includes(trimmedArgs)) {
+		return <ShowHelp onDone={onDone} />;
+	}
+
+	if (COMMON_INFO_ARGS.includes(trimmedArgs)) {
+		return <ShowCurrentModel onDone={onDone} />;
+	}
 
 	if (trimmedArgs) {
 		return <SetModelAndClose args={trimmedArgs} onDone={onDone} />;

@@ -254,4 +254,16 @@ src/launcher.tsx 构造并传入 AppStateProvider initialState；
 主要实现了claude左下角的切换权限模式，同时也增加了前端渲染的UI，先加入了default、acceptEdits、passthrough三种模式，按下shift+tab时会通过一个提前设定的which函数获取下一个模式，更改ToolPermisionContext的mode然后重新更改AppState,
 这样就改掉了应用的状态，在useCanUseTool钩子中，acceptEdit会跳过所有编辑需要同意的命令
 完善了一点工具执行的鉴权，虽然还是有挺多问题
+下一步要继续优化Harness工程的自动压缩， 睡眠等工具保证支持长时间运行
+5.25
+主要是补上了之前一直没弄好的autoCompact，还是挺复杂的各种外部函数调用，主要还是各种估算token去确定是否要进行压缩，挺复杂的计算机制，会根据上下文长度来预估产生的输出token，预留输出的token，然后如果
+最终的估算token超过了警戒token阈值，就开启自动压缩，会调用轻量级的模型关闭思考模式来做简单的压缩，然后再压缩后附上一些不方便压缩丢失的信息
+还会附上一条压缩边界消息来界定上面的消息为压缩后的消息，框架算大好了，还没真正测试过，因为好多代码没弄好...
+
+先用简单的鉴权替代了PowershellTool源代码中复杂的逻辑，以后有时间回去看，主要还是通过powershell执行解析命令，解析出ast树，然后做一系列安全检查
+
+前端UI优化主要优化了命令选择面板，权限询问卡片出现时异常滚动，优化了右下角结束信息的排版，welcome界面的压缩，
+
+/model 更往claude靠了，主要更改模型不是直接改，而是用一个只允许输出一个token输入hi的sideQuery请求，如果成功才会切换模型
+增加了sleep函数，主要用来做api重试时等待睡眠
 

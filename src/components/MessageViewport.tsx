@@ -5,6 +5,7 @@ import {stringWidth} from '../ink/stringWidth.js';
 
 const USER_MESSAGE_BG = '#2e2f30';
 const USER_MESSAGE_FG = '#f0f0ea';
+const ASSISTANT_BRAND = '#23d3b6';
 
 export type ViewportMessage = {
   id: number;
@@ -71,7 +72,9 @@ export default function MessageViewport({
       ) : null}
       {messages.map((message, index) => (
         <Box key={message.id} flexDirection="column" width="100%">
-          {index > 0 ? <Text>{' '}</Text> : null}
+          {shouldInsertViewportSpacer(messages[index - 1], message) ? (
+            <Text>{' '}</Text>
+          ) : null}
           {renderMessageNode(message, width, blinkOn)}
           {message.role === 'meta' && index < messages.length - 1 ? (
             <Text>{' '}</Text>
@@ -85,11 +88,40 @@ export default function MessageViewport({
   );
 }
 
+function shouldInsertViewportSpacer(
+  previousMessage: ViewportMessage | undefined,
+  currentMessage: ViewportMessage,
+): boolean {
+  if (!previousMessage) {
+    return false;
+  }
+
+  // Keep tool results/progress visually attached to the tool call above them.
+  if (
+    currentMessage.role === 'tool' &&
+    currentMessage.toolDisplayStyle &&
+    currentMessage.toolDisplayStyle !== 'use'
+  ) {
+    return false;
+  }
+
+  if (previousMessage.role === 'meta') {
+    return false;
+  }
+
+  if (currentMessage.role === 'meta') {
+    return true;
+  }
+
+  return true;
+}
+
 function renderMessageNode(message: ViewportMessage, width: number, blinkOn: boolean): React.ReactNode {
   if (message.role === 'meta') {
+    const content = message.text ? padMetaLine(message.text, width) : ' ';
     return (
-      <Text key={message.id} dimColor wrap="truncate-end">
-        {message.text || ' '}
+      <Text key={message.id} color="gray" dimColor wrap="truncate-end">
+        {content}
       </Text>
     );
   }
@@ -116,9 +148,9 @@ function renderMessageNode(message: ViewportMessage, width: number, blinkOn: boo
     const assistantPrefix =
       message.animatePrefix === 'blink'
         ? blinkOn
-          ? '•  '
+          ? '✦  '
           : '   '
-        : '●  ';
+        : '✦  ';
 
     return (
       <Box
@@ -128,7 +160,7 @@ function renderMessageNode(message: ViewportMessage, width: number, blinkOn: boo
         width={width}
       >
         <Box flexShrink={0} width={3}>
-          <Text bold>{assistantPrefix}</Text>
+          <Text bold color={ASSISTANT_BRAND}>{assistantPrefix}</Text>
         </Box>
         <Box flexDirection="column" flexGrow={1} flexShrink={1} width={Math.max(1, width - 3)}>
           {message.content}
@@ -158,13 +190,12 @@ function renderMessageNode(message: ViewportMessage, width: number, blinkOn: boo
 
 function renderMessage(message: ViewportMessage, width: number, blinkOn: boolean): string[] {
   if (message.role === 'meta') {
-    return [message.text];
+    return [chalk.gray.dim(padMetaLine(message.text, width))];
   }
 
   if (message.role === 'user') {
     const contentWidth = Math.max(1, width - 2);
     return [
-      '',
       ...wrapPlain(message.text, contentWidth).map((line, index) => {
         const prefix = index === 0 ? '> ' : '  ';
         return chalk.bgHex(USER_MESSAGE_BG).hex(USER_MESSAGE_FG)(
@@ -187,14 +218,18 @@ function renderMessage(message: ViewportMessage, width: number, blinkOn: boolean
   const assistantPrefix =
     message.animatePrefix === 'blink'
       ? blinkOn
-        ? chalk.white.bold('•  ')
+        ? chalk.hex(ASSISTANT_BRAND).bold('✦  ')
         : '   '
-      : chalk.white.bold('●  ');
+      : chalk.hex(ASSISTANT_BRAND).bold('✦  ');
 
-  return [
-    '',
-    ...markdownLines.map((line, index) => `${index === 0 ? assistantPrefix : '   '}${line}`),
-  ];
+  return markdownLines.map((line, index) => `${index === 0 ? assistantPrefix : '   '}${line}`);
+}
+
+function padMetaLine(text: string, width: number): string {
+  const safeWidth = Math.max(1, width);
+  const visibleText = truncatePlain(text, safeWidth);
+  const padding = Math.max(0, safeWidth - stringWidth(visibleText));
+  return `${' '.repeat(padding)}${visibleText}`;
 }
 
 function getToolPrefix(

@@ -13,8 +13,8 @@ import { PowerShellTool } from './tools/PowerShellTool/PowerShellTool'
 import { findGitBashPath } from './utils/windowsPaths'
 export function getAllBaseTools():Tools{
     return [
-        // PowerShellTool
-        GlobTool,GrepTool,FileEditTool,FileReadTool,FileWriteTool
+        PowerShellTool,
+        // GlobTool,GrepTool,FileEditTool,FileReadTool,FileWriteTool
     ]//GlobTool,GrepTool,FileReadTool,FileEditTool,BashTool,WebFetchTool,WebSearchTool,FileWriteTool
 }
 

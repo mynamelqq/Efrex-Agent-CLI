@@ -5,7 +5,9 @@ export class AbortError extends Error {
     this.name = 'AbortError'
   }
 }
-
+export function hasExactErrorMessage(error: unknown, message: string): boolean {
+  return error instanceof Error && error.message === message
+}
 /**
  * Extract the errno code (e.g., 'ENOENT', 'EACCES') from a caught error.
  * Returns undefined if the error has no code or is not an ErrnoException.

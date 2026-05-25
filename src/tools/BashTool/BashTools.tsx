@@ -549,7 +549,7 @@ export const BashTool = buildTool({
     };
   },
   async checkPermissions(input, context): Promise<PermissionResult> {
-    // return bashToolHasPermission(input, context);
+    return bashToolHasPermission(input, context);
   },
 } satisfies ToolDef<InputSchema, Out>);
 

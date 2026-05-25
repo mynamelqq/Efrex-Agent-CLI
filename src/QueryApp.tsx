@@ -7,7 +7,14 @@ import { useQueueProcessor } from './hooks/useQueueProcessor.js';
 import { randomUUID } from 'node:crypto';
 import { FileHistoryState } from './utils/fileHistory.js';
 
-import { Box, Text, useApp, useInput, useWindowSize } from './ink.js';
+import {
+	Box,
+	Text,
+	useApp,
+	useInput,
+	useTerminalFocus,
+	useWindowSize
+} from './ink.js';
 import { stringWidth } from './ink/stringWidth.js';
 import { createAbortController } from './utils/abortController.js';
 import { createFileStateCacheWithSizeLimit,READ_FILE_STATE_CACHE_SIZE } from './utils/fileStateCache.js';
@@ -416,8 +423,8 @@ function formatWorkedDuration(ms: number): string {
 }
 
 function buildTurnDurationLine(durationMs: number, width: number): string {
-	const label = `Worked for ${formatWorkedDuration(durationMs)}`;
-	return chalk.gray(label);
+	const label = `done · ${formatWorkedDuration(durationMs)}`;
+	return fitDisplay(label, Math.max(1, width));
 }
 
 function getTranscriptHeaderLines({
@@ -534,32 +541,31 @@ function getTranscriptHeaderLines({
 		),
 		makeRow(
 			'╭ ────── ╮',
-			'Tips',
+			'✦  Tips',
 			value => brandColor(value),
-			value => primary.bold(`${value}`)
-		),
-		makeRow('│  •  •  │', '', value => brandColor(value)),
-		makeRow('│  ────  │', '', value => brandColor(value)),
-		makeRow(
-			'─────  ─────',
-			'→  Ask questions about your codebase',
-			value => brandColor(value),
-			action
+			value => primary.bold(value)
 		),
 		// makeRow('╰─┬──┬─╯', '→  Ask questions about your codebase', value => chalk.blueBright(value), value => chalk.gray(value.replace('→', chalk.yellowBright('→')))),
 		// makeRow('      ', '', value => chalk.blueBright(value)),
 		makeRow(
-			`model: ${model} | effort: ${effort} `,
-			'→  Generate or refactor code',
-			value => muted(value),
+			'│  •  •  │',
+			'→  Ask questions about your codebase',
+			value => brandColor(value),
 			action
 		),
 		makeRow(
-			`${cwd}`,
-			'→  Run shell commands and analyze results',
-			value => brandColor.bold(value),
+			'╰─┬──┬─╯',
+			'→  Generate or refactor code',
+			value => brandColor(value),
 			action
 		),
+		makeRow(
+			`model: ${model} | effort: ${effort} `,
+			'→  Run shell commands and analyze results',
+			value => muted(value),
+			action
+		),
+		makeRow(`${cwd}`, '', value => brandColor.bold(value), value => value),
 		// makeRow('Type /help to see available commands', '→  Use natural language to automate tasks', value => chalk.gray(value.replace('/help', chalk.cyanBright('/help'))), value => chalk.gray(value.replace('→', chalk.yellowBright('→')))),
 		bottom,
 		''
@@ -902,17 +908,22 @@ function buildViewportMessages(
 		appendCompletedTurnFooter(fallbackId);
 	});
 
-	while (pendingFooters.length > 0) {
-		const footer = pendingFooters.shift();
-		if (!footer) {
-			break;
-		}
+		while (pendingFooters.length > 0) {
+			const footer = pendingFooters.shift();
+			if (!footer) {
+				break;
+			}
 
-		viewportMessages.push({
-			id: TURN_META_ID_BASE + viewportMessages.length + 1,
-			role: 'meta',
-			text: footer.text
-		});
+			viewportMessages.push({
+				id: TURN_META_ID_BASE + viewportMessages.length + 1,
+				role: 'meta',
+				text: ''
+			});
+			viewportMessages.push({
+				id: TURN_META_ID_BASE + viewportMessages.length + 1,
+				role: 'meta',
+				text: footer.text
+			});
 	}
 
 	return viewportMessages;
@@ -1314,6 +1325,7 @@ export default function QueryApp({
 }: Props) {
 	const { exit } = useApp();
 	const { columns, rows } = useWindowSize();
+	const isTerminalFocused = useTerminalFocus();
 	const [input, setInput] = useState('');
 	const [cursorSyncKey, setCursorSyncKey] = useState(0);
 	const [pastedContents, setPastedContents] = useState<Record<number, PastedContent>>({});
@@ -1508,7 +1520,10 @@ export default function QueryApp({
 	}, [appState]);
 
 	useEffect(() => {
-		if (completedTurnFooters.length > 0) {
+		if (
+			completedTurnFooters.length > 0 &&
+			scrollRef.current?.isSticky()
+		) {
 			scrollRef.current?.scrollToBottom();
 		}
 	}, [completedTurnFooters.length]);
@@ -1588,7 +1603,7 @@ export default function QueryApp({
 		exitTimerRef.current = setTimeout(() => {
 			setExitHint(false);
 			exitTimerRef.current = null;
-		}, 300);
+		}, 800);
 	}, [exit, exitHint, loading, queryGuard]);
 
 	const repinScroll = useCallback(() => {
@@ -2092,6 +2107,8 @@ const getToolUseContext = useCallback(
 	});
 
 	const activeToolUseConfirm = toolUseConfirmQueue[0];
+	const highlightInputChrome =
+		isTerminalFocused && loading && !activeToolUseConfirm;
 	const statusText = showSpinner
 		? streamingAssistant.text.trim().length > 0
 			? 'Efrex 正在生成回复...'
@@ -2136,6 +2153,14 @@ const getToolUseContext = useCallback(
 		20,
 		commandSelectorWidth - commandNameWidth - 4
 	);
+	const inputRuleColor = 'gray';
+	const inputPromptColor = !isTerminalFocused
+		? 'gray'
+		: activeToolUseConfirm
+			? 'gray'
+			: loading
+				? 'ansi:blueBright'
+				: 'ansi:greenBright';
   // Process queued commands when query completes and queue has items
 
 	const executeQueuedInput = useCallback(
@@ -2220,14 +2245,14 @@ const getToolUseContext = useCallback(
 				<PromptInputQueuedCommands width={terminalColumns} />
 				{!toolJSX?.shouldHidePromptInput ? (
 					<>
-						<Text color={loading ? 'blue' : 'gray'}>{inputRule}</Text>
+						<Text color={inputRuleColor}>{inputRule}</Text>
 						<Box
 							flexDirection="row"
 							flexWrap="nowrap"
 							width={terminalColumns - 2}
 						>
 							<Box flexShrink={0} width={2}>
-								<Text color={loading ? 'blueBright' : 'greenBright'}>
+								<Text color={inputPromptColor}>
 									›{' '}
 								</Text>
 							</Box>
@@ -2252,17 +2277,9 @@ const getToolUseContext = useCallback(
 								setPastedContents={setPastedContents}
 							/>
 						</Box>
-						<Text color={loading ? 'blue' : 'gray'}>{inputRule}</Text>
-						<Box paddingLeft={2}>
-							<Text color={permissionModeColor}>
-								{permissionModeLabel}
-								<Text dimColor> · Shift+Tab</Text>
-							</Text>
-						</Box>
-						{showCommandSelector && filteredCommands.length > 0 ? (
+						<Text color={inputRuleColor}>{inputRule}</Text>
+						{showCommandSelector ? (
 							<Box
-
-	
 								paddingX={1}
 								paddingY={0}
 								marginTop={1}
@@ -2334,18 +2351,29 @@ const getToolUseContext = useCallback(
 									);
 								})}
 							</Box>
-						) : null}
+						) : (
+							<>
+								<Box paddingLeft={2}>
+									<Text color={permissionModeColor}>
+										{permissionModeLabel}
+										<Text dimColor> · Shift+Tab</Text>
+									</Text>
+								</Box>
+							</>
+						)}
 					</>
 				) : null}
 			</Box>
 
-			<Box flexDirection="column" flexShrink={0}>
-				<Box>
-					{exitHint ? (
-						<Text dimColor>再按一次 Ctrl+C 确认退出</Text>
-					) : ""}
+			{!showCommandSelector ? (
+				<Box flexDirection="column" flexShrink={0}>
+					<Box>
+						{exitHint ? (
+							<Text color="subtle">再按一次 Ctrl+C 退出</Text>
+						) : ''}
+					</Box>
 				</Box>
-			</Box>
+			) : null}
 		</Box>
 	);
 

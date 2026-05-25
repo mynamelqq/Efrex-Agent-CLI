@@ -8,6 +8,10 @@
 // import { WEB_SEARCH_TOOL_NAME } from 'src/tools/WebSearchTool/prompt.js'
 // import type { Message } from 'src/package/message.js'
 // import { logForDebugging } from '../../utils/debug.js'
+// import { BASH_TOOL_NAME } from 'src/tools/BashTool/toolName.js'
+// import { POWERSHELL_TOOL_NAME } from 'src/tools/PowerShellTool/toolName.js'
+// import { FILE_WRITE_TOOL_NAME } from 'src/tools/FileWriteTool/prompt.js'
+// import { FILE_EDIT_TOOL_NAME } from 'src/tools/FileEditTool/constants.js'
 // import { QuerySource } from './querySource.js'
 // export type PendingCacheEdits = {
 //   trigger: 'auto'
@@ -26,15 +30,16 @@
 //   // to release the original strings from memory.
 //   clearedToolUseIds?: string[]
 // }
+// export const SHELL_TOOL_NAMES: string[] = [BASH_TOOL_NAME, POWERSHELL_TOOL_NAME]
 // const COMPACTABLE_TOOLS = new Set<string>([//要压缩的工具
 //   FILE_READ_TOOL_NAME,
-// //   ...SHELL_TOOL_NAMES,
+//   ...SHELL_TOOL_NAMES,
 //   GREP_TOOL_NAME,
 //   GLOB_TOOL_NAME,
 //   WEB_SEARCH_TOOL_NAME,
 //   WEB_FETCH_TOOL_NAME,
-// //   FILE_EDIT_TOOL_NAME,
-// //   FILE_WRITE_TOOL_NAME,
+//   FILE_EDIT_TOOL_NAME,
+//   FILE_WRITE_TOOL_NAME,
 // ])
 
 // // Inline from utils/toolResultStorage.ts — importing that file pulls in
@@ -64,17 +69,7 @@
 // //   // (session_memory, prompt_suggestion, etc.) from registering their
 // //   // tool_results in the global cachedMCState, which would cause the main
 // //   // thread to try deleting tools that don't exist in its own conversation.
-// //   if (feature('CACHED_MICROCOMPACT')) {
-// //     const mod = await getCachedMCModule()
-// //     const model = toolUseContext?.options.mainLoopModel ?? getMainLoopModel()
-// //     if (
-// //       mod.isCachedMicrocompactEnabled() &&
-// //       mod.isModelSupportedForCacheEditing(model) &&
-// //       isMainThreadSource(querySource)
-// //     ) {
-// //       return await cachedMicrocompactPath(messages, querySource)
-// //     }
-// //   }
+
 
 //   return { messages }
 // }

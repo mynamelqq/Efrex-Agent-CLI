@@ -1,6 +1,6 @@
 
 import { SYNTHETIC_MESSAGES, SYNTHETIC_MODEL } from './messages.js'
-import type { CompletionUsage as Usage} from 'openai/resources'
+import type { BetaUsage as Usage } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs'
 import { roughTokenCountEstimationForMessages } from 'src/services/tokenEstimation.js'
 
 import type {
@@ -23,7 +23,7 @@ export function getTokenUsage(message: Message): Usage | undefined {
     ) &&// 3. 过滤：文本类型的合成消息（内置固定消息）
     message.message.model !== SYNTHETIC_MODEL
   ) {
-    return message.message.usage as Usage
+    return message.message.usage as Usage //返回一条消息的使用量
   }
   return undefined
 }
@@ -69,7 +69,7 @@ function getAssistantMessageId(message: Message): string | undefined {
  * bearing record we walk back to the FIRST sibling with the same message.id
  * so every interleaved tool_result is included in the rough estimate.
  */
-export function tokenCountWithEstimation(messages: readonly Message[]): number {
+export function tokenCountWithEstimation(messages: readonly Message[]): number {//统计当前上下文窗口里还会被带上的内容。
   let i = messages.length - 1
   while (i >= 0) {
     const message = messages[i]
@@ -98,6 +98,8 @@ export function tokenCountWithEstimation(messages: readonly Message[]): number {
           j--
         }
       }
+      // 新加的消息还没有经过下一次 API，所以没有真实 token usage。
+// 因此这个函数做的是：最后一次 API 返回的真实 token 数+最后一次 API 之后新增消息的粗略估算 token 数
       return (
         getTokenCountFromUsage(usage) +
         roughTokenCountEstimationForMessages(
@@ -109,7 +111,7 @@ export function tokenCountWithEstimation(messages: readonly Message[]): number {
     }
     i--
   }
-  return roughTokenCountEstimationForMessages(
+  return roughTokenCountEstimationForMessages(//粗略估算一段内容、消息或多模态 block 会占用多少 token
     messages as Parameters<typeof roughTokenCountEstimationForMessages>[0],
   )
 }
@@ -125,6 +127,22 @@ export function getTokenCountFromUsage(usage: Usage): number {
     return 0
   }
   return (
-    (usage.total_tokens ?? 0)
+    (usage.input_tokens ?? 0) +
+    (usage.cache_creation_input_tokens ?? 0) +
+    (usage.cache_read_input_tokens ?? 0) +
+    (usage.output_tokens ?? 0)
   )
+}
+
+export function tokenCountFromLastAPIResponse(messages: Message[]): number {
+  let i = messages.length - 1
+  while (i >= 0) {
+    const message = messages[i]
+    const usage = message ? getTokenUsage(message) : undefined
+    if (usage) {
+      return getTokenCountFromUsage(usage)
+    }
+    i--
+  }
+  return 0
 }

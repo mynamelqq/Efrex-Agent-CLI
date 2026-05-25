@@ -2,11 +2,15 @@
 import type { Terminal } from 'src/query/transitions.js'
 import { normalizeMessagesForAPI, prependUserContext } from './utils/api.js'
 import { StreamingToolExecutor } from './services/tools/StreamingToolExecutor.js'
+import { AutoCompactTrackingState } from './services/compact/autoCompact.js'
 import { runTools } from './services/tools/toolOrchestration.js'
+import { getMessagesAfterCompactBoundary } from './utils/messages.js'
 import { createAssistantAPIErrorMessage, createUserInterruptionMessage } from './utils/messages.js'
 import { queryModelWithStreaming } from './services/api/efrex.js'
 import { buildQueryConfig } from './query/config.js'
 import { ImageResizeError } from './utils/imageResizer.js'
+import { autoCompactIfNeeded } from './services/compact/autoCompact.js'
+import { runAutoCompactStep } from './query/autoCompactStep.js'
 import type {
   AssistantMessage,
   Message,
@@ -17,11 +21,13 @@ import type {
   ToolUseSummaryMessage,
   UserMessage,
 } from 'src/package/message.js'
+import {randomUUID}from "crypto"
 import { asSystemPrompt, SystemPrompt } from './prompt.js'
 import { logForDebugging } from './utils/debug.js'
 import { createAttachmentMessage } from './utils/messages.js'
 import { CanUseToolFn } from './hooks/useCanUseTool.js'
 import { applyToolResultBudget } from './utils/toolResultStorage.js'
+import { buildPostCompactMessages } from './services/compact/compact.js'
 export type QueryParams = {
   messages: Message[]
   systemPrompt: SystemPrompt
@@ -41,6 +47,7 @@ type State = {
   stopHookActive: boolean | undefined
   turnCount: number
   toolUseContext: ToolUseContext
+ autoCompactTracking: AutoCompactTrackingState | undefined
 }
 
 function collectToolUseBlocks(assistantMessage: AssistantMessage): ToolUseBlock[] {
@@ -89,12 +96,14 @@ async function* queryLoop(
     stopHookActive: undefined,
     hasAttemptedReactiveCompact: false,
     turnCount: 1,
+    autoCompactTracking: undefined,
   }
 
   while (true) {
 
     const {
         messages,
+        autoCompactTracking,
         hasAttemptedReactiveCompact,
         stopHookActive,
         turnCount,
@@ -104,29 +113,50 @@ async function* queryLoop(
     }
 
     let toolUseContext = state.toolUseContext
-    const messagesForQuery = await applyToolResultBudget(state.messages,
+    let messagesForQuery = getMessagesAfterCompactBoundary(messages)
+
+    let tracking = autoCompactTracking
+    messagesForQuery = await applyToolResultBudget(
+      state.messages,
       toolUseContext.contentReplacementState,
       undefined,
       new Set(
-        toolUseContext.options.tools//从工具配置里提取出【没有设置最大字符限制】的工具名称，并存进 Set 去重。
+        toolUseContext.options.tools
           .filter(t => !Number.isFinite(t.maxResultSizeChars))
           .map(t => t.name),
       ),
     )
-    // const { compactionResult, consecutiveFailures } = await autoCompactIfNeeded(
-    //   messagesForQuery,
-    //   toolUseContext,
-    //   {
-    //     systemPrompt,
-    //     userContext,
-    //     systemContext,
-    //     toolUseContext,
-    //     forkContextMessages: messagesForQuery,
-    //   },
-    //   querySource,
-    //   tracking,
-    //   snipTokensFreed,
-    // )
+    const autoCompactOutcome = await runAutoCompactStep(
+      {
+        messagesForQuery,
+        toolUseContext,
+        autoCompactTracking: tracking,
+        autoCompactQuerySource: {
+          systemPrompt,
+          userContext,
+          systemContext,
+          toolUseContext,
+          forkContextMessages: messagesForQuery,
+        },
+      },
+      {
+        autoCompactIfNeeded,
+        buildPostCompactMessages,
+        createTurnId: randomUUID,
+      },
+    )
+
+    tracking = autoCompactOutcome.autoCompactTracking
+    if (autoCompactOutcome.postCompactMessages) {
+      // for (const message of autoCompactOutcome.postCompactMessages) {
+      //   yield message
+      // }
+      messagesForQuery = autoCompactOutcome.messagesForQuery
+    } else if (autoCompactOutcome.consecutiveFailures !== undefined) {
+      // Autocompact failed — propagate failure count so the circuit breaker
+      // can stop retrying on the next iteration.
+      tracking = autoCompactOutcome.autoCompactTracking
+    }
     toolUseContext = { ...toolUseContext, messages: messagesForQuery }
 
     yield { type: 'stream_request_start' }
@@ -155,6 +185,10 @@ async function* queryLoop(
         tools: toolUseContext.options.tools,
         signal: toolUseContext.abortController.signal,
         options: {
+          async getToolPermissionContext() {
+            const appState = toolUseContext.getAppState()
+            return appState.toolPermissionContext
+          },
           model,
           toolChoice: undefined,
           isNonInteractiveSession: toolUseContext.options.isNonInteractiveSession,
@@ -276,6 +310,7 @@ async function* queryLoop(
     }
     state = {
       ...state,
+      autoCompactTracking: tracking,
       messages:messagesForQuery.concat(assistantMessages,toolResults),
       toolUseContext,
       turnCount: nextTurnCount,

@@ -10,6 +10,8 @@ import { logError } from './utils/log.js'
 import { getLocalISODate } from './constants/common'
 // Default max output tokens
 const MAX_OUTPUT_TOKENS_DEFAULT = 32_000
+// Maximum output tokens for compact operations
+export const COMPACT_MAX_OUTPUT_TOKENS = 20_000
 const MAX_OUTPUT_TOKENS_UPPER_LIMIT = 64_000
 /**
  * This context is prepended to each conversation, and cached for the duration of the conversation.
@@ -259,4 +261,61 @@ function modelMatchesFamily(model: string, family: string): boolean {
   const escapedFamily = family.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   return new RegExp(`(^|[./-])${escapedFamily}([./-]|$)`, 'i').test(model)
 }
+export const MODEL_CONTEXT_WINDOW_DEFAULT = 500_000
 
+export function getContextWindowForModel(
+  model: string,
+  betas?: string[],
+): number {
+  const m = normalizeModelName(model)
+
+  // ── OpenAI ────────────────────────────────────────────────────────
+  if (m.includes('gpt-5')) return 400_000
+  if (m.includes('gpt-4.1')) return 1_000_000
+  if (m.includes('gpt-4o')) return 128_000
+  if (m.includes('gpt-4-turbo')) return 128_000
+  if (m.includes('gpt-4')) return 32_000   // GPT-4 base: 8K-32K
+  // o-series reasoning models
+  if (m.startsWith('o3') || m.startsWith('o4')) return 200_000
+
+  // ── Anthropic Claude ──────────────────────────────────────────────
+  // Claude 4 family (opus-4 / sonnet-4 / haiku-4) → API 1M
+  if (
+    m.includes('opus-4') ||
+    m.includes('sonnet-4') ||
+    m.includes('haiku-4')
+  ) return 1_000_000
+  // Claude 3.7 Sonnet → 200K
+  if (m.includes('3-7-sonnet')) return 200_000
+  // Claude 3.5 → 200K
+  if (m.includes('3-5-sonnet') || m.includes('3-5-haiku')) return 200_000
+  // Claude 3 (opus / sonnet / haiku) → 100K
+  if (m.includes('claude-3')) return 100_000
+
+  // ── Google Gemini ─────────────────────────────────────────────────
+  if (m.includes('gemini')) return 2_000_000
+
+  // ── Meta Llama ────────────────────────────────────────────────────
+  if (m.includes('llama-4') || m.includes('llama4')) return 10_000_000
+  if (m.includes('llama')) return 128_000
+
+  // ── DeepSeek ──────────────────────────────────────────────────────
+  if (m.includes('deepseek')) return 1_000_000
+
+  // ── Chinese model families ───────────────────────────────────────
+  if (modelMatchesFamily(m, 'qwen')) return 1_000_000
+  if (modelMatchesFamily(m, 'glm')) return 128_000
+  if (modelMatchesFamily(m, 'doubao')) return 128_000
+  if (modelMatchesFamily(m, 'moonshot') || modelMatchesFamily(m, 'kimi')) return 128_000
+  if (modelMatchesFamily(m, 'hunyuan')) return 256_000
+  if (
+    modelMatchesFamily(m, 'ernie') ||
+    modelMatchesFamily(m, 'spark') ||
+    modelMatchesFamily(m, 'baichuan') ||
+    modelMatchesFamily(m, 'minimax') ||
+    modelMatchesFamily(m, 'yi') ||
+    modelMatchesFamily(m, 'step')
+  ) return 128_000
+
+  return MODEL_CONTEXT_WINDOW_DEFAULT
+}

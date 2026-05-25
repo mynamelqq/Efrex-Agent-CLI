@@ -9,12 +9,15 @@ import type { SystemPrompt } from 'src/prompt'
 import type { ThinkingConfig } from "src/utils/effort.js"
 import { toolMatchesName, type Tools } from 'src/Tool'
 import { normalizeMessagesForAPI } from 'src/utils/api.js'
+import { ToolPermissionContext } from 'src/Tool'
 import { createAssistantAPIErrorMessage } from 'src/utils/messages.js'
 import { type EffortValue } from 'src/utils/effort'
 import { getAPIProvider } from 'src/utils/model/provider.js'
 import { withStreamingVCR } from '../vcr.js'
 
 export type Options = {
+  maxOutputTokensOverride?: number
+  getToolPermissionContext: () => Promise<ToolPermissionContext>
   model: string
   isNonInteractiveSession: boolean
   toolChoice?: 'auto' | 'none' | undefined
@@ -27,6 +30,7 @@ export type Options = {
   effortValue?: EffortValue
   advisorModel?: string
   addNotification?: (notif: Notification) => void
+
 }
 
 type QueryModelArgs = {

@@ -63,7 +63,7 @@ function extractCwdResetWarning(stderr: string): {
 
 export default function BashToolResultMessage({
   content: {
-    stdout = '',
+    stdout: rawStdout = '',
     stderr: stdErrWithViolations = '',
     isImage,
     returnCodeInterpretation,
@@ -79,6 +79,7 @@ export default function BashToolResultMessage({
 
   // Extract "Shell cwd was reset" warning to render it with warning color instead of error
   const { cleanedStderr: stderr, cwdResetWarning } = extractCwdResetWarning(stderrWithoutViolations);
+  const stdout = rawStdout.trimEnd();
 
   // If this is an image, we don't want to truncate it in the UI
   if (isImage) {

@@ -3,22 +3,26 @@ import type { ToolUseContext } from '../../Tool.js'
 import type { Message } from 'src/package/message.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { isEnvTruthy } from '../../utils/envUtils.js'
-import {getModelMaxOutputToken}from "src/context.js"
+import { hasExactErrorMessage } from 'src/utils/errors.js'
+import { getModelMaxOutputTokens } from 'src/context.js'
 import { logError } from '../../utils/log.js'
 import { tokenCountWithEstimation } from 'src/utils/tokens.js'
+import { getContextWindowForModel } from 'src/context.js'
 import { QuerySource } from './querySource.js'
+import { compactConversation } from './compact.js'
 import { create } from 'lodash'
+import { CompactionResult,RecompactionInfo,ERROR_MESSAGE_USER_ABORT } from './compact.js'
 import { createDefaultGlobalConfig } from 'src/utils/config.js'
 const MAX_OUTPUT_TOKENS_FOR_SUMMARY = 20_000
-export type AutoCompactTrackingState = {
-  compacted: boolean
-  turnCounter: number
+export type AutoCompactTrackingState = {//自动压缩跟踪
+  compacted: boolean//是否压缩
+  turnCounter: number//轮次
   // Unique ID per turn
-  turnId: string
+  turnId: string//第几轮
   // Consecutive autocompact failures. Reset on success.
   // Used as a circuit breaker to stop retrying when the context is
   // irrecoverably over the limit (e.g., prompt_too_long).
-  consecutiveFailures?: number
+  consecutiveFailures?: number//连续失败次数
 }
 export const AUTOCOMPACT_BUFFER_TOKENS = 13_000///** 自动压缩缓冲区 Token 阈值 */
 export const WARNING_THRESHOLD_BUFFER_TOKENS = 20_000/** 警告阈值缓冲区 Token 上限 */
@@ -27,11 +31,11 @@ export const MANUAL_COMPACT_BUFFER_TOKENS = 3_000/** 手动压缩缓冲区 Token
 // Conservative estimate for tool result growth per turn.
 // Typical tool results (file reads, grep, bash) average ~5-10K tokens;
 // occasional large reads can spike to 20K+.
-const TOOL_RESULT_GROWTH_ESTIMATE = 15_000
+const TOOL_RESULT_GROWTH_ESTIMATE = 15_000//每一轮工具结果预算
 // Stop trying autocompact after this many consecutive failures.
 // BQ 2026-03-10: 1,279 sessions had 50+ consecutive failures (up to 3,272)
 // in a single session, wasting ~250K API calls/day globally.
-const MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3
+const MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3//最大失败次数
 export async function shouldAutoCompact(
   messages: Message[],
   model: string,
@@ -42,7 +46,7 @@ export async function shouldAutoCompact(
   snipTokensFreed = 0,
 ): Promise<boolean> {
   // Recursion guards. session_memory and compact are forked agents that
-  // would deadlock.
+  // would deadlock.思索
   if (querySource === 'session_memory' || querySource === 'compact') {
     return false
   }
@@ -51,13 +55,10 @@ export async function shouldAutoCompact(
     return false
   }
 
-  const tokenCount = tokenCountWithEstimation(messages) - snipTokensFreed
+  const tokenCount = tokenCountWithEstimation(messages) - snipTokensFreed//估算“下一次发给模型的完整上下文大概有多少 token”。
   const threshold = getAutoCompactThreshold(model)
   const effectiveWindow = getEffectiveContextWindowSize(model)
 
-  logForDebugging(
-    `autocompact: tokens=${tokenCount} threshold=${threshold} effectiveWindow=${effectiveWindow}${snipTokensFreed > 0 ? ` snipFreed=${snipTokensFreed}` : ''}`,
-  )
 
   const { isAboveAutoCompactThreshold } = calculateTokenWarningState(
     tokenCount,
@@ -69,7 +70,6 @@ export async function shouldAutoCompact(
 export async function autoCompactIfNeeded(
   messages: Message[],
   toolUseContext: ToolUseContext,
-  cacheSafeParams: CacheSafeParams,
   querySource?: QuerySource,
   tracking?: AutoCompactTrackingState,
   snipTokensFreed?: number,
@@ -85,7 +85,7 @@ export async function autoCompactIfNeeded(
   // Circuit breaker: stop retrying after N consecutive failures.
   // Without this, sessions where context is irrecoverably over the limit
   // hammer the API with doomed compaction attempts on every turn.
-  if (
+  if (//连续失败
     tracking?.consecutiveFailures !== undefined &&
     tracking.consecutiveFailures >= MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES
   ) {
@@ -113,31 +113,26 @@ export async function autoCompactIfNeeded(
   }
 
   // EXPERIMENT: Try session memory compaction first
-  const sessionMemoryResult = await trySessionMemoryCompaction(
-    messages,
-    toolUseContext.agentId,
-    recompactionInfo.autoCompactThreshold,
-  )
+  const sessionMemoryResult = false;
   if (sessionMemoryResult) {
-    // Reset lastSummarizedMessageId since session memory compaction prunes messages
-    // and the old message UUID will no longer exist after the REPL replaces messages
-    setLastSummarizedMessageId(undefined)
-    runPostCompactCleanup(querySource)
+    // // Reset lastSummarizedMessageId since session memory compaction prunes messages
+    // // and the old message UUID will no longer exist after the REPL replaces messages
+    // setLastSummarizedMessageId(undefined)
+    // runPostCompactCleanup(querySource)
 
     
 
-    markPostCompaction()
-    return {
-      wasCompacted: true,
-      compactionResult: sessionMemoryResult,
-    }
+    // markPostCompaction()
+    // return {
+    //   wasCompacted: true,
+    //   compactionResult: sessionMemoryResult,
+    // }
   }
 
   try {
     const compactionResult = await compactConversation(
       messages,
       toolUseContext,
-      cacheSafeParams,
       true, // Suppress user questions for autocompact
       undefined, // No custom instructions for autocompact
       true, // isAutoCompact
@@ -146,8 +141,8 @@ export async function autoCompactIfNeeded(
 
     // Reset lastSummarizedMessageId since legacy compaction replaces all messages
     // and the old message UUID will no longer exist in the new messages array
-    setLastSummarizedMessageId(undefined)
-    runPostCompactCleanup(querySource)
+    // setLastSummarizedMessageId(undefined)
+    // runPostCompactCleanup(querySource)
 
     return {
       wasCompacted: true,
@@ -187,13 +182,13 @@ export function isAutoCompactEnabled(): boolean {
 }
 
 export function getAutoCompactThreshold(model: string): number {
-  const effectiveContextWindow = getEffectiveContextWindowSize(model)
+  const effectiveContextWindow = getEffectiveContextWindowSize(model)//有效的上下文窗口：扣除最大输出 Token 后的【有效上下文窗口】
 
   const autocompactThreshold =
-    effectiveContextWindow - getAutocompactBufferTokens(model)
+    effectiveContextWindow - getAutocompactBufferTokens(model)//减去基于情景压缩的缓冲区token
 
   // Override for easier testing of autocompact
-  const envPercent = process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
+  const envPercent = process.env.AUTOCOMPACT_PCT_OVERRIDE
   if (envPercent) {
     const parsed = parseFloat(envPercent)
     if (!isNaN(parsed) && parsed > 0 && parsed <= 100) {
@@ -209,7 +204,8 @@ export function getAutoCompactThreshold(model: string): number {
 /**
  * Context-aware autocompact buffer. Larger context windows need more
  * headroom because a single turn can produce proportionally more tokens
- * (longer model outputs + larger tool results).
+ * (longer model outputs + larger tool results).基于情境的自动压缩缓冲区
+ * 更大的上下文需要更多缓冲区空间：模型输出可能更长
  */
 export function getAutocompactBufferTokens(model: string): number {
   const effectiveWindow = getEffectiveContextWindowSize(model)
@@ -222,15 +218,15 @@ export function getEffectiveContextWindowSize(model: string): number {
   // 1. 计算需要预留的输出 Token（取较小值，避免预留过多）
   // 取：模型最大输出Token 和 固定上限值 里的较小者
   const reservedTokensForSummary = Math.min(//保留的摘要用的
-    getModelMaxOutputToken(model), // 模型支持的最大回答长度
+    getModelMaxOutputTokens(model).default, // 模型支持的最大回答长度
     MAX_OUTPUT_TOKENS_FOR_SUMMARY,    // 代码写死的安全上限（比如 4096）
   )
 
   // 2. 获取模型的总上下文窗口（上一个函数的作用）
-  let contextWindow = getContextWindowForModel(model, getSdkBetas())
+  let contextWindow = getContextWindowForModel(model)
 
   // 3. 环境变量额外限制（可选）：手动缩小窗口用于自动压缩
-  const autoCompactWindow = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+  const autoCompactWindow = process.env.AUTO_COMPACT_WINDOW
   if (autoCompactWindow) {
     const parsed = parseInt(autoCompactWindow, 10)
     if (!isNaN(parsed) && parsed > 0) {
@@ -240,4 +236,57 @@ export function getEffectiveContextWindowSize(model: string): number {
 
   // 4. 最终结果：总窗口 - 预留回答空间
   return contextWindow - reservedTokensForSummary
+}
+export function calculateTokenWarningState(
+  tokenUsage: number,
+  model: string,
+): {
+  percentLeft: number
+  isAboveWarningThreshold: boolean
+  isAboveErrorThreshold: boolean
+  isAboveAutoCompactThreshold: boolean
+  isAtBlockingLimit: boolean
+} {
+  const autoCompactThreshold = getAutoCompactThreshold(model)//确定基准阈值
+  const threshold = isAutoCompactEnabled()
+    ? autoCompactThreshold
+    : getEffectiveContextWindowSize(model)
+
+  const percentLeft = Math.max(
+    0,
+    Math.round(((threshold - tokenUsage) / threshold) * 100),
+  )
+
+  const warningThreshold = threshold - WARNING_THRESHOLD_BUFFER_TOKENS//计算警告阈值 基准阈值减去一个警告缓冲 Token 数
+  const errorThreshold = threshold - ERROR_THRESHOLD_BUFFER_TOKENS
+
+  const isAboveWarningThreshold = tokenUsage >= warningThreshold//判断是否达到警戒：
+  const isAboveErrorThreshold = tokenUsage >= errorThreshold
+
+  const isAboveAutoCompactThreshold =
+    isAutoCompactEnabled() && tokenUsage >= autoCompactThreshold
+
+  const actualContextWindow = getEffectiveContextWindowSize(model)
+  const defaultBlockingLimit =
+    actualContextWindow - MANUAL_COMPACT_BUFFER_TOKENS
+
+  // Allow override for testing
+  const blockingLimitOverride = process.env.CLAUDE_CODE_BLOCKING_LIMIT_OVERRIDE
+  const parsedOverride = blockingLimitOverride
+    ? parseInt(blockingLimitOverride, 10)
+    : NaN
+  const blockingLimit =
+    !isNaN(parsedOverride) && parsedOverride > 0
+      ? parsedOverride
+      : defaultBlockingLimit
+
+  const isAtBlockingLimit = tokenUsage >= blockingLimit
+
+  return {
+    percentLeft,
+    isAboveWarningThreshold,//到警告的阈值了？
+    isAboveErrorThreshold,
+    isAboveAutoCompactThreshold,
+    isAtBlockingLimit,
+  }
 }

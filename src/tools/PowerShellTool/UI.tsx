@@ -117,7 +117,9 @@ export function renderToolResultMessage(
 ): React.ReactNode {
   const lastProgress = progressMessagesForMessage.at(-1);
   const timeoutMs = lastProgress?.data?.timeoutMs;
-  const { stdout, stderr, interrupted, returnCodeInterpretation } = content;
+  const { interrupted, returnCodeInterpretation } = content;
+  const stdout = content.stdout.trimEnd();
+  const stderr = content.stderr.trimEnd();
 
   return (
     <Box flexDirection="column">

@@ -13,8 +13,10 @@ import {
 import { PASTE_THRESHOLD } from 'src/utils/paste.js';
 import type { PastedContent } from 'src/utils/config.js';
 
-const INPUT_CURSOR_BG = '#3a3a35';
-const INPUT_CURSOR_FG = '#f0f0ea';
+const FOCUSED_INPUT_CURSOR_BG = '#f7f7f3';
+const FOCUSED_INPUT_CURSOR_FG = '#141414';
+const BLURRED_INPUT_CURSOR_BG = '#3a3a35';
+const BLURRED_INPUT_CURSOR_FG = '#f0f0ea';
 
 type Props = {
 	messages: Message[];
@@ -132,8 +134,15 @@ export default function PromptInput({
 
 	const terminalFocus = useTerminalFocus();
 	const invert = React.useCallback(
-		(text: string) => chalk.bgHex(INPUT_CURSOR_BG).hex(INPUT_CURSOR_FG)(text),
-		[]
+		(text: string) =>
+			terminalFocus
+				? chalk
+						.bgHex(FOCUSED_INPUT_CURSOR_BG)
+						.hex(FOCUSED_INPUT_CURSOR_FG)(text)
+				: chalk
+						.bgHex(BLURRED_INPUT_CURSOR_BG)
+						.hex(BLURRED_INPUT_CURSOR_FG)(text),
+		[terminalFocus]
 	);
 
 	const { renderedValue, cursorLine, cursorColumn } = useTextInput({
@@ -173,10 +182,8 @@ export default function PromptInput({
 	const renderedContent = isEmpty
 		? isActive
 			? placeholder.length > 0
-				? chalk.bgHex(INPUT_CURSOR_BG).hex(INPUT_CURSOR_FG)(
-						placeholder[0]
-					) + chalk.gray(placeholder.slice(1))
-				: chalk.bgHex(INPUT_CURSOR_BG)(' ')
+				? invert(placeholder[0]) + chalk.gray(placeholder.slice(1))
+				: invert(' ')
 			: chalk.gray(placeholder)
 		: renderedValue
 				.split('\n')

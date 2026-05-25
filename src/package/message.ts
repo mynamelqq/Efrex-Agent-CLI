@@ -85,14 +85,18 @@ export type Message = {
     content?: MessageContent
     tool_calls?: ChatCompletionMessageToolCall[]
     tool_call_id?: string
-    usage?: CompletionUsage | Record<string, unknown> 
+    usage?: BetaUsage | Record<string, unknown>
     refusal?: string | null
     finish_reason?: string | null
     [key: string]: unknown
   }
   attachment?: {
     type: string
+    toolUseID?: string
     [key: string]: unknown
+    addedNames: string[]
+    addedLines: string[]
+    removedNames: string[]
   }
   [key: string]: unknown
 }

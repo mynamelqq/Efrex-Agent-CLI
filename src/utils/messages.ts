@@ -55,6 +55,7 @@ import type {
   ToolUseSummaryMessage,
   UserMessage,
 } from '../package/message'
+import { BetaUsage } from 'src/types/message'
 export const NO_CONTENT_MESSAGE = '(no content)'
 export const INTERRUPT_MESSAGE_FOR_TOOL_USE =
   '[Request interrupted by user for tool use]'
@@ -195,9 +196,19 @@ function baseCreateAssistantMessage({
   errorDetails,
   isVirtual,
   usage = {
-    prompt_tokens: 0,
-    completion_tokens: 0,
-    total_tokens: 0,
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_creation_input_tokens: 0,
+    cache_read_input_tokens: 0,
+    server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 },
+    service_tier: null,
+    cache_creation: {
+      ephemeral_1h_input_tokens: 0,
+      ephemeral_5m_input_tokens: 0,
+    },
+    inference_geo: null,
+    iterations: null,
+    speed: null,
   },
 }: {
   content: MessageContent
@@ -206,7 +217,7 @@ function baseCreateAssistantMessage({
   error?: SDKAssistantMessageError
   errorDetails?: string
   isVirtual?: true
-  usage?: ChatCompletion['usage']
+  usage?: BetaUsage
 }): AssistantMessage {
   return {
     type: 'assistant',
@@ -508,4 +519,93 @@ export function isSystemLocalCommandMessage(
   message: Message,
 ): message is SystemLocalCommandMessage {
   return message.type === 'system' && message.subtype === 'local_command'
+}
+
+/**
+ * Checks if a message is a compact boundary marker
+ */
+export function isCompactBoundaryMessage(
+  message: Message | NormalizedMessage,
+): message is SystemCompactBoundaryMessage {
+  return message?.type === 'system' && message.subtype === 'compact_boundary'
+}
+/**
+ * Finds the index of the last compact boundary marker in the messages array
+ * @returns The index of the last compact boundary, or -1 if none found
+ */
+export function findLastCompactBoundaryIndex<
+  T extends Message | NormalizedMessage,
+>(messages: T[]): number {
+  // Scan backwards to find the most recent compact boundary
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]
+    if (message && isCompactBoundaryMessage(message)) {
+      return i
+    }
+  }
+  return -1 // No boundary found
+}
+/**
+ * Returns messages from the last compact boundary onward (including the boundary).
+ * If no boundary exists, returns all messages.
+ *
+ * Also filters snipped messages by default (when HISTORY_SNIP is enabled) —
+ * the REPL keeps full history for UI scrollback, so model-facing paths need
+ * both compact-slice AND snip-filter applied. Pass `{ includeSnipped: true }`
+ * to opt out (e.g., REPL.tsx fullscreen compact handler which preserves
+ * snipped messages in scrollback).
+ *
+ * Note: The boundary itself is a system message and will be filtered by normalizeMessagesForAPI.
+ */
+export function getMessagesAfterCompactBoundary<//找到位于压缩边界后的消息
+  T extends Message | NormalizedMessage,
+>(messages: T[], options?: { includeSnipped?: boolean }): T[] {
+  const boundaryIndex = findLastCompactBoundaryIndex(messages)
+  const sliced = boundaryIndex === -1 ? messages : messages.slice(boundaryIndex)
+  return sliced
+}
+
+
+export function getAssistantMessageText(message: Message): string | null {
+  if (message.type !== 'assistant') {
+    return null
+  }
+  // For content blocks array, extract and concatenate text blocks
+  if (Array.isArray(message.message?.content)) {
+    return (
+      (message.message?.content as Array<{ type: string; text?: string }>)
+        .filter(block => block.type === 'text')
+        .map(block => block.text ?? '')
+        .join('\n')
+        .trim() || null
+    )
+  }
+  return null
+}
+
+export function createCompactBoundaryMessage(
+  trigger: 'manual' | 'auto',
+  preTokens: number,
+  lastPreCompactMessageUuid?: UUID,
+  userContext?: string,
+  messagesSummarized?: number,
+): SystemCompactBoundaryMessage {
+  return {
+    type: 'system',
+    subtype: 'compact_boundary',
+    content: `Conversation compacted`,
+    isMeta: false,
+    timestamp: new Date().toISOString(),
+    uuid: randomUUID(),
+    level: 'info',
+    compactMetadata: {
+      trigger,
+      preTokens,
+      userContext,
+      messagesSummarized,
+    },
+    ...(lastPreCompactMessageUuid && {
+      logicalParentUuid: lastPreCompactMessageUuid,
+    }),
+  }
 }
