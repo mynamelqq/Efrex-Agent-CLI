@@ -155,11 +155,11 @@ export class StreamingToolExecutor {
       )
 
       const generator = runToolUse(tool.block, tool.assistantMessage, 
-        this.canUseTool,
         {
         ...this.toolUseContext,
         abortController: toolAbortController,
-      }
+      },
+      this.canUseTool,
     )
 
       for await (const update of generator) {

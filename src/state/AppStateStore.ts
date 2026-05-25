@@ -17,6 +17,7 @@ export type FooterItem =
 export type AppState = DeepImmutable<{
     mainLoopModel: string,
     settings: SettingsJson,
+    verbose: boolean,
     advisorModel?: string,
     inbox: {
         messages: Array<{
@@ -41,6 +42,7 @@ export function getDefaultAppState(): AppState {
    return {
     mainLoopModel: getInitialSettings().model as string,
     settings: getInitialSettings(),
+    verbose:false,
     inbox: {
       messages: [],
     },

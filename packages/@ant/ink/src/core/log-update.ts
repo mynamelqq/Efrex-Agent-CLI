@@ -213,9 +213,7 @@ export class LogUpdate {
     // Use <= (not <) because even when next height equals viewport height, the
     // scrollback depth from the previous render differs from a fresh render.
     if (prevHadScrollback && nextFitsViewport && isShrinking) {
-      logForDebugging(
-        `Full reset (shrink->below): prevHeight=${prev.screen.height}, nextHeight=${next.screen.height}, viewport=${prev.viewport.height}`,
-      )
+
       return fullResetSequence_CAUSES_FLICKER(next, 'offscreen', stylePool)
     }
 

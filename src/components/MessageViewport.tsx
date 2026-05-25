@@ -25,6 +25,7 @@ type Props = {
   alertMessage?: string | null;
   statusLine?: string | null;
   blinkOn?: boolean;
+  variant?: 'default' | 'transcript';
 };
 
 type LineOptions = {
@@ -34,6 +35,7 @@ type LineOptions = {
   alertMessage?: string | null;
   statusLine?: string | null;
   blinkOn?: boolean;
+  variant?: 'default' | 'transcript';
 };
 
 export function getMessageViewportLines({
@@ -43,11 +45,12 @@ export function getMessageViewportLines({
   alertMessage,
   statusLine,
   blinkOn = false,
+  variant = 'default',
 }: LineOptions): string[] {
   return [
     ...headerLines,
     ...(alertMessage ? [chalk.red(`错误: ${alertMessage}`)] : []),
-    ...messages.flatMap(message => renderMessage(message, width, blinkOn)),
+    ...messages.flatMap(message => renderMessage(message, width, blinkOn, variant)),
     ...(statusLine ? [chalk.yellow(statusLine)] : []),
   ];
 }
@@ -59,6 +62,7 @@ export default function MessageViewport({
   alertMessage,
   statusLine,
   blinkOn = false,
+  variant = 'default',
 }: Props) {
   return (
     <Box flexDirection="column" flexShrink={0} width="100%">
@@ -75,7 +79,7 @@ export default function MessageViewport({
           {shouldInsertViewportSpacer(messages[index - 1], message) ? (
             <Text>{' '}</Text>
           ) : null}
-          {renderMessageNode(message, width, blinkOn)}
+          {renderMessageNode(message, width, blinkOn, variant)}
           {message.role === 'meta' && index < messages.length - 1 ? (
             <Text>{' '}</Text>
           ) : null}
@@ -116,7 +120,12 @@ function shouldInsertViewportSpacer(
   return true;
 }
 
-function renderMessageNode(message: ViewportMessage, width: number, blinkOn: boolean): React.ReactNode {
+function renderMessageNode(
+  message: ViewportMessage,
+  width: number,
+  blinkOn: boolean,
+  variant: 'default' | 'transcript',
+): React.ReactNode {
   if (message.role === 'meta') {
     const content = message.text ? padMetaLine(message.text, width) : ' ';
     return (
@@ -127,7 +136,7 @@ function renderMessageNode(message: ViewportMessage, width: number, blinkOn: boo
   }
 
   if (!message.content) {
-    return renderMessage(message, width, blinkOn).map((line, index) => (
+    return renderMessage(message, width, blinkOn, variant).map((line, index) => (
       <Text key={`${message.id}-${index}`} wrap="truncate-end">
         {line || ' '}
       </Text>
@@ -135,6 +144,16 @@ function renderMessageNode(message: ViewportMessage, width: number, blinkOn: boo
   }
 
   if (message.role === 'user') {
+    if (variant === 'transcript') {
+      return (
+        <Box key={message.id} flexDirection="column" width={width}>
+          <Text color="#8b949e" wrap="wrap">
+            {`you  ${message.text}`}
+          </Text>
+        </Box>
+      );
+    }
+
     return (
       <Box key={message.id} flexDirection="column" width={width}>
         <Text color={USER_MESSAGE_FG} backgroundColor={USER_MESSAGE_BG} wrap="wrap">
@@ -146,7 +165,13 @@ function renderMessageNode(message: ViewportMessage, width: number, blinkOn: boo
 
   if (message.role === 'assistant') {
     const assistantPrefix =
-      message.animatePrefix === 'blink'
+      variant === 'transcript'
+        ? message.animatePrefix === 'blink'
+          ? blinkOn
+            ? '│  '
+            : '   '
+          : '│  '
+        : message.animatePrefix === 'blink'
         ? blinkOn
           ? '✦  '
           : '   '
@@ -160,7 +185,12 @@ function renderMessageNode(message: ViewportMessage, width: number, blinkOn: boo
         width={width}
       >
         <Box flexShrink={0} width={3}>
-          <Text bold color={ASSISTANT_BRAND}>{assistantPrefix}</Text>
+          <Text
+            bold={variant !== 'transcript'}
+            color={variant === 'transcript' ? '#4fd1c5' : ASSISTANT_BRAND}
+          >
+            {assistantPrefix}
+          </Text>
         </Box>
         <Box flexDirection="column" flexGrow={1} flexShrink={1} width={Math.max(1, width - 3)}>
           {message.content}
@@ -169,7 +199,7 @@ function renderMessageNode(message: ViewportMessage, width: number, blinkOn: boo
     );
   }
 
-  const { toolPrefix, prefixColor } = getToolPrefix(message, blinkOn);
+  const { toolPrefix, prefixColor } = getToolPrefix(message, blinkOn, false, variant);
 
   return (
     <Box
@@ -188,12 +218,23 @@ function renderMessageNode(message: ViewportMessage, width: number, blinkOn: boo
   );
 }
 
-function renderMessage(message: ViewportMessage, width: number, blinkOn: boolean): string[] {
+function renderMessage(
+  message: ViewportMessage,
+  width: number,
+  blinkOn: boolean,
+  variant: 'default' | 'transcript',
+): string[] {
   if (message.role === 'meta') {
     return [chalk.gray.dim(padMetaLine(message.text, width))];
   }
 
   if (message.role === 'user') {
+    if (variant === 'transcript') {
+      return wrapPlain(message.text, Math.max(1, width - 5)).map((line, index) =>
+        `${index === 0 ? chalk.hex('#8b949e')('you  ') : '     '}${chalk.hex('#c9d1d9')(line)}`,
+      );
+    }
+
     const contentWidth = Math.max(1, width - 2);
     return [
       ...wrapPlain(message.text, contentWidth).map((line, index) => {
@@ -207,7 +248,7 @@ function renderMessage(message: ViewportMessage, width: number, blinkOn: boolean
 
   if (message.role === 'tool') {
     const color = message.toolPhase === 'error' ? chalk.redBright : chalk.gray;
-    const { toolPrefix } = getToolPrefix(message, blinkOn, true);
+    const { toolPrefix } = getToolPrefix(message, blinkOn, true, variant);
 
     return wrapPlain(message.text, Math.max(1, width - 3)).map((line, index) =>
       `${index === 0 ? toolPrefix : '   '}${color(line)}`,
@@ -216,7 +257,13 @@ function renderMessage(message: ViewportMessage, width: number, blinkOn: boolean
 
   const markdownLines = markdownToLines(message.text, Math.max(8, width - 3));
   const assistantPrefix =
-    message.animatePrefix === 'blink'
+    variant === 'transcript'
+      ? message.animatePrefix === 'blink'
+        ? blinkOn
+          ? chalk.hex('#4fd1c5')('│  ')
+          : '   '
+        : chalk.hex('#4fd1c5')('│  ')
+      : message.animatePrefix === 'blink'
       ? blinkOn
         ? chalk.hex(ASSISTANT_BRAND).bold('✦  ')
         : '   '
@@ -236,6 +283,7 @@ function getToolPrefix(
   message: ViewportMessage,
   blinkOn: boolean,
   useChalk = false,
+  variant: 'default' | 'transcript' = 'default',
 ): { toolPrefix: string; prefixColor: 'redBright' | 'cyanBright' | 'gray' } {
   const prefixColor =
     message.toolDisplayStyle === 'use'
@@ -250,19 +298,26 @@ function getToolPrefix(
   if (message.toolDisplayStyle === 'use') {
     if (message.toolPhase === 'call' && message.animatePrefix === 'blink') {
       return {
-        toolPrefix: blinkOn ? cyan('•  ') : '   ',
+        toolPrefix: blinkOn
+          ? variant === 'transcript'
+            ? cyan('◦  ')
+            : cyan('•  ')
+          : '   ',
         prefixColor,
       };
     }
 
     return {
-      toolPrefix: message.toolPhase === 'error' ? red('●  ') : cyan('●  '),
+      toolPrefix:
+        message.toolPhase === 'error'
+          ? red(variant === 'transcript' ? '◆  ' : '●  ')
+          : cyan(variant === 'transcript' ? '◇  ' : '●  '),
       prefixColor,
     };
   }
 
   return {
-    toolPrefix: gray('↳  '),
+    toolPrefix: gray(variant === 'transcript' ? '·  ' : '↳  '),
     prefixColor,
   };
 }

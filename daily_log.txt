@@ -267,3 +267,7 @@ src/launcher.tsx 构造并传入 AppStateProvider initialState；
 /model 更往claude靠了，主要更改模型不是直接改，而是用一个只允许输出一个token输入hi的sideQuery请求，如果成功才会切换模型
 增加了sleep函数，主要用来做api重试时等待睡眠
 
+增加了前端ctrl+o切换transcript模式，界面好看
+看到前端返回了完整的工具结果很长的一段，我还以为单工具压缩函数没产生作用，看半天才发现压缩工具函数返回完整结果和压缩结果，给模型的是压缩的结果，给界面的是完整的结果，前端是接受到了
+大工具结果包装的信息
+

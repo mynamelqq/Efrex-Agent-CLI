@@ -68,8 +68,8 @@ export type MessageUpdateLazy<M extends Message = Message> = {
 export async function* runToolUse(
 	toolUse: ToolUseBlock,
 	assistantMessage: AssistantMessage,
+	toolUseContext: ToolUseContext,
 	canUseTool: CanUseToolFn,
-	toolUseContext: ToolUseContext
 ): AsyncGenerator<MessageUpdateLazy, void> {
 	const tool = findToolByName(toolUseContext.options.tools, toolUse.name);
 	// const messageId = assistantMessage.message.id as string

@@ -634,6 +634,7 @@ export async function maybePersistLargeToolResult(
 
   // Use tool-specific threshold if provided, otherwise fall back to global limit
   const threshold = persistenceThreshold ?? MAX_TOOL_RESULT_BYTES
+  logForDebugging("toolResult"+size+","+threshold)
   if (size <= threshold) {
     return toolResultBlock
   }

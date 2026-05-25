@@ -76,10 +76,11 @@ export function OutputLine({
     if (linkifyUrls) {
       formatted = linkifyUrlsInText(formatted);
     }
+    const sanitized = stripUnderlineAnsi(formatted);
     if (shouldShowFull) {
-      return stripUnderlineAnsi(formatted);
+      return sanitized;
     }
-    return stripUnderlineAnsi(renderTruncatedContent(formatted, columns, inVirtualList));
+    return renderTruncatedContent(sanitized, columns, inVirtualList);
   }, [content, shouldShowFull, columns, linkifyUrls, inVirtualList]);
 
   const color = isError ? 'error' : isWarning ? 'warning' : undefined;

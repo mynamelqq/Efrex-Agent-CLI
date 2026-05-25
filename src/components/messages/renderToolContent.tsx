@@ -19,6 +19,7 @@ export function normalizeToolRenderNode(node: React.ReactNode): React.ReactNode 
 export function renderToolUseContent(
   tool: Tool | undefined,
   input: Record<string, unknown> | undefined,
+  verbose = false,
 ): React.ReactNode | null {
   if (!tool?.renderToolUseMessage || !input) {
     return null
@@ -27,7 +28,7 @@ export function renderToolUseContent(
   try {
     return normalizeToolRenderNode(tool.renderToolUseMessage(input, {
       theme: defaultToolRenderTheme,
-      verbose: true,
+      verbose,
       commands: [],
     }))
   } catch {
@@ -41,6 +42,7 @@ export function renderToolResultContent(
   output: unknown,
   input: unknown,
   tools: readonly Tool[],
+  verbose = false,
 ): React.ReactNode | null {
   if (!tool?.renderToolResultMessage) {
     return null
@@ -50,7 +52,7 @@ export function renderToolResultContent(
     return normalizeToolRenderNode(tool.renderToolResultMessage(output, [], {
       theme: defaultToolRenderTheme,
       tools,
-      verbose: true,
+      verbose,
       input,
     }))
   } catch {
@@ -63,6 +65,7 @@ export function renderToolErrorContent(
   tool: Tool | undefined,
   result: unknown,
   tools: readonly Tool[],
+  verbose = false,
 ): React.ReactNode | null {
   if (!tool?.renderToolUseErrorMessage) {
     return null
@@ -73,8 +76,8 @@ export function renderToolErrorContent(
       tool.renderToolUseErrorMessage(result as string | Record<string, unknown>[], {
         progressMessagesForMessage: [],
         tools,
-        verbose: true,
-        isTranscriptMode: false,
+        verbose,
+        isTranscriptMode: verbose,
       }),
     )
   } catch {

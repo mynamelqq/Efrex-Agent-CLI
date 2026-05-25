@@ -1,6 +1,7 @@
 import type { ToolUseBlock } from 'src/package/message'
 import type { AssistantMessage, Message } from 'src/package/message.js'
 import { findToolByName, type ToolUseContext } from '../../Tool.js'
+import { CanUseToolFn } from 'src/hooks/useCanUseTool.js'
 import { all } from '../../utils/generators.js'
 import { type MessageUpdateLazy, runToolUse } from './toolExecution.js'
 
@@ -64,6 +65,7 @@ async function* runToolsSerially(
   toolUseMessages: ToolUseBlock[],
   assistantMessages: AssistantMessage[],
   toolUseContext: ToolUseContext,
+  canUseTool: CanUseToolFn,
 ): AsyncGenerator<MessageUpdate, void> {
   let currentContext = toolUseContext
 
@@ -77,6 +79,7 @@ async function* runToolsSerially(
       toolUse,
       ownerAssistant,
       currentContext,
+      canUseTool,
     )) {
       if (update.contextModifier) {
         currentContext = update.contextModifier.modifyContext(currentContext)
@@ -94,6 +97,7 @@ async function* runToolsConcurrently(
   toolUseMessages: ToolUseBlock[],
   assistantMessages: AssistantMessage[],
   toolUseContext: ToolUseContext,
+  canUseTool: CanUseToolFn,
 ): AsyncGenerator<MessageUpdateLazy, void> {
   yield* all(
     toolUseMessages
@@ -103,7 +107,7 @@ async function* runToolsConcurrently(
           return null
         }
 
-        return runToolUse(toolUse, ownerAssistant, toolUseContext)
+        return runToolUse(toolUse, ownerAssistant, toolUseContext, canUseTool)
       })
       .filter((generator): generator is AsyncGenerator<MessageUpdateLazy, void> =>
         generator !== null,

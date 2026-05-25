@@ -99,7 +99,6 @@ export function normalizeMessagesForAPI(
   for (const message of messages) {
     if (message.type !== 'user' && message.type !== 'assistant') continue
     if (message.isVirtual) continue
-    logForDebugging("Normalizing message for API:", message)
     if (message.type === 'user') {
       pushUserMessage(result, message as UserMessage)
       assistantMessageIndexesById = new Map()

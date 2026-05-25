@@ -99,6 +99,11 @@ type ToolUseRenderItem = {
 	content: React.ReactNode;
 };
 
+type AssistantContentSegment = {
+	text: string;
+	dimColor: boolean;
+};
+
 type ParsedAssistantToolUse = {
 	toolName: string;
 	parsedInput: Record<string, unknown> | undefined;
@@ -111,6 +116,8 @@ type StreamingAssistantState = {
 	text: string;
 	pendingToolCalls: string[];
 };
+
+type AppScreen = 'prompt' | 'transcript';
 
 type CompletedTurnFooter = {
 	afterMessageCount: number;
@@ -572,7 +579,10 @@ function getTranscriptHeaderLines({
 	];
 }
 
-function extractTextContent(content: unknown): string {
+function extractTextContent(
+	content: unknown,
+	{ includeThinking = false }: { includeThinking?: boolean } = {}
+): string {
 	if (typeof content === 'string') {
 		return content;
 	}
@@ -602,10 +612,99 @@ function extractTextContent(content: unknown): string {
 				return typedBlock.content;
 			}
 
+			if (
+				includeThinking &&
+				typedBlock.type === 'thinking' &&
+				typeof typedBlock.thinking === 'string'
+			) {
+				return `Thinking\n${typedBlock.thinking}`;
+			}
+
+			if (
+				includeThinking &&
+				typedBlock.type === 'redacted_thinking' &&
+				typeof typedBlock.data === 'string'
+			) {
+				return `Redacted thinking\n${typedBlock.data}`;
+			}
+
 			return '';
 		})
 		.filter(Boolean)
 		.join('\n');
+}
+
+function extractAssistantContentSegments(
+	content: unknown,
+	includeThinking = false
+): AssistantContentSegment[] {
+	if (typeof content === 'string') {
+		return [{ text: content, dimColor: false }];
+	}
+
+	if (!Array.isArray(content)) {
+		return [];
+	}
+
+	const segments: AssistantContentSegment[] = [];
+	for (const block of content) {
+		if (!block || typeof block !== 'object') {
+			continue;
+		}
+
+		const typedBlock = block as unknown as Record<string, unknown>;
+		if (typedBlock.type === 'text' && typeof typedBlock.text === 'string') {
+			segments.push({ text: typedBlock.text, dimColor: false });
+			continue;
+		}
+
+		if (
+			includeThinking &&
+			typedBlock.type === 'thinking' &&
+			typeof typedBlock.thinking === 'string'
+		) {
+			segments.push({ text: typedBlock.thinking, dimColor: true });
+			continue;
+		}
+
+		if (
+			includeThinking &&
+			typedBlock.type === 'redacted_thinking' &&
+			typeof typedBlock.thinking === 'string'
+		) {
+			segments.push({ text: typedBlock.thinking, dimColor: true });
+			continue;
+		}
+
+		if (
+			includeThinking &&
+			typedBlock.type === 'redacted_thinking' &&
+			typeof typedBlock.data === 'string'
+		) {
+			segments.push({ text: typedBlock.data, dimColor: true });
+		}
+	}
+
+	return segments;
+}
+
+function buildAssistantContentNode(
+	segments: AssistantContentSegment[]
+): React.ReactNode {
+	return (
+		<Box flexDirection="column" width="100%">
+			{segments.map((segment, index) => (
+				<Text
+					key={index}
+					color={segment.dimColor ? '#6b7280' : undefined}
+					dimColor={false}
+					wrap="wrap"
+				>
+					{segment.text}
+				</Text>
+			))}
+		</Box>
+	);
 }
 
 function extractToolUseLabels(content: unknown): string[] {
@@ -707,12 +806,14 @@ function getToolUseFallbackLabel(
 
 function buildAssistantToolUseRenderItem(
 	tool: Tool | undefined,
-	block: Record<string, unknown>
+	block: Record<string, unknown>,
+	verbose: boolean
 ): ToolUseRenderItem {
 	const parsedToolUse = parseAssistantToolUse(tool, block);
 	const renderedToolUseMessage = renderToolUseContent(
 		tool,
-		parsedToolUse.parsedInput
+		parsedToolUse.parsedInput,
+		verbose
 	);
 	const fallbackLabel = parsedToolUse.userFacingToolName;
 
@@ -743,7 +844,8 @@ function buildAssistantToolUseRenderItem(
 function getAssistantToolUseViewportMessages(
 	message: MessageType,
 	fallbackId: number,
-	tools: readonly Tool[]
+	tools: readonly Tool[],
+	verbose: boolean
 ): ViewportMessage[] {
 	if (!Array.isArray(message.message?.content)) {
 		return [];
@@ -765,7 +867,7 @@ function getAssistantToolUseViewportMessages(
 					? typedBlock.name
 					: 'unknown_tool';
 			const tool = findToolByName(tools, toolName);
-			const item = buildAssistantToolUseRenderItem(tool, typedBlock);
+			const item = buildAssistantToolUseRenderItem(tool, typedBlock, verbose);
 			const toolUseId =
 				typeof typedBlock.id === 'string' ? typedBlock.id : undefined;
 
@@ -794,7 +896,8 @@ function updateAssistantToolUseViewportMessage(
 function buildViewportMessages(
 	messages: MessageType[],
 	tools: readonly Tool[],
-	completedTurnFooters: CompletedTurnFooter[] = []
+	completedTurnFooters: CompletedTurnFooter[] = [],
+	verbose = false
 ): ViewportMessage[] {
 	const viewportMessages: ViewportMessage[] = [];
 	const toolUseMessagesById = new Map<string, ViewportMessage>();
@@ -821,19 +924,40 @@ function buildViewportMessages(
 		const fallbackId = index + 1;
 
 		if (message.type === 'assistant') {
-			const text = extractTextContent(message.message?.content);
-			if (text) {
-				viewportMessages.push({
-					id: fallbackId,
-					role: 'assistant',
-					text
+			let hasAssistantContent = false;
+			if (verbose) {
+				const assistantViewport = messageToViewport(
+					message,
+					fallbackId,
+					messages,
+					tools,
+					verbose
+				);
+				if (assistantViewport?.role === 'assistant') {
+					viewportMessages.push(assistantViewport);
+					hasAssistantContent = true;
+				}
+			}
+
+			if (!hasAssistantContent) {
+				const text = extractTextContent(message.message?.content, {
+					includeThinking: verbose
 				});
+				if (text) {
+					viewportMessages.push({
+						id: fallbackId,
+						role: 'assistant',
+						text
+					});
+					hasAssistantContent = true;
+				}
 			}
 
 			const toolUseMessages = getAssistantToolUseViewportMessages(
 				message,
 				fallbackId,
-				tools
+				tools,
+				verbose
 			);
 			if (toolUseMessages.length > 0) {
 				toolUseMessages.forEach(viewportMessage => {
@@ -847,7 +971,7 @@ function buildViewportMessages(
 				});
 			}
 
-			if (text || toolUseMessages.length > 0) {
+			if (hasAssistantContent || toolUseMessages.length > 0) {
 				appendCompletedTurnFooter(fallbackId);
 				return;
 			}
@@ -871,7 +995,8 @@ function buildViewportMessages(
 				message,
 				fallbackId,
 				messages,
-				tools
+				tools,
+				verbose
 			);
 			if (viewportMessage) {
 				viewportMessage.toolDisplayStyle = 'result';
@@ -886,7 +1011,8 @@ function buildViewportMessages(
 				message,
 				fallbackId,
 				messages,
-				tools
+				tools,
+				verbose
 			);
 			if (viewportMessage) {
 				viewportMessage.toolDisplayStyle = 'progress';
@@ -900,7 +1026,8 @@ function buildViewportMessages(
 			message,
 			fallbackId,
 			messages,
-			tools
+			tools,
+			verbose
 		);
 		if (viewportMessage) {
 			viewportMessages.push(viewportMessage);
@@ -1101,7 +1228,8 @@ function messageToViewport(
 	message: MessageType,
 	fallbackId: number,
 	messages: MessageType[],
-	tools: readonly Tool[]
+	tools: readonly Tool[],
+	verbose: boolean
 ): ViewportMessage | null {
 	if (message.type === 'user') {
 		if (isToolResultUserMessage(message)) {
@@ -1122,7 +1250,8 @@ function messageToViewport(
 					tool,
 					message.toolUseResult,
 					toolUse?.input,
-					tools
+					tools,
+					verbose
 				);
 
 				if (renderedContent) {
@@ -1140,7 +1269,8 @@ function messageToViewport(
 				const renderedContent = renderToolErrorContent(
 					tool,
 					toolResultBlock.content,
-					tools
+					tools,
+					verbose
 				);
 
 				if (renderedContent) {
@@ -1165,7 +1295,9 @@ function messageToViewport(
 				: null;
 		}
 
-		const text = extractTextContent(message.message?.content);
+		const text = extractTextContent(message.message?.content, {
+			includeThinking: verbose
+		});
 		const localCommandMessage = text
 			? buildLocalCommandViewport(text, fallbackId)
 			: null;
@@ -1185,7 +1317,24 @@ function messageToViewport(
 	}
 
 	if (message.type === 'assistant') {
-		const text = extractTextContent(message.message?.content);
+		if (verbose && Array.isArray(message.message?.content)) {
+			const segments = extractAssistantContentSegments(
+				message.message?.content,
+				true
+			);
+			if (segments.length > 0) {
+				return {
+					id: fallbackId,
+					role: 'assistant',
+					text: segments.map(segment => segment.text).join('\n'),
+					content: buildAssistantContentNode(segments)
+				};
+			}
+		}
+
+		const text = extractTextContent(message.message?.content, {
+			includeThinking: verbose
+		});
 		if (text) {
 			return {
 				id: fallbackId,
@@ -1215,7 +1364,8 @@ function messageToViewport(
 						const tool = findToolByName(tools, toolName);
 						return buildAssistantToolUseRenderItem(
 							tool,
-							typedBlock
+							typedBlock,
+							verbose
 						);
 					})
 					.filter(
@@ -1327,6 +1477,7 @@ export default function QueryApp({
 	const { columns, rows } = useWindowSize();
 	const isTerminalFocused = useTerminalFocus();
 	const [input, setInput] = useState('');
+	const [screen, setScreen] = useState<AppScreen>('prompt');
 	const [cursorSyncKey, setCursorSyncKey] = useState(0);
 	const [pastedContents, setPastedContents] = useState<Record<number, PastedContent>>({});
 	const toolPermissionContext = useAppState(s => s.toolPermissionContext);
@@ -1609,6 +1760,27 @@ export default function QueryApp({
 	const repinScroll = useCallback(() => {
 		scrollRef.current?.scrollToBottom();
 	}, []);
+
+	useInput(
+		(input, key, event) => {
+			if (key.ctrl && input === 'o') {
+				event.stopImmediatePropagation();
+				setScreen(current =>
+					current === 'transcript' ? 'prompt' : 'transcript'
+				);
+				return;
+			}
+
+			if (
+				screen === 'transcript' &&
+				(key.escape || (key.ctrl && input === 'c'))
+			) {
+				event.stopImmediatePropagation();
+				setScreen('prompt');
+			}
+		},
+		{ isActive: true }
+	);
 
 	useInput(
 		(_, key) => {
@@ -2058,6 +2230,10 @@ const getToolUseContext = useCallback(
 	const terminalColumns = columns || process.stdout.columns || 80;
 	const terminalRows = rows || process.stdout.rows || 24;
 	const messageWidth = Math.max(8, terminalColumns - 4);
+	const transcriptColumnWidth = Math.max(
+		72,
+		Math.min(terminalColumns - 4, terminalColumns - (terminalColumns >= 120 ? 8 : 4))
+	);
 	// The prompt row is already inside outer paddingX=1, and the leading "› "
 	// consumes 2 columns. The input itself should use the remaining content width.
 	const promptInputWidth = Math.max(8, terminalColumns - 4);
@@ -2069,11 +2245,13 @@ const getToolUseContext = useCallback(
 	const permissionModeLabel = permissionModeConfig.title;
 	const permissionModeColor = permissionModeConfig.color;
 
+	const isTranscriptMode = screen === 'transcript';
 	const renderTools = activeTools;
 	const viewportMessages = buildViewportMessages(
 		messages,
 		renderTools,
-		completedTurnFooters
+		completedTurnFooters,
+		isTranscriptMode
 	);
 
 	if (loading && streamingAssistant.placeholderId !== null) {
@@ -2394,6 +2572,77 @@ const getToolUseContext = useCallback(
 			) : null}
 		</Box>
 	);
+
+	const transcriptScrollableContent = (
+		<Box flexDirection="column" width="100%" paddingTop={1}>
+			<Box paddingX={2} width="100%">
+				<Box flexDirection="column" width={transcriptColumnWidth}>
+					<Text color="#e5e7eb" bold>
+						Transcript
+					</Text>
+					<Text color="#6b7280">
+						{process.cwd()} · {modelLabel} · {effortLabel}
+					</Text>
+					<Text color="#374151">
+						{'─'.repeat(Math.max(24, transcriptColumnWidth))}
+					</Text>
+				</Box>
+			</Box>
+			<Box paddingX={2} width="100%">
+				<Box width={transcriptColumnWidth}>
+					<MessageViewport
+						headerLines={[]}
+						messages={viewportMessages}
+						width={transcriptColumnWidth}
+						alertMessage={alertMessage}
+						statusLine={null}
+						blinkOn={blinkVisible}
+						variant="transcript"
+					/>
+				</Box>
+			</Box>
+			{toolJSX && !(toolJSX.isLocalJSXCommand && toolJSX.isImmediate) ? (
+				<Box paddingX={2} width="100%">
+					<Box flexDirection="column" width={transcriptColumnWidth}>
+						{toolJSX.jsx}
+					</Box>
+				</Box>
+			) : null}
+		</Box>
+	);
+
+	const transcriptBottom = (
+		<Box flexDirection="column" flexShrink={0} paddingTop={1}>
+			<Text color="#4b5563">
+				Ctrl+O / Esc close · Ctrl+B/F page · Home/End jump
+			</Text>
+		</Box>
+	);
+
+	if (isTranscriptMode) {
+		if (isFullscreenEnvEnabled()) {
+			return (
+				<AlternateScreen mouseTracking>
+					<ScrollKeybindingHandler
+						scrollRef={scrollRef}
+						isActive
+					/>
+					<FullscreenLayout
+						scrollRef={scrollRef}
+						scrollable={transcriptScrollableContent}
+						bottom={transcriptBottom}
+					/>
+				</AlternateScreen>
+			);
+		}
+
+		return (
+			<Box flexDirection="column" paddingX={1} paddingY={0}>
+				{transcriptScrollableContent}
+				{transcriptBottom}
+			</Box>
+		);
+	}
 
 	if (isFullscreenEnvEnabled()) {
 		return (
