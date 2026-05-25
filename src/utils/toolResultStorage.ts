@@ -27,8 +27,22 @@ import { DEFAULT_MAX_RESULT_SIZE_CHARS, MAX_TOOL_RESULT_BYTES } from 'src/consta
  * 默认情况下父级的状态（像agentSummary这样的缓存共享分叉需要
  * 相同的决定），或resumeAgentBackground线程一重建
  * 来自侧链记录。
+ * 
+ * 它的作用是保证：
+
+  - 同一个 tool_use_id 只做一次“是否替换内容”的决策
+  - 后续轮次里，已经替换过的内容能稳定地重新应用
+  - 没替换过但已经见过的内容，不会在之后突然改判
+  两个字段分别是：
+  - seenIds
+      - 记录“已经处理过”的 tool_use_id
+      - 只要某个 id 进过这个集合，后续就不能再把它当成“全新结果”重新决策
+  - replacements
+      - 记录 tool_use_id -> 替换后的字符串
+      - 比如工具结果太大时，模型看到的不是原文，而是一个预览/引用文本
+      - 下次重新跑时，直接从这里把同样的替换内容拿回来，保证前缀字节稳定
  */
-export type ContentReplacementState = {
+export type ContentReplacementState = {//来“记住哪些工具结果内容被替换过”的状态
   seenIds: Set<string>
   replacements: Map<string, string>
 }

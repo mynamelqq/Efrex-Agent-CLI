@@ -28,6 +28,7 @@ import { createAttachmentMessage } from './utils/messages.js'
 import { CanUseToolFn } from './hooks/useCanUseTool.js'
 import { applyToolResultBudget } from './utils/toolResultStorage.js'
 import { buildPostCompactMessages } from './services/compact/compact.js'
+import { microcompactMessages } from './services/compact/mircoCompact.js'
 export type QueryParams = {
   messages: Message[]
   systemPrompt: SystemPrompt
@@ -126,6 +127,25 @@ async function* queryLoop(
           .map(t => t.name),
       ),
     )
+    const microcompactResult = await microcompactMessages(
+      messagesForQuery,
+      toolUseContext,
+      querySource,
+    )
+    messagesForQuery = microcompactResult.messages
+    // 从 contentReplacementState.replacements 中释放那些内容已被替换为清除消息的工具结果所使用的原始字符串。
+    if (microcompactResult.clearedToolUseIds?.length) {
+      const replacements = toolUseContext?.contentReplacementState?.replacements
+      if (replacements) {
+        for (const id of microcompactResult.clearedToolUseIds) {
+          replacements.delete(id)
+        }
+      }
+    }
+      // For cached microcompact (cache editing), defer boundary message until after
+    // the API response so we can use actual cache_deleted_input_tokens.
+    // Gated behind feature() so the string is eliminated from external builds.
+    const pendingCacheEdits =  undefined
     const autoCompactOutcome = await runAutoCompactStep(
       {
         messagesForQuery,
