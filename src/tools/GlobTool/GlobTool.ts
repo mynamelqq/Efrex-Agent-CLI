@@ -5,6 +5,7 @@ import { DESCRIPTION } from './prompt'
 import { expandPath, toRelativePath } from '../../utils/path.js'
 import { buildTool } from '../../Tool'
 import { ToolDef } from '../../Tool'
+import { checkReadPermissionForTool } from 'src/utils/permissions/filesystem'
 import {stat}from "fs/promises"
 import { getCwd } from '../../utils/cwd'
 import { glob } from '../../utils/glob.js'
@@ -153,6 +154,9 @@ export const GlobTool = buildTool({
       input,
       appState.toolPermissionContext,
     )
+  },
+  isSearchOrReadCommand() {
+    return { isSearch: true, isRead: false }
   },
   getPath({ path }): string {
     return path ? expandPath(path) : getCwd()

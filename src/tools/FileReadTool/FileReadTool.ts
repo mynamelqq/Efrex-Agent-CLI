@@ -638,6 +638,9 @@ export const FileReadTool = buildTool({
       appState.toolPermissionContext,
     )
   },
+  isSearchOrReadCommand() {
+    return { isSearch: false, isRead: true }
+  },
   getPath(input): string {
     return input.file_path
   },

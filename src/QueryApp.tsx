@@ -36,6 +36,7 @@ import { parseReferences } from './history.js';
 import type { Message as MessageType } from './package/message.js';
 import {
 	findToolByName,
+	type CompactProgressEvent,
 	type SetToolJSXFn,
 	type Tool,
 	type ToolPermissionContext,
@@ -115,6 +116,13 @@ type StreamingAssistantState = {
 	placeholderId: number | null;
 	text: string;
 	pendingToolCalls: string[];
+};
+
+type CompactUiState = {
+	active: boolean;
+	streamMode: 'requesting' | 'responding';
+	responseLength: number;
+	statusText: string | null;
 };
 
 type AppScreen = 'prompt' | 'transcript';
@@ -1513,6 +1521,12 @@ export default function QueryApp({
 			text: '',
 			pendingToolCalls: []
 		});
+	const [compactUiState, setCompactUiState] = useState<CompactUiState>({
+		active: false,
+		streamMode: 'requesting',
+		responseLength: 0,
+		statusText: null
+	});
 	const [messages, rawSetMessages] = useState<MessageType[]>([]);
 	const [completedTurnFooters, setCompletedTurnFooters] = useState<
 		CompletedTurnFooter[]
@@ -1934,6 +1948,39 @@ export default function QueryApp({
 		},
 		[setMessages]
 	);
+	const handleCompactProgress = useCallback((event: CompactProgressEvent) => {
+		switch (event.type) {
+			case 'hooks_start':
+				setCompactUiState(prev => ({
+					...prev,
+					active: true,
+					statusText:
+						event.hookType === 'pre_compact'
+							? 'Efrex 正在执行压缩前处理...'
+							: event.hookType === 'post_compact'
+								? 'Efrex 正在执行压缩后处理...'
+								: 'Efrex 正在执行会话初始化处理...'
+				}));
+				break;
+			case 'compact_start':
+				setCompactUiState(prev => ({
+					...prev,
+					active: true,
+					streamMode: 'requesting',
+					responseLength: 0,
+					statusText: 'Efrex 正在压缩对话...'
+				}));
+				break;
+			case 'compact_end':
+				setCompactUiState({
+					active: false,
+					streamMode: 'requesting',
+					responseLength: 0,
+					statusText: null
+				});
+				break;
+		}
+	}, []);
 const getToolUseContext = useCallback(
 		(
 		messages: MessageType[],
@@ -1961,6 +2008,35 @@ const getToolUseContext = useCallback(
 			},
 			getAppState: () => store.getState(),
 			setAppState,
+			setResponseLength: updater => {
+				setCompactUiState(prev => {
+					const responseLength = updater(prev.responseLength);
+					return {
+						...prev,
+						responseLength,
+						statusText:
+							prev.active && prev.streamMode === 'responding'
+								? responseLength > 0
+									? 'Efrex 正在生成压缩摘要...'
+									: 'Efrex 正在压缩对话...'
+								: prev.statusText
+					};
+				});
+			},
+			setStreamMode: mode => {
+				setCompactUiState(prev => ({
+					...prev,
+					active: true,
+					streamMode: mode,
+					statusText:
+						mode === 'responding'
+							? prev.responseLength > 0
+								? 'Efrex 正在生成压缩摘要...'
+								: 'Efrex 正在压缩对话...'
+							: prev.statusText ?? 'Efrex 正在压缩对话...'
+				}));
+			},
+			onCompactProgress: handleCompactProgress,
 			messages,
 			setToolJSX,
 			setMessages,
@@ -1989,6 +2065,7 @@ const getToolUseContext = useCallback(
       appendSystemPrompt,
       activeTools,
       setToolJSX,
+      handleCompactProgress,
 		],
 	);
 	const onQueryImpl = useCallback(
@@ -2073,6 +2150,12 @@ const getToolUseContext = useCallback(
 				text: '',
 				pendingToolCalls: []
 			});
+			setCompactUiState({
+				active: false,
+				streamMode: 'requesting',
+				responseLength: 0,
+				statusText: null
+			});
 
 			try {
 				const latestMessages = messagesRef.current;
@@ -2102,6 +2185,12 @@ const getToolUseContext = useCallback(
 						placeholderId: null,
 						text: '',
 						pendingToolCalls: []
+					});
+					setCompactUiState({
+						active: false,
+						streamMode: 'requesting',
+						responseLength: 0,
+						statusText: null
 					});
 				}
 			}
@@ -2288,16 +2377,22 @@ const getToolUseContext = useCallback(
 	const highlightInputChrome =
 		isTerminalFocused && loading && !activeToolUseConfirm;
 	const statusText = showSpinner
-		? streamingAssistant.text.trim().length > 0
-			? 'Efrex 正在生成回复...'
-			: streamingAssistant.pendingToolCalls.length > 0
-				? 'Efrex 正在请求工具...'
-				: 'Efrex 正在思考...'
+		? compactUiState.active
+			? compactUiState.statusText
+			: streamingAssistant.text.trim().length > 0
+				? 'Efrex 正在生成回复...'
+				: streamingAssistant.pendingToolCalls.length > 0
+					? 'Efrex 正在请求工具...'
+					: 'Efrex 正在思考...'
 		: null;
 	const statusMode = showSpinner
-		? streamingAssistant.pendingToolCalls.length > 0
-			? 'requesting'
-			: 'default'
+		? compactUiState.active
+			? compactUiState.streamMode === 'requesting'
+				? 'requesting'
+				: 'default'
+			: streamingAssistant.pendingToolCalls.length > 0
+				? 'requesting'
+				: 'default'
 		: null;
 
 	const statusPrefix = statusText ? '•' : null;

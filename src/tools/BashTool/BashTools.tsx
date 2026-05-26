@@ -98,6 +98,88 @@ const inputSchema = lazySchema(() => fullInputSchema().omit({
 type InputSchema = ReturnType<typeof inputSchema>;
 export type BashToolInput = z.infer<ReturnType<typeof fullInputSchema>>;
 /**
+ * Checks if a bash command is a search or read operation.
+ * Used to determine if the command should be collapsed in the UI.
+ * Returns an object indicating whether it's a search or read operation.
+ *
+ * For pipelines (e.g., `cat file | bq`), ALL parts must be search/read commands
+ * for the whole command to be considered collapsible.
+ *
+ * Semantic-neutral commands (echo, printf, true, false, :) are skipped in any
+ * position, as they're pure output/status commands that don't affect the read/search
+ * nature of the pipeline (e.g. `ls dir && echo "---" && ls dir2` is still a read).
+ */
+// export function isSearchOrReadBashCommand(command: string): {
+//   isSearch: boolean;
+//   isRead: boolean;
+//   isList: boolean;
+// } {
+//   let partsWithOperators: string[];
+//   try {
+//     partsWithOperators = splitCommandWithOperators(command);
+//   } catch {
+//     // If we can't parse the command due to malformed syntax,
+//     // it's not a search/read command
+//     return { isSearch: false, isRead: false, isList: false };
+//   }
+
+//   if (partsWithOperators.length === 0) {
+//     return { isSearch: false, isRead: false, isList: false };
+//   }
+
+//   let hasSearch = false;
+//   let hasRead = false;
+//   let hasList = false;
+//   let hasNonNeutralCommand = false;
+//   let skipNextAsRedirectTarget = false;
+
+//   for (const part of partsWithOperators) {
+//     if (skipNextAsRedirectTarget) {
+//       skipNextAsRedirectTarget = false;
+//       continue;
+//     }
+
+//     if (part === '>' || part === '>>' || part === '>&') {
+//       skipNextAsRedirectTarget = true;
+//       continue;
+//     }
+
+//     if (part === '||' || part === '&&' || part === '|' || part === ';') {
+//       continue;
+//     }
+
+//     const baseCommand = part.trim().split(/\s+/)[0];
+//     if (!baseCommand) {
+//       continue;
+//     }
+
+//     if (BASH_SEMANTIC_NEUTRAL_COMMANDS.has(baseCommand)) {
+//       continue;
+//     }
+
+//     hasNonNeutralCommand = true;
+
+//     const isPartSearch = BASH_SEARCH_COMMANDS.has(baseCommand);
+//     const isPartRead = BASH_READ_COMMANDS.has(baseCommand);
+//     const isPartList = BASH_LIST_COMMANDS.has(baseCommand);
+
+//     if (!isPartSearch && !isPartRead && !isPartList) {
+//       return { isSearch: false, isRead: false, isList: false };
+//     }
+
+//     if (isPartSearch) hasSearch = true;
+//     if (isPartRead) hasRead = true;
+//     if (isPartList) hasList = true;
+//   }
+
+//   // Only neutral commands (e.g., just "echo foo") -- not collapsible
+//   if (!hasNonNeutralCommand) {
+//     return { isSearch: false, isRead: false, isList: false };
+//   }
+
+//   return { isSearch: hasSearch, isRead: hasRead, isList: hasList };
+// }
+/**
  * 检查 bash 命令是否为搜索或读取操作。
  * 用于确定该命令是否应在 UI 中折叠显示。
  * 返回一个对象，指示其是否为搜索或读取操作。
@@ -550,6 +632,11 @@ export const BashTool = buildTool({
   },
   async checkPermissions(input, context): Promise<PermissionResult> {
     return bashToolHasPermission(input, context);
+  },
+  isSearchOrReadCommand(input) {
+    const parsed = inputSchema().safeParse(input);
+    if (!parsed.success) return { isSearch: false, isRead: false, isList: false };
+    return isSearchOrReadBashCommand(parsed.data.command);
   },
 } satisfies ToolDef<InputSchema, Out>);
 

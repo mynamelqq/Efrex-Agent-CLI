@@ -25,7 +25,7 @@ export function renderToolUseMessage(
 	}
 
 	if (!verbose) {
-		return query;
+		return getToolUseSummary({ query });
 	}
 
 	const parts = [`query: "${query}"`];

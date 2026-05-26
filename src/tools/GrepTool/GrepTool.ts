@@ -500,6 +500,9 @@ export const GrepTool = buildTool({
   getPath({ path }): string {
     return path || getCwd()
   },
+  isSearchOrReadCommand() {
+    return { isSearch: true, isRead: false }
+  },
 } satisfies ToolDef<InputSchema, Output>)
 // 格式化用于工具结果显示的 limit/offset 信息。
 // appliedLimit 仅在实际发生截断时设置（参见 applyHeadLimit），

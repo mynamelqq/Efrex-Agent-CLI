@@ -105,13 +105,9 @@ export async function compactConversation(
 
     const appState = context.getAppState()
 
-
-    // const userDisplayMessage = hookResult.userDisplayMessage
-
-    // Show requesting mode with up arrow and custom message
-    // context.setStreamMode?.('requesting')
-    // context.setResponseLength?.(() => 0)
-    // context.onCompactProgress?.({ type: 'compact_start' })
+    context.setStreamMode?.('requesting')
+    context.setResponseLength?.(() => 0)
+    context.onCompactProgress?.({ type: 'compact_start' })
 
     const compactPrompt = getCompactPrompt(customInstructions)
     const summaryRequest = createUserMessage({//创建用户消息提示词
@@ -260,9 +256,9 @@ export async function compactConversation(
 
     throw error
   } finally {
-    // context.setStreamMode?.('requesting')
-    // context.setResponseLength?.(() => 0)
-    // context.onCompactProgress?.({ type: 'compact_end' })
+    context.setStreamMode?.('requesting')
+    context.setResponseLength?.(() => 0)
+    context.onCompactProgress?.({ type: 'compact_end' })
 
   }
 }
@@ -298,7 +294,7 @@ async function streamCompactSummary({
       // Reset state for retry
       let hasStartedStreaming = false
       let response: AssistantMessage | undefined
-      // context.setResponseLength?.(() => 0)
+      context.setResponseLength?.(() => 0)
 
 
 
@@ -359,7 +355,7 @@ async function streamCompactSummary({
           streamEvent.event.content_block.type === 'text'
         ) {
           hasStartedStreaming = true
-          // context.setStreamMode?.('responding')
+          context.setStreamMode?.('responding')
         }
 
         if (
@@ -368,7 +364,7 @@ async function streamCompactSummary({
           streamEvent.event.delta.type === 'text_delta'
         ) {
           const charactersStreamed = streamEvent.event.delta.text.length
-          // context.setResponseLength?.(length => length + charactersStreamed)
+          context.setResponseLength?.(length => length + charactersStreamed)
         }
 
         if (event.type === 'assistant') {

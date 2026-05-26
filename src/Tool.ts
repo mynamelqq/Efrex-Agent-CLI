@@ -32,6 +32,14 @@ export type ValidationResult =
 			errorCode: number;
 	  };
 
+export type CompactProgressEvent =
+	| {
+			type: 'hooks_start';
+			hookType: 'pre_compact' | 'post_compact' | 'session_start';
+	  }
+	| { type: 'compact_start' }
+	| { type: 'compact_end' };
+
 export type SetToolJSXFn = (
 	args:
 		| {
@@ -112,6 +120,9 @@ export type ToolUseContext = {
 
 	getAppState(): AppState;
 	setAppState(f: (prev: AppState) => AppState): void;
+	setResponseLength?: (f: (prev: number) => number) => void;
+	setStreamMode?: (mode: 'requesting' | 'responding') => void;
+	onCompactProgress?: (event: CompactProgressEvent) => void;
 	messages: Message[];
 	setToolJSX?: SetToolJSXFn;
 };

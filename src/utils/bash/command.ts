@@ -1,4 +1,13 @@
 import { randomBytes } from 'crypto'
+import type { ControlOperator, ParseEntry } from 'shell-quote'
+import {
+  type CommandPrefixResult,
+  type CommandSubcommandPrefixResult,
+  createCommandPrefixExtractor,
+  createSubcommandPrefixExtractor,
+} from '../shell/prefix.js'
+import { quote, tryParseShellCommand } from './shellQuote.js'
+
 export function splitCommandWithOperators(command: string): string[] {
   const parts: (ParseEntry | null)[] = []
 
