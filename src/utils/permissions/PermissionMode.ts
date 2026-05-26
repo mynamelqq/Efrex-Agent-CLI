@@ -24,8 +24,9 @@ export const externalPermissionModeSchema = lazySchema(() =>
 
 type ModeColorKey =
   | 'ansi:blue'
-  | 'ansi:magentaBright'
-  | 'ansi:redBright'
+  | 'ansi:magenta'
+  | 'ansi:cyan'
+  | 'ansi:yellow'
 
 type PermissionModeConfig = {
   title: string
@@ -34,7 +35,7 @@ type PermissionModeConfig = {
   color: ModeColorKey
   external: ExternalPermissionMode
 }
-
+export const PAUSE_ICON = '\u23f8' // ⏸
 const PERMISSION_MODE_CONFIG: Partial<
   Record<PermissionMode, PermissionModeConfig>
 > = {
@@ -49,16 +50,24 @@ const PERMISSION_MODE_CONFIG: Partial<
     title: 'Accept edits',
     shortTitle: 'Accept',
     symbol: '⏵⏵',
-    color: 'ansi:magentaBright',
+    color: 'ansi:magenta',
     external: 'acceptEdits',
+  },
+  plan: {
+    title: 'Plan Mode',
+    shortTitle: 'Plan',
+    symbol: PAUSE_ICON,
+    color: 'ansi:yellow',
+    external: 'plan',
   },
   bypassPermissions: {
     title: 'Bypass',
     shortTitle: 'Bypass',
     symbol: '⏵⏵',
-    color: 'ansi:redBright',
+    color: 'ansi:cyan',
     external: 'bypassPermissions',
   },
+
   // dontAsk: {
   //   title: "Don't Ask",
   //   shortTitle: 'DontAsk',

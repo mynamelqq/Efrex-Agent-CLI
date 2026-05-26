@@ -270,4 +270,13 @@ src/launcher.tsx 构造并传入 AppStateProvider initialState；
 增加了前端ctrl+o切换transcript模式，界面好看
 看到前端返回了完整的工具结果很长的一段，我还以为单工具压缩函数没产生作用，看半天才发现压缩工具函数返回完整结果和压缩结果，给模型的是压缩的结果，给界面的是完整的结果，前端是接受到了
 大工具结果包装的信息
+5.26
+增加了反应压缩reactiveCompact,压缩时前端内容的回调，把webSearch返回前端渲染的结果给toolUseSummary代替了
+当API 返回 413（PromptTooLong）或图片/PDF 过大错误后，在没有返回工具且最后一条ai消息为api 413error,query.ts会设置withhold变量，然后这个变量代表会不直接退出
+而是会进行一次压缩，服用了自动压缩的压缩函数，若 recovery 成功，用 `buildPostCompactMessages` 构造新历史，continue 循环重试同一轮
+类似压缩的还没进行测试
+
+因为普通的WebFetch爬取知乎网站会有严厉的反爬措施，所有我在网上找了一下，fireCrawl的scrape可以抓取成功，所有增加了一个WebScrapeTool，用来更好的抓取网页
+把硬编码在webSerach的apikey放到了读取环境系统变量里
+
 

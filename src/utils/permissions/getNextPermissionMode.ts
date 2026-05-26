@@ -15,13 +15,13 @@ export function getNextPermissionMode(
 ): PermissionMode {
   switch (toolPermissionContext.mode) {
     case 'default':
-      return 'acceptEdits'
+      return 'plan'
 
     case 'acceptEdits':
       return 'bypassPermissions'
 
-    // case 'plan':
-    //   return 'auto'
+    case 'plan':
+      return 'acceptEdits'
 
     // case 'auto':
     //   if (toolPermissionContext.isBypassPermissionsModeAvailable) {

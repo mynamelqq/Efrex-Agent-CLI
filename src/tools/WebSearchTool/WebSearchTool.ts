@@ -2,6 +2,10 @@ import { z } from 'zod/v4'
 import { buildTool, type ToolDef } from '../../Tool.js'
 import { lazySchema } from '../../utils/lazySchema.js'
 import { getChatUICliUserAgent } from '../../utils/http.js'
+import {
+  getFirecrawlApiKey,
+  getFirecrawlSearchUrl,
+} from '../../utils/firecrawlConfig.js'
 import { WEB_SEARCH_TOOL_NAME } from './prompt.js'
 import {
   getToolUseSummary,
@@ -10,8 +14,6 @@ import {
   renderToolUseMessage,
 } from './UI.js'
 import { PermissionResult } from 'src/types/permissions.js'
-const FIRECRAWL_SEARCH_URL =
-  process.env.FIRECRAWL_SEARCH_URL ?? 'https://api.firecrawl.dev/v2/search'
 const DEFAULT_LIMIT = 8
 const MAX_LIMIT = 20
 
@@ -80,11 +82,6 @@ type FirecrawlSearchResponse = {
   success?: boolean
   data?: unknown
   error?: unknown
-}
-
-function getFirecrawlApiKey(): string | undefined {
-  const value = 'fc-2743a74105cd4c5bbc0c8e971ea0b4ab'
-  return value ? value : undefined
 }
 
 function flattenFirecrawlData(data: unknown): SearchHit[] {
@@ -156,7 +153,7 @@ async function searchFirecrawl(
     body.tbs = input.tbs.trim()
   }
 
-  const response = await fetch(FIRECRAWL_SEARCH_URL, {
+  const response = await fetch(getFirecrawlSearchUrl(), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
