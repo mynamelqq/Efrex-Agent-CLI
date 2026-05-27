@@ -276,7 +276,30 @@ src/launcher.tsx 构造并传入 AppStateProvider initialState；
 而是会进行一次压缩，服用了自动压缩的压缩函数，若 recovery 成功，用 `buildPostCompactMessages` 构造新历史，continue 循环重试同一轮
 类似压缩的还没进行测试
 
+增加了permission的plan模式，最初是因为考虑到plan模式作为只读模式，在系统中确实由添加的必要，找了半天才发现，plan不会对写入的工具ask进行拦截，只是对prompt进行限制
+只能读取文件，不能写入
 因为普通的WebFetch爬取知乎网站会有严厉的反爬措施，所有我在网上找了一下，fireCrawl的scrape可以抓取成功，所有增加了一个WebScrapeTool，用来更好的抓取网页
 把硬编码在webSerach的apikey放到了读取环境系统变量里
+5.27
+改的挺多的
+
+加入原claude启动时参数解析的快速路径，一般是-v这种就会直接执行，稍微复杂的比如continue或者就要等到main.tsx再解析，至于参数解析很简单，就是按把参数分成字符串数组
+再加入的过程中发现原项目的版本号是通过启动时注入的，本质上是把“编译期常量”和“运行时开关”统一到一个入口里，统一到一个入口里，避免在源码里到处写死值不是运行时去读文件，也避免 bunfig.toml这类静态配置在动态导入场景下失效
+所有多加了一个dev.ts和build.ts,通过swapn在开发时启动一个子进程显式传入-d注入MACRO
+
+再使用claude发现，当settings.json少了一个标点时再启动claude会出现提示手动处理文件，于是在项目内也加入了同套机制
+
+完善了提示词强依赖的git.ts，不只是简单的寻找git仓库和bash,还有各种路径处理，监视git仓库文件变化，考虑git worktree等等
+完善了getUserContext和getSystemPrompt，中间用了各种缓存机制，memoize或者lru，或者单个map作为cache。用户上下文机制比较复杂,拼接各种记忆文件，
+加载顺序基本为管理、用户、项目、本地、自动记忆目录等后加载的claude.md优先级更高。
+处理每种类型的文件都会使用processMemoryFile函数递归向上查找，处理单个记忆文件及其所有 @include 引用也会设置最大递归层数防止无限import 
+结果返回MemoryFileInfo[] 包含：路径、类型、内容、globs、parent引用、是否与磁盘不同
+Claude.md有固定的格式，所以读取后解析markdown的代码很复杂
+1、提取 YAML frontmatter 中的 paths 字段
+2、用 marked 分词器 Lex 处理 Markdown
+3、剥离 HTML 注释（<!-- -->，保留注释外的残余文本）
+4、提取 @include 引用（支持 @./path、@~/path、@/path、@path 格式）
 
 
+系统提示词主要是提示当前项目的git状态，这里有个很妙的机制，用一个封装类核心是node.js的watchFile去监视.git目录下的head文件，还有当前的分支引用文件
+一旦变化，就会动态调整项目的变量状态。对于head和分支是用监视的手段，对于仓库状态status和仓库提交日志，会直接执行git bash获取一小段仓库的状态

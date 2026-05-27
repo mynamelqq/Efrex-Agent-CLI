@@ -1,6 +1,7 @@
 ﻿import type { ToolUseContext } from './Tool.js'
 import type { Terminal } from 'src/query/transitions.js'
-import { normalizeMessagesForAPI, prependUserContext } from './utils/api.js'
+import { normalizeMessagesForAPI, prependUserContext,appendSystemContext} from './utils/api.js'
+
 import { StreamingToolExecutor } from './services/tools/StreamingToolExecutor.js'
 import { AutoCompactTrackingState } from './services/compact/autoCompact.js'
 import { runTools } from './services/tools/toolOrchestration.js'
@@ -120,7 +121,6 @@ async function* queryLoop(
   }
 
   while (true) {
-
     const {
         messages,
         autoCompactTracking,
@@ -208,7 +208,7 @@ async function* queryLoop(
     const model =
       toolUseContext.options.mainLoopModel || fallbackModel || 'kimi-k2.6'
 
-    const fullSystemPrompt = asSystemPrompt(params.systemPrompt)
+    const fullSystemPrompt = asSystemPrompt(appendSystemContext(params.systemPrompt, params.systemContext),)
 
     const useStreamingToolExecution = config.gates.streamingToolExecution
     const streamingToolExecutor = useStreamingToolExecution
@@ -334,7 +334,6 @@ async function* queryLoop(
           for (const result of streamingToolExecutor.getCompletedResults()) {//流式执行器中已完成的工具结果是一个生成器，逐个处理每个结果。
             if (!result.message) continue
             yield result.message
-            logForDebugging('Received tool result message from streaming executor:', result.message)
             toolResults.push(
               ...normalizeMessagesForAPI([result.message], toolUseContext.options.tools).filter(
                 m => m.type === 'user',

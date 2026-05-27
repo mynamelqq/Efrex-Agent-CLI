@@ -1,6 +1,7 @@
 import { getCwd } from './cwd.js'
 import { Tool, Tools, toolMatchesName } from 'src/Tool'
 import { ContentBlockParam } from 'src/package/message.js'
+import { SystemPrompt } from 'src/prompt.js'
 import type {
   AssistantMessage,
   AttachmentMessage,
@@ -432,4 +433,15 @@ export function prependUserContext(
     }),
     ...messages,
   ]
+}
+export function appendSystemContext(
+  systemPrompt: SystemPrompt,
+  context: { [k: string]: string },
+): string[] {
+  return [
+    ...systemPrompt,
+    Object.entries(context)
+      .map(([key, value]) => `${key}: ${value}`)
+      .join('\n'),
+  ].filter(Boolean)
 }

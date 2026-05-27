@@ -53,7 +53,7 @@ type State = {
   parentSessionId: SessionId | undefined
   // CLAUDE.md content cached by context.ts for the auto-mode classifier.
   // Breaks the yoloClassifier → claudemd → filesystem → permissions cycle.
-  cachedClaudeMdContent: string | null
+  cachedEfrexMdContent: string | null
   // In-memory error log for recent errors
   inMemoryErrorLog: Array<{ error: string; timestamp: string }>
   // Session-only plugins from --plugin-dir flag
@@ -199,7 +199,7 @@ function getInitialState(): State {
   }
   const state: State = {
     originalCwd: resolvedCwd,
-    cachedClaudeMdContent:null,
+    cachedEfrexMdContent:null,
     projectRoot: resolvedCwd,
     totalCostUSD: 0,
     totalAPIDuration: 0,
@@ -402,4 +402,7 @@ export function getLastApiCompletionTimestamp(): number | null {
 
 export function setLastApiCompletionTimestamp(timestamp: number): void {
   STATE.lastApiCompletionTimestamp = timestamp
+}
+export function setCachedEfrexMdContent(content: string | null): void {
+  STATE.cachedEfrexMdContent = content
 }

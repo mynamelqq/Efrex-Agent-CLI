@@ -149,3 +149,12 @@ export const SOURCES = [
   'projectSettings',
   'userSettings',
 ] as const satisfies readonly EditableSettingSource[]
+/**
+ * Check if a specific source is enabled
+ * @param source The source to check
+ * @returns true if the source should be loaded
+ */
+export function isSettingSourceEnabled(source: SettingSource): boolean {
+  const enabled = getEnabledSettingSources()
+  return enabled.includes(source)
+}

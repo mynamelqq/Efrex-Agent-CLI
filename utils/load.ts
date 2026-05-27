@@ -5,7 +5,7 @@ import { appendFileSync } from 'node:fs';
 import { existsSync,mkdirSync} from 'node:fs';
 import {createReadStream}from "node:fs";
 import  readline from 'readline';
-import pkg from '../package.json';
+
 import { appendFile } from 'fs/promises';
 export function trustFoler(){
     ensureDirSync();
@@ -14,8 +14,8 @@ export function trustFoler(){
         mkdirSync(dirPath, { recursive: true });
     }
 }
-export const CLI_APP_NAME = pkg.name;
-export const CLI_APP_VERSION = pkg.version;
+export const CLI_APP_NAME = MACRO.NAME
+export const CLI_APP_VERSION = MACRO.VERSION
 function ensureDirSync(): void {
     const projectFolder=join(homedir(),".efrex","projects","")
     if(!existsSync(projectFolder)){

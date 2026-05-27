@@ -776,3 +776,21 @@ export function resolveDeepestExistingAncestorSync(//路径不存在时，找到
   }
   return undefined
 }
+/**
+对文件路径进行规范化处理以便于比较，同时解决不同平台之间的差异问题。 * 在 Windows 系统中，会规范化路径分隔符，并将其转换为小写形式，以便进行不区分大小写的比较。
+ */
+export function normalizePathForComparison(filePath: string): string {
+  // Use path.normalize() to clean up redundant separators and resolve . and ..
+  let normalized = normalize(filePath)
+
+  // Convert separators to a stable slash form so comparison behavior stays
+  // consistent across platforms and in tests that use POSIX-style fixtures.
+  normalized = normalized.replace(/\\/g, '/')
+
+  // On Windows, normalize case for case-insensitive comparison.
+  if (getPlatform() === 'windows') {
+    normalized = normalized.toLowerCase()
+  }
+
+  return normalized
+}

@@ -49,7 +49,7 @@ import { handlePromptSubmit } from './utils/handlePromptSubmit.js';
 import { getAnthropicModel } from './utils/anthropicConfig.js';
 import { FileStateCache } from './utils/fileStateCache.js';
 import { getSystemPrompt } from './constants/prompts.js';
-import { getUserContext } from './context.js';
+import { getUserContext,getSystemContext } from './context.js';
 import { createUserMessage } from './utils/messages.js';
 import { extractTag, isSystemLocalCommandMessage } from './utils/messages.js';
 import { getDefaultAppState, type AppState} from './state/AppStateStore.js';
@@ -84,6 +84,7 @@ import {
 } from './components/messages/renderToolContent.js';
 import StatusAnimationRow from './components/StatusAnimationRow.js';
 import { CLI_APP_VERSION } from 'utils/load.js';
+import { logForDebugging } from './utils/debug.js';
 type ViewportMessage = {
 	id: number;
 	role: 'user' | 'assistant' | 'tool' | 'meta';
@@ -2087,14 +2088,16 @@ const getToolUseContext = useCallback(
 				mainLoopModelParam,
       		);
 			const { tools: freshTools } = toolUseContext.options;
-			const [defaultSystemPrompt, baseUserContext] = await Promise.all([
+			const [defaultSystemPrompt, baseUserContext,systemContext] = await Promise.all([
 				getSystemPrompt(freshTools, mainLoopModelParam, [
-					'F:\\pythonProject'
+					// 'F:\\pythonProject'
 				]),
 				getUserContext()
-			]); //, getSystemContext()] systemContext
+				,getSystemContext(),
+			]); 
+
 			const userContext = {
-				...baseUserContext
+				...baseUserContext,
 			};
 			const systemPrompt = buildEffectiveSystemPrompt({
 				toolUseContext,
@@ -2108,7 +2111,7 @@ const getToolUseContext = useCallback(
 					messages: messagesIncludingNewMessages,
 					systemPrompt: systemPrompt,
 					userContext: userContext,
-					systemContext: {},
+					systemContext: systemContext,
 					canUseTool,
 					toolUseContext: toolUseContext,
 					querySource: 'repl_main_thread'

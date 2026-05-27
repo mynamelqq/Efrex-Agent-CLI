@@ -2,18 +2,19 @@
 import { feature } from 'bun:bundle'
 import { randomBytes } from 'crypto'
 import { unwatchFile, watchFile } from 'fs'
+import { getManagedFilePath } from './settings/mdm/managedPath.js'
 import memoize from 'lodash/memoize.js'
 import { basename, dirname, join, resolve } from 'path'
 import { getOriginalCwd } from '../bootstrap/state.js'
 import { getCwd } from '../utils/cwd.js'
+import { findCanonicalGitRoot } from './git.js'
 import { logForDebugging } from './debug.js'
-import { getClaudeConfigHomeDir, isEnvTruthy } from './envUtils.js'
+import { MemoryType } from './memory/types.js'
+import { getClaudeConfigHomeDir, getEfrexConfigHomeDir, isEnvTruthy } from './envUtils.js'
 import { safeParseJSON } from './json.js'
 import { stripBOM } from './jsonRead.js'
 import { logError } from './log.js'
 import { normalizePathForConfigKey } from './path.js'
-
-
 /* eslint-enable @typescript-eslint/no-require-imports */
 import type { ImageDimensions } from './imageResizer.js'
 import { ThemeSetting } from 'packages/@ant/ink/src/theme/types.js'
@@ -619,4 +620,55 @@ export function getGlobalConfig(): GlobalConfig {
     // If anything goes wrong, fall back to uncached behavior
     return createDefaultGlobalConfig()
   }
+}
+export function getCurrentProjectConfig(): ProjectConfig {
+  const absolutePath = getProjectPathForConfig()
+  const config = getGlobalConfig()
+
+  if (!config.projects) {
+    return DEFAULT_PROJECT_CONFIG
+  }
+
+  const projectConfig = config.projects[absolutePath] ?? DEFAULT_PROJECT_CONFIG
+  // Not sure how this became a string
+  // TODO: Fix upstream
+  if (typeof projectConfig.allowedTools === 'string') {
+    projectConfig.allowedTools =
+      (safeParseJSON(projectConfig.allowedTools) as string[]) ?? []
+  }
+
+  return projectConfig
+}
+
+
+// Memoized function to get the project path for config lookup
+export const getProjectPathForConfig = memoize((): string => {
+  const originalCwd = getOriginalCwd()
+  const gitRoot = findCanonicalGitRoot(originalCwd)
+
+  if (gitRoot) {
+    // Normalize for consistent JSON keys (forward slashes on all platforms)
+    // This ensures paths like C:\Users\... and C:/Users/... map to the same key
+    return normalizePathForConfigKey(gitRoot)
+  }
+
+  // Not in a git repo
+  return normalizePathForConfigKey(resolve(originalCwd))//不在git仓库就返回原路径
+})
+export function getMemoryPath(memoryType: MemoryType): string {
+  const cwd = getOriginalCwd()
+
+  switch (memoryType) {
+    case 'User':
+      return join(getEfrexConfigHomeDir(), 'Efrex.md')
+    case 'Local':
+      return join(cwd, 'Efrex.local.md')
+    case 'Project':
+      return join(cwd, 'Efrex.md')
+    case 'Managed':
+      return join(getManagedFilePath(), 'Efrex.md')
+    // case 'AutoMem':
+    //   return getAutoMemEntrypoint()
+  }
+  return '' // unreachable in external builds where TeamMem is not in MemoryType
 }
