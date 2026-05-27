@@ -224,7 +224,7 @@ function modelMatchesFamily(model: string, family: string): boolean {
   const escapedFamily = family.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   return new RegExp(`(^|[./-])${escapedFamily}([./-]|$)`, 'i').test(model)
 }
-export const MODEL_CONTEXT_WINDOW_DEFAULT = 500_000
+export const MODEL_CONTEXT_WINDOW_DEFAULT = 800_000
 
 export function getContextWindowForModel(
   model: string,

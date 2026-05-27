@@ -166,7 +166,7 @@ export async function* queryModelOpenAI(
   try {
     // 1. Resolve model name
     // const openaiModel = resolveOpenAIModel(options.model)
-    const openaiModel=resolveOpenAIModel('kimi-k2.5')
+    const openaiModel=resolveOpenAIModel("")
     // 2. Normalize messages using shared preprocessing
     const messagesForAPI = normalizeMessagesForAPI(messages, tools)
 

@@ -356,7 +356,7 @@ function markdownToLines(markdown: string, width: number): string[] {
 
     const heading = /^\s{0,3}(#{1,6})\s*(.+?)\s*#*\s*$/.exec(line);
     if (heading) {
-      output.push(chalk.cyanBright.bold(`${heading[1]} ${heading[2]}`));
+      output.push(`${chalk.cyanBright.bold(heading[1])} ${inlineStyle(heading[2])}`);
       index++;
       continue;
     }
@@ -381,7 +381,7 @@ function markdownToLines(markdown: string, width: number): string[] {
 
     const quote = /^\s{0,3}>\s?(.+)$/.exec(line);
     if (quote) {
-      output.push(...wrapPlain(quote[1], Math.max(1, width - 2)).map(part => `${chalk.gray('│ ')}${chalk.gray(inlineStyle(part))}`));
+      output.push(...wrapPreservingMarkdown(quote[1], Math.max(1, width - 2)).map(part => `${chalk.gray('│ ')}${chalk.gray(inlineStyle(part))}`));
       index++;
       continue;
     }
@@ -389,14 +389,14 @@ function markdownToLines(markdown: string, width: number): string[] {
     const list = /^\s{0,3}(?:([-+*])|(\d+)[.)])\s+(.+)$/.exec(line);
     if (list) {
       const bullet = list[2] ? `${list[2]}. ` : '• ';
-      output.push(...wrapPlain(list[3], Math.max(1, width - stringWidth(bullet))).map((part, partIndex) =>
+      output.push(...wrapPreservingMarkdown(list[3], Math.max(1, width - stringWidth(bullet))).map((part, partIndex) =>
         `${partIndex === 0 ? chalk.cyanBright(bullet) : ' '.repeat(stringWidth(bullet))}${inlineStyle(part)}`,
       ));
       index++;
       continue;
     }
 
-    output.push(...wrapPlain(line.trim(), width).map(part => inlineStyle(part)));
+    output.push(...wrapPreservingMarkdown(line.trim(), width).map(part => inlineStyle(part)));
     index++;
   }
 
@@ -404,14 +404,36 @@ function markdownToLines(markdown: string, width: number): string[] {
 }
 
 function inlineStyle(text: string): string {
-  return text
-    .replace(/`([^`\n]+)`/g, (_, content: string) => chalk.bgGray.cyanBright(content))
-    .replace(/\*\*([\s\S]+?)\*\*/g, (_, content: string) => chalk.magentaBright.bold(content))
-    .replace(/__([\s\S]+?)__/g, (_, content: string) => chalk.magentaBright.bold(content))
-    .replace(/~~([\s\S]+?)~~/g, (_, content: string) => chalk.dim.strikethrough(content))
-    .replace(/\[([^\]\n]+)\]\(([^)]+)\)/g, (_, label: string, href: string) => chalk.blueBright.underline(`${label} (${href})`))
-    .replace(/\*([^*\n]+)\*/g, (_, content: string) => chalk.magenta.italic(content))
-    .replace(/_([^_\n]+)_/g, (_, content: string) => chalk.magenta.italic(content));
+  const parts: string[] = [];
+  let index = 0;
+  const pattern = /(`[^`\n]+`)|(\*\*[\s\S]+?\*\*)|(__[\s\S]+?__)|(~~[\s\S]+?~~)|(\[[^\]\n]+]\([^)]+\))|(\*[^*\n]+\*)|(_[^_\n]+_)/;
+
+  while (index < text.length) {
+    const remaining = text.slice(index);
+    const match = pattern.exec(remaining);
+    if (!match) {
+      parts.push(remaining);
+      break;
+    }
+    if (match.index > 0) {
+      parts.push(remaining.slice(0, match.index));
+    }
+    const token = match[0];
+    if (token.startsWith('`')) {
+      parts.push(chalk.bgGray.cyanBright(token.slice(1, -1)));
+    } else if (token.startsWith('**') || token.startsWith('__')) {
+      parts.push(chalk.magentaBright.bold(token.slice(2, -2)));
+    } else if (token.startsWith('~~')) {
+      parts.push(chalk.dim.strikethrough(token.slice(2, -2)));
+    } else if (token.startsWith('[')) {
+      const linkMatch = /^\[([^\]\n]+)]\(([^)]+)\)$/.exec(token);
+      parts.push(chalk.blueBright.underline(`${linkMatch![1]} (${linkMatch![2]})`));
+    } else {
+      parts.push(chalk.magenta.italic(token.slice(1, -1)));
+    }
+    index += match.index + token.length;
+  }
+  return parts.join('');
 }
 
 function renderTable(headers: string[], rows: string[][], width: number): string[] {
@@ -455,14 +477,36 @@ function splitTableRow(line: string): string[] {
 }
 
 function stripMarkdown(text: string): string {
-  return text
-    .replace(/`([^`\n]+)`/g, '$1')
-    .replace(/\*\*([\s\S]+?)\*\*/g, '$1')
-    .replace(/__([\s\S]+?)__/g, '$1')
-    .replace(/~~([\s\S]+?)~~/g, '$1')
-    .replace(/\[([^\]\n]+)\]\([^)]+\)/g, '$1')
-    .replace(/\*([^*\n]+)\*/g, '$1')
-    .replace(/_([^_\n]+)_/g, '$1');
+  const parts: string[] = [];
+  let index = 0;
+  const pattern = /(`[^`\n]+`)|(\*\*[\s\S]+?\*\*)|(__[\s\S]+?__)|(~~[\s\S]+?~~)|(\[[^\]\n]+]\([^)]+\))|(\*[^*\n]+\*)|(_[^_\n]+_)/;
+
+  while (index < text.length) {
+    const remaining = text.slice(index);
+    const match = pattern.exec(remaining);
+    if (!match) {
+      parts.push(remaining);
+      break;
+    }
+    if (match.index > 0) {
+      parts.push(remaining.slice(0, match.index));
+    }
+    const token = match[0];
+    if (token.startsWith('`')) {
+      parts.push(token.slice(1, -1));
+    } else if (token.startsWith('**') || token.startsWith('__')) {
+      parts.push(token.slice(2, -2));
+    } else if (token.startsWith('~~')) {
+      parts.push(token.slice(2, -2));
+    } else if (token.startsWith('[')) {
+      const linkMatch = /^\[([^\]\n]+)]\([^)]+\)$/.exec(token);
+      parts.push(linkMatch![1]);
+    } else {
+      parts.push(token.slice(1, -1));
+    }
+    index += match.index + token.length;
+  }
+  return parts.join('');
 }
 
 function wrapPlain(text: string, width: number): string[] {
@@ -487,6 +531,59 @@ function wrapStyled(text: string, width: number): string[] {
         current = char;
       } else {
         current = next;
+      }
+    }
+    result.push(current);
+  }
+
+  return result;
+}
+
+function wrapPreservingMarkdown(text: string, width: number): string[] {
+  const safeWidth = Math.max(1, width);
+  const lines = text.split('\n');
+  const result: string[] = [];
+  const tokenPattern = /(`[^`\n]+`)|(\*\*[\s\S]+?\*\*)|(__[\s\S]+?__)|(~~[\s\S]+?~~)|(\[[^\]\n]+]\([^)]+\))|(\*[^*\n]+\*)|(_[^_\n]+_)/g;
+
+  for (const line of lines) {
+    if (line.length === 0) {
+      result.push('');
+      continue;
+    }
+
+    const segments: {text: string; atomic: boolean}[] = [];
+    let lastIndex = 0;
+    tokenPattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = tokenPattern.exec(line)) !== null) {
+      if (match.index > lastIndex) {
+        segments.push({text: line.slice(lastIndex, match.index), atomic: false});
+      }
+      segments.push({text: match[0], atomic: true});
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < line.length) {
+      segments.push({text: line.slice(lastIndex), atomic: false});
+    }
+
+    let current = '';
+    for (const seg of segments) {
+      if (seg.atomic) {
+        if (stringWidth(current) > 0 && stringWidth(current + seg.text) > safeWidth) {
+          result.push(current);
+          current = seg.text;
+        } else {
+          current += seg.text;
+        }
+      } else {
+        for (const char of Array.from(seg.text)) {
+          if (stringWidth(current + char) > safeWidth) {
+            result.push(current);
+            current = char;
+          } else {
+            current += char;
+          }
+        }
       }
     }
     result.push(current);

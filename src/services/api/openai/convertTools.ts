@@ -26,7 +26,7 @@ export function toolChoiceToOpenAI(
     case 'auto':
       return 'auto'
     case 'any':
-      return 'required'
+      return 'auto'//required
     case 'tool':
       return typeof tc.name === 'string'
         ? { type: 'function', function: { name: tc.name } }

@@ -8,11 +8,25 @@ import { getModelMaxOutputTokens } from 'src/context.js'
 import { logError } from '../../utils/log.js'
 import { tokenCountWithEstimation } from 'src/utils/tokens.js'
 import { getContextWindowForModel } from 'src/context.js'
+import { SystemPrompt } from 'src/prompt.js'
 import { QuerySource } from './querySource.js'
 import { compactConversation } from './compact.js'
 import { create } from 'lodash'
 import { CompactionResult,RecompactionInfo,ERROR_MESSAGE_USER_ABORT } from './compact.js'
 import { createDefaultGlobalConfig } from 'src/utils/config.js'
+export type CacheSafeParams = {
+  /** System prompt - must match parent for cache hits */
+  systemPrompt: SystemPrompt
+  /** User context - prepended to messages, affects cache */
+  userContext: { [k: string]: string }
+  /** System context - appended to system prompt, affects cache */
+  systemContext: { [k: string]: string }
+  /** Tool use context containing tools, model, and other options */
+  toolUseContext: ToolUseContext
+  /** Parent context messages for prompt cache sharing */
+  forkContextMessages: Message[]
+}
+
 const MAX_OUTPUT_TOKENS_FOR_SUMMARY = 20_000
 export type AutoCompactTrackingState = {//自动压缩跟踪
   compacted: boolean//是否压缩
@@ -48,6 +62,7 @@ export async function shouldAutoCompact(
   // Recursion guards. session_memory and compact are forked agents that
   // would deadlock.思索
   if (querySource === 'session_memory' || querySource === 'compact') {
+
     return false
   }
 
@@ -65,20 +80,23 @@ export async function shouldAutoCompact(
     model,
   )
 
+ 
+
   return isAboveAutoCompactThreshold
 }
 export async function autoCompactIfNeeded(
   messages: Message[],
   toolUseContext: ToolUseContext,
+  cacheSafeParams: CacheSafeParams,
   querySource?: QuerySource,
   tracking?: AutoCompactTrackingState,
-  snipTokensFreed?: number,
 ): Promise<{
   wasCompacted: boolean
   compactionResult?: CompactionResult
   consecutiveFailures?: number
 }> {
   if (isEnvTruthy(process.env.DISABLE_COMPACT)) {
+  
     return { wasCompacted: false }
   }
 
@@ -89,6 +107,7 @@ export async function autoCompactIfNeeded(
     tracking?.consecutiveFailures !== undefined &&
     tracking.consecutiveFailures >= MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES
   ) {
+   
     return { wasCompacted: false }
   }
 
@@ -97,10 +116,10 @@ export async function autoCompactIfNeeded(
     messages,
     model,
     querySource,
-    snipTokensFreed,
   )
 
   if (!shouldCompact) {
+
     return { wasCompacted: false }
   }
 
@@ -130,6 +149,7 @@ export async function autoCompactIfNeeded(
   }
 
   try {
+  
     const compactionResult = await compactConversation(
       messages,
       toolUseContext,
@@ -144,6 +164,7 @@ export async function autoCompactIfNeeded(
     // setLastSummarizedMessageId(undefined)
     // runPostCompactCleanup(querySource)
 
+  
     return {
       wasCompacted: true,
       compactionResult,
@@ -154,6 +175,7 @@ export async function autoCompactIfNeeded(
     if (!hasExactErrorMessage(error, ERROR_MESSAGE_USER_ABORT)) {
       logError(error)
     }
+   
     // Increment consecutive failure count for circuit breaker.
     // The caller threads this through autoCompactTracking so the
     // next query loop iteration can skip futile retry attempts.
@@ -271,7 +293,7 @@ export function calculateTokenWarningState(
     actualContextWindow - MANUAL_COMPACT_BUFFER_TOKENS
 
   // Allow override for testing
-  const blockingLimitOverride = process.env.CLAUDE_CODE_BLOCKING_LIMIT_OVERRIDE
+  const blockingLimitOverride = process.env.BLOCKING_LIMIT_OVERRIDE
   const parsedOverride = blockingLimitOverride
     ? parseInt(blockingLimitOverride, 10)
     : NaN

@@ -1,7 +1,7 @@
 ﻿import type { ToolUseContext } from './Tool.js'
 import type { Terminal } from 'src/query/transitions.js'
 import { normalizeMessagesForAPI, prependUserContext,appendSystemContext} from './utils/api.js'
-
+import { autoCompactIfNeeded } from './services/compact/autoCompact.js'
 import { StreamingToolExecutor } from './services/tools/StreamingToolExecutor.js'
 import { AutoCompactTrackingState } from './services/compact/autoCompact.js'
 import { runTools } from './services/tools/toolOrchestration.js'
@@ -14,8 +14,6 @@ import { createAssistantAPIErrorMessage, createUserInterruptionMessage } from '.
 import { queryModelWithStreaming } from './services/api/efrex.js'
 import { buildQueryConfig } from './query/config.js'
 import { ImageResizeError } from './utils/imageResizer.js'
-import { autoCompactIfNeeded } from './services/compact/autoCompact.js'
-import { runAutoCompactStep } from './query/autoCompactStep.js'
 import { isPromptTooLongMessage } from './services/api/errors.js'
 import type {
   AssistantMessage,
@@ -152,6 +150,16 @@ async function* queryLoop(
       querySource,
     )
     messagesForQuery = microcompactResult.messages
+    logForDebugging('query: prepared messages before autocompact check', {
+      level: 'debug',
+      querySource,
+      turnCount,
+      messageCount: messagesForQuery.length,
+      estimatedTokens: tokenCountWithEstimation(messagesForQuery),
+      clearedToolUseCount: microcompactResult.clearedToolUseIds?.length ?? 0,
+      priorCompacted: tracking?.compacted ?? false,
+      consecutiveFailures: tracking?.consecutiveFailures ?? 0,
+    })
     // 从 contentReplacementState.replacements 中释放那些内容已被替换为清除消息的工具结果所使用的原始字符串。
     if (microcompactResult.clearedToolUseIds?.length) {
       const replacements = toolUseContext?.contentReplacementState?.replacements
@@ -165,36 +173,66 @@ async function* queryLoop(
     // the API response so we can use actual cache_deleted_input_tokens.
     // Gated behind feature() so the string is eliminated from external builds.
     const pendingCacheEdits =  undefined
-    const autoCompactOutcome = await runAutoCompactStep(
+    const { compactionResult, consecutiveFailures } = await autoCompactIfNeeded(
+      messagesForQuery,
+      toolUseContext,
       {
-        messagesForQuery,
+        systemPrompt,
+        userContext,
+        systemContext,
         toolUseContext,
-        autoCompactTracking: tracking,
-        autoCompactQuerySource: {
-          systemPrompt,
-          userContext,
-          systemContext,
-          toolUseContext,
-          forkContextMessages: messagesForQuery,
-        },
+        forkContextMessages: messagesForQuery,
       },
-      {
-        autoCompactIfNeeded,
-        buildPostCompactMessages,
-        createTurnId: randomUUID,
-      },
+      querySource,
+      tracking,
     )
 
-    tracking = autoCompactOutcome.autoCompactTracking
-    if (autoCompactOutcome.postCompactMessages) {
-      // for (const message of autoCompactOutcome.postCompactMessages) {
-      //   yield message
-      // }
-      messagesForQuery = autoCompactOutcome.messagesForQuery
-    } else if (autoCompactOutcome.consecutiveFailures !== undefined) {
-      // Autocompact failed — propagate failure count so the circuit breaker
-      // can stop retrying on the next iteration.
-      tracking = autoCompactOutcome.autoCompactTracking
+    if (compactionResult) {
+      const {
+        preCompactTokenCount,
+        postCompactTokenCount,
+        truePostCompactTokenCount,
+        compactionUsage,
+      } = compactionResult
+      logForDebugging('query: autocompact applied before model request', {
+        level: 'info',
+        querySource,
+        turnCount,
+        preCompactTokenCount,
+        postCompactTokenCount,
+        truePostCompactTokenCount,
+        compactionUsage,
+      })
+      // Reset on every compact so turnCounter/turnId reflect the MOST RECENT
+      // compact. recompactionInfo (autoCompact.ts:190) already captured the
+      // old values for turnsSincePreviousCompact/previousCompactTurnId before
+      // the call, so this reset doesn't lose those.
+      tracking = {
+        compacted: true,
+        turnId: randomUUID(),
+        turnCounter: 0,
+        consecutiveFailures: 0,
+      }
+
+      const postCompactMessages = buildPostCompactMessages(compactionResult)
+
+      for (const message of postCompactMessages) {
+        yield message
+      }
+
+      // Continue on with the current query call using the post compact messages
+      messagesForQuery = postCompactMessages
+    } else if (consecutiveFailures !== undefined) {
+      logForDebugging('query: autocompact returned failure state', {
+        level: 'warn',
+        querySource,
+        turnCount,
+        consecutiveFailures,
+      })
+      tracking = {
+        ...(tracking ?? { compacted: false, turnId: '', turnCounter: 0 }),
+        consecutiveFailures,
+      }
     }
     toolUseContext = { ...toolUseContext, messages: messagesForQuery }
     const mediaRecoveryEnabled =reactiveCompact?.isReactiveCompactEnabled() ?? false
@@ -217,7 +255,7 @@ async function* queryLoop(
        reactiveCompact?.isReactiveCompactEnabled() ?? false
     
     if (//没有进行自动压缩兜底，检查输入内容（消息）是否超出了模型的令牌（token）限制，如果超出则返回错误。
-      !autoCompactOutcome.compactionResult &&
+      !compactionResult &&
       querySource !== 'compact' &&
       querySource !== 'session_memory' &&
       !(
@@ -228,7 +266,22 @@ async function* queryLoop(
         tokenCountWithEstimation(messagesForQuery),
         toolUseContext.options.mainLoopModel,
       )
+      logForDebugging('query: evaluated blocking limit before model request', {
+        level: 'debug',
+        querySource,
+        turnCount,
+        estimatedTokens: tokenCountWithEstimation(messagesForQuery),
+        isAtBlockingLimit,
+        model: toolUseContext.options.mainLoopModel,
+      })
       if (isAtBlockingLimit) {
+        logForDebugging('query: blocked by context limit before model request', {
+          level: 'warn',
+          querySource,
+          turnCount,
+          estimatedTokens: tokenCountWithEstimation(messagesForQuery),
+          model: toolUseContext.options.mainLoopModel,
+        })
         yield createAssistantAPIErrorMessage({
           content: PROMPT_TOO_LONG_ERROR_MESSAGE,
           error: 'invalid_request',

@@ -6,7 +6,7 @@ import { Command,getCommandName } from './types/command.js';
 import { useQueueProcessor } from './hooks/useQueueProcessor.js';
 import { randomUUID } from 'node:crypto';
 import { FileHistoryState } from './utils/fileHistory.js';
-
+import { isCompactBoundaryMessage } from './utils/messages.js';
 import {
 	Box,
 	Text,
@@ -29,6 +29,7 @@ import { AlternateScreen } from './ink/components/AlternateScreen.js';
 import PromptInput from './components/PromptInput.js';
 import { isCommandEnabled } from './types/command.js';
 import MessageViewport from './components/MessageViewport.js';
+import MessagesScrollback from './components/MessagesScrollback.js';
 import FullscreenLayout from './components/FullscreenLayout.js';
 import { ScrollKeybindingHandler } from './components/ScrollKeybindingHandler.js';
 import { PastedContent } from './utils/config.js';
@@ -1240,6 +1241,13 @@ function messageToViewport(
 	tools: readonly Tool[],
 	verbose: boolean
 ): ViewportMessage | null {
+	const transcriptOnlyMessage = message as MessageType & {
+		isVisibleInTranscriptOnly?: boolean;
+	};
+	if (transcriptOnlyMessage.isVisibleInTranscriptOnly && !verbose) {
+		return null;
+	}
+
 	if (message.type === 'user') {
 		if (isToolResultUserMessage(message)) {
 			const toolResultBlock = getToolResultBlock(message);
@@ -1529,6 +1537,10 @@ export default function QueryApp({
 		statusText: null
 	});
 	const [messages, rawSetMessages] = useState<MessageType[]>([]);
+	const [nonFullscreenScrollbackHeader, setNonFullscreenScrollbackHeader] =
+		useState<string[]>([]);
+	const [nonFullscreenScrollbackMessages, setNonFullscreenScrollbackMessages] =
+		useState<ViewportMessage[]>([]);
 	const [completedTurnFooters, setCompletedTurnFooters] = useState<
 		CompletedTurnFooter[]
 	>([]);
@@ -1536,6 +1548,7 @@ export default function QueryApp({
 	const [filteredCommands, setFilteredCommands] = useState(commands);
 	  const [initialReadFileState] = useState(() => createFileStateCacheWithSizeLimit(READ_FILE_STATE_CACHE_SIZE));
 	const readFileState = useRef(initialReadFileState);
+	const nonFullscreenHeaderCapturedRef = useRef(false);
 	const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
 	const appState = React.useSyncExternalStore(
 		store.subscribe,
@@ -1934,8 +1947,31 @@ export default function QueryApp({
 						)
 					);
 				},
-				onMessage: message => {
-					if (message.type === 'assistant') {
+				onMessage: newMessage => {
+					if (isCompactBoundaryMessage(newMessage)) {
+						if (!isFullscreenEnvEnabled() && screen !== 'transcript') {
+							if (
+								!nonFullscreenHeaderCapturedRef.current &&
+								transcriptHeaderLinesRef.current.length > 0
+							) {
+								setNonFullscreenScrollbackHeader(
+									transcriptHeaderLinesRef.current
+								);
+								nonFullscreenHeaderCapturedRef.current = true;
+							}
+							if (viewportMessagesRef.current.length > 0) {
+								setNonFullscreenScrollbackMessages(previous => [
+									...previous,
+									...viewportMessagesRef.current
+								]);
+							}
+						}
+						setCompletedTurnFooters([]);
+						setMessages(() => [newMessage]);
+					} else {
+						setMessages(prev => [...prev, newMessage]);
+					}
+					if (newMessage.type === 'assistant') {
 						setStreamingAssistant({
 							active: false,
 							placeholderId: null,
@@ -1943,13 +1979,17 @@ export default function QueryApp({
 							pendingToolCalls: []
 						});
 					}
-					setMessages(prev => [...prev, message]);
 				}
 			});
 		},
-		[setMessages]
+		[screen, setMessages]
 	);
 	const handleCompactProgress = useCallback((event: CompactProgressEvent) => {
+		logForDebugging('query-app: received compact progress event', {
+			level: event.type === 'compact_end' ? 'info' : 'debug',
+			eventType: event.type,
+			hookType: 'hookType' in event ? event.hookType : undefined
+		});
 		switch (event.type) {
 			case 'hooks_start':
 				setCompactUiState(prev => ({
@@ -1957,10 +1997,10 @@ export default function QueryApp({
 					active: true,
 					statusText:
 						event.hookType === 'pre_compact'
-							? 'Efrex 正在执行压缩前处理...'
+							? 'Efrex 正在整理历史上下文...'
 							: event.hookType === 'post_compact'
-								? 'Efrex 正在执行压缩后处理...'
-								: 'Efrex 正在执行会话初始化处理...'
+								? 'Efrex 正在恢复压缩后的会话状态...'
+								: 'Efrex 正在初始化压缩流程...'
 				}));
 				break;
 			case 'compact_start':
@@ -1969,7 +2009,7 @@ export default function QueryApp({
 					active: true,
 					streamMode: 'requesting',
 					responseLength: 0,
-					statusText: 'Efrex 正在压缩对话...'
+					statusText: 'Efrex 正在生成对话摘要...'
 				}));
 				break;
 			case 'compact_end':
@@ -1982,6 +2022,15 @@ export default function QueryApp({
 				break;
 		}
 	}, []);
+	useEffect(() => {
+		logForDebugging('query-app: compact UI state updated', {
+			level: compactUiState.active ? 'info' : 'debug',
+			active: compactUiState.active,
+			streamMode: compactUiState.streamMode,
+			responseLength: compactUiState.responseLength,
+			statusText: compactUiState.statusText
+		});
+	}, [compactUiState]);
 const getToolUseContext = useCallback(
 		(
 		messages: MessageType[],
@@ -2375,6 +2424,25 @@ const getToolUseContext = useCallback(
 		width: messageWidth,
 		welcome: messages.length === 0 && !showSpinner
 	});
+	const viewportMessagesRef = useRef<ViewportMessage[]>([]);
+	const transcriptHeaderLinesRef = useRef<string[]>([]);
+	viewportMessagesRef.current = viewportMessages;
+	transcriptHeaderLinesRef.current = transcriptHeaderLines;
+
+	useEffect(() => {
+		if (isFullscreenEnvEnabled() || isTranscriptMode) {
+			return;
+		}
+
+		if (
+			!nonFullscreenHeaderCapturedRef.current &&
+			messages.length > 0 &&
+			transcriptHeaderLines.length > 0
+		) {
+			setNonFullscreenScrollbackHeader(transcriptHeaderLines);
+			nonFullscreenHeaderCapturedRef.current = true;
+		}
+	}, [isTranscriptMode, messages.length, transcriptHeaderLines]);
 
 	const activeToolUseConfirm = toolUseConfirmQueue[0];
 	const highlightInputChrome =
@@ -2671,6 +2739,49 @@ const getToolUseContext = useCallback(
 		</Box>
 	);
 
+	const nonFullscreenScrollableContent = (
+		<Box flexDirection="column">
+			{nonFullscreenScrollbackHeader.length > 0 ||
+			nonFullscreenScrollbackMessages.length > 0 ? (
+				<MessagesScrollback
+					headerLines={nonFullscreenScrollbackHeader}
+					messages={nonFullscreenScrollbackMessages}
+					width={messageWidth}
+					alertMessage={null}
+					blinkOn={blinkVisible}
+				/>
+			) : null}
+			{messages.length === 0 ? (
+				<MessageViewport
+					headerLines={transcriptHeaderLines}
+					messages={[]}
+					width={messageWidth}
+					alertMessage={alertMessage}
+					statusLine={null}
+					blinkOn={blinkVisible}
+				/>
+			) : null}
+			{messages.length > 0 || alertMessage ? (
+				<MessagesScrollback
+					headerLines={
+						nonFullscreenHeaderCapturedRef.current
+							? []
+							: transcriptHeaderLines
+					}
+					messages={viewportMessages}
+					width={messageWidth}
+					alertMessage={alertMessage}
+					blinkOn={blinkVisible}
+				/>
+			) : null}
+			{toolJSX && !(toolJSX.isLocalJSXCommand && toolJSX.isImmediate) ? (
+				<Box flexDirection="column" width="100%">
+					{toolJSX.jsx}
+				</Box>
+			) : null}
+		</Box>
+	);
+
 	const transcriptScrollableContent = (
 		<Box flexDirection="column" width="100%" paddingTop={1}>
 			<Box paddingX={2} width="100%">
@@ -2760,7 +2871,7 @@ const getToolUseContext = useCallback(
 
 	return (
 		<Box flexDirection="column" paddingX={1} paddingY={0}>
-			{scrollableContent}
+			{nonFullscreenScrollableContent}
 			{bottomContent}
 		</Box>
 	);
