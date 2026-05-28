@@ -1,6 +1,5 @@
-import {useInput} from '../ink.js';
+import type { InputEvent, Key } from '../ink/events/input-event.js';
 import Cursor from '../utils/Cursor.js';
-import { PASTE_THRESHOLD } from '../utils/paste.js';
 
 const SGR_MOUSE_INPUT_PATTERN = /(?:\x1B)?\[<\d+;\d+;\d+[mM]/g;
 
@@ -22,7 +21,6 @@ type Props = {
   onHistoryNext?: () => void;
   onCtrlC?: () => void;
   onCyclePermissionMode?: () => void;
-  onPasteText?: (text: string) => string | void;
 };
 
 export default function useTextInput({
@@ -43,7 +41,6 @@ export default function useTextInput({
   onHistoryNext,
   onCtrlC,
   onCyclePermissionMode,
-  onPasteText,
 }: Props) {
   const effectiveOffset = Math.min(cursorOffset ?? value.length, value.length);
   const cursor = Cursor.fromText(value, width, effectiveOffset);
@@ -52,21 +49,24 @@ export default function useTextInput({
     onCursorOffsetChange?.(nextCursor.offset);
   };
 
-  useInput(
-    (input, key, event) => {
+  const handleInput = (
+    input: string,
+    key: Key,
+    event?: InputEvent,
+  ) => {
       const textInput = stripMouseInput(input);
       if (textInput.length === 0 && textInput !== input) {
         return;
       }
 
       if (key.ctrl && textInput === 'c') {
-        event.stopImmediatePropagation();
+        event?.stopImmediatePropagation();
         onCtrlC?.();
         return;
       }
 
       if ((key.shift && key.tab) || (key.ctrl && textInput === 'g')) {
-        event.stopImmediatePropagation();
+        event?.stopImmediatePropagation();
         onCyclePermissionMode?.();
         return;
       }
@@ -79,7 +79,7 @@ export default function useTextInput({
         if (suspendSubmit) {
           return;
         }
-        event.stopImmediatePropagation();
+        event?.stopImmediatePropagation();
         onSubmit?.(cursor.text);
         return;
       }
@@ -88,7 +88,7 @@ export default function useTextInput({
         if (suspendVerticalArrows) {
           return;
         }
-        event.stopImmediatePropagation();
+        event?.stopImmediatePropagation();
         if (cursor.text.includes('\n')) {
           applyCursor(cursor.up(width));
         } else {
@@ -101,7 +101,7 @@ export default function useTextInput({
         if (suspendVerticalArrows) {
           return;
         }
-        event.stopImmediatePropagation();
+        event?.stopImmediatePropagation();
         if (cursor.text.includes('\n')) {
           applyCursor(cursor.down(width));
         } else {
@@ -112,20 +112,20 @@ export default function useTextInput({
 
       if (key.ctrl) {
         if (textInput === 'p') {
-          event.stopImmediatePropagation();
+          event?.stopImmediatePropagation();
           onHistoryPrev?.();
           return;
         }
 
         if (textInput === 'n') {
-          event.stopImmediatePropagation();
+          event?.stopImmediatePropagation();
           onHistoryNext?.();
           return;
         }
 
         const nextCursor = handleCtrl(textInput, cursor, width);
         if (nextCursor !== cursor) {
-          event.stopImmediatePropagation();
+          event?.stopImmediatePropagation();
           applyCursor(nextCursor);
           if (nextCursor.text !== cursor.text) {
             onChange(nextCursor.text);
@@ -149,37 +149,24 @@ export default function useTextInput({
         nextCursor = cursor.deleteForward();
       } else if (textInput) {
         const normalizedInput = textInput.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-        const shouldHandleAsPaste =
-          normalizedInput.includes('\n') ||
-          normalizedInput.includes('\t') ||
-          normalizedInput.length > PASTE_THRESHOLD;
-        const insertedText =
-          onPasteText && shouldHandleAsPaste
-            ? onPasteText(normalizedInput)
-            : normalizedInput;
-        if (insertedText === undefined) {
-          event.stopImmediatePropagation();
-          return;
-        }
-        nextCursor = cursor.insert(insertedText);
+        nextCursor = cursor.insert(normalizedInput);
       }
 
       if (nextCursor === cursor) {
         return;
       }
 
-      event.stopImmediatePropagation();
+      event?.stopImmediatePropagation();
       applyCursor(nextCursor);
       if (nextCursor.text !== cursor.text) {
         onChange(nextCursor.text);
       }
-    },
-    {isActive},
-  );
+    };
 
   const cursorPos = cursor.getPosition();
 
   return {
+    onInput: handleInput,
     cursor,
     renderedValue: cursor
       .render({

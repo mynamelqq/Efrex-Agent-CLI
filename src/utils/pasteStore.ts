@@ -3,7 +3,7 @@ import { createHash } from 'crypto'
 import { mkdir, readdir, readFile, stat, unlink, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { logForDebugging } from './debug.js'
-import { getClaudeConfigHomeDir } from './envUtils.js'
+import { getEfrexConfigHomeDir } from './envUtils.js'
 import { isENOENT } from './errors.js'
 
 const PASTE_STORE_DIR = 'paste-cache'
@@ -11,7 +11,7 @@ const PASTE_STORE_DIR = 'paste-cache'
  * Get the paste store directory (persistent across sessions).
  */
 function getPasteStoreDir(): string {
-  return join(getClaudeConfigHomeDir(), PASTE_STORE_DIR)//.efrex/paste-cache
+  return join(getEfrexConfigHomeDir(), PASTE_STORE_DIR)//.efrex/paste-cache
 }
 /**
  * Generate a hash for paste content to use as filename.

@@ -16,7 +16,7 @@ import { getOriginalCwd, getSessionId } from '../../bootstrap/state.js'
 import type { AnyObject, Tool, ToolPermissionContext } from '../../Tool.js'
 import {getToolResultsDir}from "../sessionStorage.js"
 import { getCwd } from '../cwd.js'
-import { getClaudeConfigHomeDir, getEfrexConfigHomeDir } from '../envUtils.js'
+import {  getEfrexConfigHomeDir } from '../envUtils.js'
 import {
   containsPathTraversal,
   expandPath,
@@ -305,7 +305,7 @@ export function checkWritePermissionForTool<Input extends AnyObject>(
   //   // Everything else (.claude/settings.json, .git/, .vscode/, .idea/) falls
   //   // back to generateSuggestions — its setMode suggestion doesn't bypass
   //   // this check, but preserving it avoids a surprising empty array.
-  //   const skillScope = getClaudeSkillScope(path)
+
   //   const safetySuggestions: PermissionUpdate[] = skillScope
   //     ? [
   //         {

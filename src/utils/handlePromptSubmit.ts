@@ -124,10 +124,10 @@ export async function handlePromptSubmit(
   const rawPastedContents = pastedContents ?? {}
   // Images are only sent if their [Image #N] placeholder is still in the text.
   // Deleting the inline pill drops the image; orphaned entries are filtered here.
-  const referencedIds = new Set(parseReferences(text).map(r => r.id))
+  const referencedIds = new Set(parseReferences(text).map(r => r.id))//还在文本中存在的id
 
   const thePastedContents = Object.fromEntries(
-    Object.entries(rawPastedContents).filter(
+    Object.entries(rawPastedContents).filter(///去除图片块
       ([, c]) => c.type !== 'image' || referencedIds.has(c.id),
     ),
   )

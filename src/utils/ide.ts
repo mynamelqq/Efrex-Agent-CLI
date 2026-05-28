@@ -6,8 +6,9 @@ import { createConnection } from 'net'
 import * as os from 'os'
 import { basename, join, sep as pathSeparator, resolve } from 'path'
 import {  getOriginalCwd } from '../bootstrap/state.js'
-import { env } from './env.js'
-import { getClaudeConfigHomeDir, isEnvTruthy } from './envUtils.js'
+import { env,} from './env.js'
+import { envDynamic } from './envDynamic.js'
+import { isEnvTruthy } from './envUtils.js'
 import {
   execFileNoThrow,
   execFileNoThrowWithCwd,
@@ -199,7 +200,7 @@ export function isJetBrainsIde(ide: IdeType | null): boolean {
 export const isSupportedVSCodeTerminal = memoize(() => {
   return isVSCodeIde(env.terminal as IdeType)
 })
-export const isSupportedJetBrainsTerminal = memoize(() => {
+export const isSupportedJetBrainsTerminal = memoize(() => {//是否支持jetbrains
   return isJetBrainsIde(envDynamic.terminal as IdeType)
 })
 export const isSupportedTerminal = memoize(() => {

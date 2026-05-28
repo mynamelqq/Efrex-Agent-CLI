@@ -46,7 +46,6 @@ export function isEnvDefinedFalsy(value: string | undefined): boolean {
   return ['0', 'false', 'no', 'off', ''].includes(value.toLowerCase())
 }
 
-export const getClaudeConfigHomeDir = getEfrexConfigHomeDir
 /**
  * Check if bash commands should maintain project working directory (reset to original after each command)
  * @returns true if CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR is set to a truthy value

@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { getHistory } from '../history.js';
+import { getHistory, restoreHistoryImages } from '../history.js';
 import type { HistoryEntry, PastedContent } from '../utils/config.js';
 
 const HISTORY_CHUNK_SIZE = 10;
@@ -89,9 +89,10 @@ export function useArrowKeyHistory(
       }
 
       const entry = historyCache.current[targetIndex];
+      const restoredPastedContents = await restoreHistoryImages(entry);
       setHistoryIndex(targetIndex + 1);
       onChange(entry.display);
-      setPastedContents(entry.pastedContents ?? {});
+      setPastedContents(restoredPastedContents);
     })();
   }, [onChange, setPastedContents]);
 
@@ -102,13 +103,13 @@ export function useArrowKeyHistory(
       setHistoryIndex(currentIndex - 1);
       const entry = historyCache.current[currentIndex - 2];
       onChange(entry.display);
-      setPastedContents(entry.pastedContents ?? {});
+      void restoreHistoryImages(entry).then(setPastedContents);
     } else if (currentIndex === 1) {
       historyIndexRef.current = 0;
       setHistoryIndex(0);
       if (draftEntry) {
         onChange(draftEntry.display);
-        setPastedContents(draftEntry.pastedContents ?? {});
+        void restoreHistoryImages(draftEntry).then(setPastedContents);
       } else {
         onChange('');
         setPastedContents({});

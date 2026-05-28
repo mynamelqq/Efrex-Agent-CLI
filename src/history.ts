@@ -1,6 +1,8 @@
 import { PastedContent } from "./utils/config"
 import { hashPastedText } from "./utils/pasteStore"
 import { writeFile,appendFile } from "fs"
+import { readFile, readdir } from "fs/promises"
+import { Dirent } from "fs"
 import { sleep } from "bun"
 import { readLinesReverse } from "./utils/file"
 import { storePastedText } from "./utils/pasteStore"
@@ -11,12 +13,12 @@ import { getProjectRoot } from "./bootstrap/state"
 import { getErrnoCode } from "./utils/errors"
 import { lock } from "./utils/lockfile"
 import {join}from "path"
-import { isEnvTruthy } from "./utils/envUtils"
+import { getEfrexConfigHomeDir, isEnvTruthy } from "./utils/envUtils"
 import { HistoryEntry } from "./utils/config"
 const MAX_HISTORY_ITEMS = 100
 const MAX_PASTED_CONTENT_LENGTH = 512
 import { getSessionId } from "./bootstrap/state"
-import { getEfrexConfigHomeDir } from "./utils/envUtils"
+import { getImageStoreDir } from "./utils/imageStore"
 /**
  * Stored paste content - either inline content or a hash reference to paste store.
  */
@@ -340,6 +342,7 @@ async function logEntryToHistoryEntry(entry: LogEntry): Promise<HistoryEntry> {
   return {
     display: entry.display,
     pastedContents,
+    sessionId: entry.sessionId,
   }
 }
 /**
@@ -369,10 +372,71 @@ async function resolveStoredPastedContent(
         content,
         mediaType: stored.mediaType,
         filename: stored.filename,
+
       }
     }
   }
 
   // Content not available
   return null
+}
+
+/**
+ * Restore image pasted contents from the session image cache when they were
+ * filtered out of the serialized prompt history.
+ */
+export async function restoreHistoryImages(
+  entry: HistoryEntry,
+): Promise<Record<number, PastedContent>> {
+  const restored: Record<number, PastedContent> = { ...(entry.pastedContents ?? {}) }
+  if (!entry.sessionId) {
+    return restored
+  }
+
+  const imageRefs = [...entry.display.matchAll(/\[Image #(\d+)\]/g)]
+    .map(match => Number(match[1]))
+    .filter(id => Number.isFinite(id))
+
+  if (imageRefs.length === 0) {
+    return restored
+  }
+
+  const imageDir =getImageStoreDir()
+  let directoryEntries: Dirent<string>[] = []
+  try {
+    directoryEntries = await readdir(imageDir, { withFileTypes: true })
+  } catch {
+    return restored
+  }
+
+  for (const id of imageRefs) {
+    if (restored[id]?.type === 'image' && restored[id].content.length > 0) {
+      continue
+    }
+
+    try {
+      const match = directoryEntries.find(
+        file => file.isFile() && file.name.startsWith(`${id}.`),
+      )
+      if (!match) continue
+
+      const mediaType = `image/${match.name.split('.').pop() ?? 'png'}`
+      const filePath = join(imageDir, match.name)
+      const buffer = await readFile(filePath)
+      restored[id] = {
+        id,
+        type: 'image',
+        content: buffer.toString('base64'),
+        mediaType,
+        filename: match.name,
+        sourcePath: filePath,
+      }
+    } catch (error) {
+      logForDebugging(
+        `restoreHistoryImages failed for image ${id} in session ${entry.sessionId}: ${error}`,
+      )
+    }
+  }
+
+  return restored
 }

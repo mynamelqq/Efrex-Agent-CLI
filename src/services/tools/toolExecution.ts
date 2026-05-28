@@ -5,6 +5,11 @@ import type {
 	ToolResultBlockParam
 } from 'src/package/message.js';
 import { CanUseToolFn } from 'src/hooks/useCanUseTool.js';
+import { FILE_EDIT_TOOL_NAME } from 'src/tools/FileEditTool/constants.js';
+import {BashToolInput}from "src/tools/BashTool/BashTools.js"
+import { FILE_WRITE_TOOL_NAME } from 'src/tools/FileWriteTool/prompt.js';
+import { BASH_TOOL_NAME } from 'src/tools/BashTool/toolName.js';
+import { FILE_READ_TOOL_NAME } from 'src/tools/FileReadTool/prompt.js';
 import { ContentBlockParam } from 'packages/@ant/model-provider/src/index.js';
 import { findToolByName, type ToolUseContext, Tool } from '../../Tool.js';
 import { createUserMessage } from 'src/utils/messages.js';
@@ -187,11 +192,26 @@ export async function* runToolUse(
 	}
 	let processedInput = parsedInput.data
 	let hookPermissionResult: PermissionResult | undefined
+	const toolAttributes: Record<string, string | number | boolean> = {}
+	if (processedInput && typeof processedInput === 'object') {
+		if (tool.name === FILE_READ_TOOL_NAME && 'file_path' in processedInput) {
+		toolAttributes.file_path = String(processedInput.file_path)
+		} else if (
+		(tool.name === FILE_EDIT_TOOL_NAME ||
+			tool.name === FILE_WRITE_TOOL_NAME) &&
+		'file_path' in processedInput
+		) {
+		toolAttributes.file_path = String(processedInput.file_path)
+		} else if (tool.name === BASH_TOOL_NAME && 'command' in processedInput) {
+		const bashInput = processedInput as BashToolInput
+		toolAttributes.full_command = bashInput.command
+		}
+	}
 	// Check whether we have permission to use the tool,
 	// and ask the user for permission if we don't
 	const permissionMode = toolUseContext.getAppState().toolPermissionContext.mode
 	const permissionStart = Date.now()
-
+	
 	const resolved = await resolveHookPermissionDecision(
 		hookPermissionResult,
 		tool,
@@ -204,10 +224,12 @@ export async function* runToolUse(
 	const permissionDecision = resolved.decision
 	processedInput = resolved.input
 	const permissionDurationMs = Date.now() - permissionStart
-	
 
 
 	if (permissionDecision && permissionDecision.behavior !== 'allow') {
+ 		let errorMessage = permissionDecision.message
+
+
 		const message =
 			permissionDecision.message || 'Tool use was rejected by the user.';
 		const contentBlocks =
@@ -236,7 +258,7 @@ export async function* runToolUse(
 		permissionDecision?.behavior === 'allow'
 			? (permissionDecision.updatedInput ?? parsedInput.data)
 			: parsedInput.data;
-
+    const resultingMessages = []
 	try {
 		const result = await tool.call(
 			permittedInput,
@@ -249,12 +271,6 @@ export async function* runToolUse(
 			result.data,
 			toolUse.id
 		);
-		const contentBlocks: ContentBlockParam[] = [toolResultBlock];
-
-		// const toolResultBlock = tool.mapToolResultToToolResultBlockParam(
-		//   result.data,
-		//   toolUse.id,
-		// )
 
 		yield {
 			message: createUserMessage({
@@ -310,12 +326,19 @@ export async function processToolResultBlock<T>(
 	toolUseResult: T,
 	toolUseID: string
 ): Promise<ToolResultBlockParam> {
-	const toolResultBlock = tool.mapToolResultToToolResultBlockParam(
+	const mappedToolResultBlock = tool.mapToolResultToToolResultBlockParam(
 		toolUseResult,
 		toolUseID
 	);
+	const mappedContent = mappedToolResultBlock.content
+    const toolResultSizeBytes = !mappedContent
+      ? 0
+      : typeof mappedContent === 'string'
+        ? mappedContent.length
+        : JSON.stringify(mappedContent).length
+
 	return maybePersistLargeToolResult(
-		toolResultBlock,
+		mappedToolResultBlock,
 		tool.name,
 		getPersistenceThreshold(tool.name, tool.maxResultSizeChars)
 	);

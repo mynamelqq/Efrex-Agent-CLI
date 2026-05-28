@@ -1,10 +1,14 @@
-import type { ChatCompletionContentPartImage } from 'openai/resources'
+
 import {
   API_IMAGE_MAX_BASE64_SIZE,
   IMAGE_MAX_HEIGHT,
   IMAGE_MAX_WIDTH,
   IMAGE_TARGET_RAW_SIZE,
 } from '../constants/ApiLimits'
+import type {
+  Base64ImageSource,
+  ImageBlockParam,
+} from '@anthropic-ai/sdk/resources/messages.mjs'
 import {
   getImageProcessor,
   type SharpFunction,
@@ -19,7 +23,7 @@ export type ImageMediaType =
   | 'image/jpeg'
   | 'image/gif'
   | 'image/webp'
-export type OpenAIImageBlock = ChatCompletionContentPartImage
+
 
 // Error type constants for analytics (numeric to comply with logEvent restrictions)
 const ERROR_TYPE_MODULE_LOAD = 1
@@ -231,7 +235,7 @@ export async function maybeResizeAndDownsampleImageBuffer(
     const isPng = normalizedMediaType === 'png'
 
     // If dimensions are within limits but file is too large, try compression first
-    // This preserves full resolution when possible
+    // This preserves full resolution when possible首先尝试进行压缩操作 // 这样在可能的情况下能保持原始分辨率
     if (!needsDimensionResize && originalSize > IMAGE_TARGET_RAW_SIZE) {
       // For PNGs, try PNG compression first to preserve transparency
       if (isPng) {
@@ -419,29 +423,30 @@ export async function maybeResizeAndDownsampleImageBuffer(
 }
 
 export interface ImageBlockWithDimensions {
-  block: OpenAIImageBlock
+  block: ImageBlockParam
   dimensions?: ImageDimensions
 }
 
 /**
  * Resizes an image content block if needed
- * Takes an OpenAI image_url block and returns a resized version if necessary
+ * Takes an image ImageBlockParam and returns a resized version if necessary
  * Also returns dimension information for coordinate mapping
  */
 export async function maybeResizeAndDownsampleImageBlock(
-  imageBlock: OpenAIImageBlock,
+  imageBlock: ImageBlockParam,
 ): Promise<ImageBlockWithDimensions> {
-  const parsed = parseOpenAIImageDataURL(imageBlock.image_url.url)
-  if (!parsed) {
+  // Only process base64 images
+  if (imageBlock.source.type !== 'base64') {
     return { block: imageBlock }
   }
 
   // Decode base64 to buffer
-  const imageBuffer = Buffer.from(parsed.base64, 'base64')
+  const imageBuffer = Buffer.from(imageBlock.source.data, 'base64')
   const originalSize = imageBuffer.length
 
   // Extract extension from media type
-  const ext = parsed.mediaType.split('/')[1] || 'png'
+  const mediaType = imageBlock.source.media_type
+  const ext = mediaType?.split('/')[1] || 'png'
 
   // Resize if needed
   const resized = await maybeResizeAndDownsampleImageBuffer(
@@ -453,13 +458,12 @@ export async function maybeResizeAndDownsampleImageBlock(
   // Return resized image block with dimension info
   return {
     block: {
-      type: 'image_url',
-      image_url: {
-        ...imageBlock.image_url,
-        url: createImageDataURL(
-          `image/${resized.mediaType}` as ImageMediaType,
-          resized.buffer.toString('base64'),
-        ),
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type:
+          `image/${resized.mediaType}` as Base64ImageSource['media_type'],
+        data: resized.buffer.toString('base64'),
       },
     },
     dimensions: resized.dimensions,
@@ -573,20 +577,20 @@ export async function compressImageBufferWithTokenLimit(
 }
 
 /**
- * Compresses an OpenAI image_url block to fit within a maximum byte size.
- * Wrapper around compressImageBuffer for OpenAI chat image parts.
+ * Compresses an image block to fit within a maximum byte size.
+ * Wrapper around compressImageBuffer for ImageBlockParam.
  */
 export async function compressImageBlock(
-  imageBlock: OpenAIImageBlock,
+  imageBlock: ImageBlockParam,
   maxBytes: number = IMAGE_TARGET_RAW_SIZE,
-): Promise<OpenAIImageBlock> {
-  const parsed = parseOpenAIImageDataURL(imageBlock.image_url.url)
-  if (!parsed) {
+): Promise<ImageBlockParam> {
+  // Only process base64 images
+  if (imageBlock.source.type !== 'base64') {
     return imageBlock
   }
 
   // Decode base64 to buffer
-  const imageBuffer = Buffer.from(parsed.base64, 'base64')
+  const imageBuffer = Buffer.from(imageBlock.source.data, 'base64')
 
   // Check if already within size limit
   if (imageBuffer.length <= maxBytes) {
@@ -597,10 +601,11 @@ export async function compressImageBlock(
   const compressed = await compressImageBuffer(imageBuffer, maxBytes)
 
   return {
-    type: 'image_url',
-    image_url: {
-      ...imageBlock.image_url,
-      url: createImageDataURL(compressed.mediaType, compressed.base64),
+    type: 'image',
+    source: {
+      type: 'base64',
+      media_type: compressed.mediaType,
+      data: compressed.base64,
     },
   }
 }

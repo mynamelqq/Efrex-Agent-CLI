@@ -20,7 +20,7 @@ import { isEnvTruthy } from './envUtils'
 import type { LogOption } from 'src/types/logs.js'
 import { inspect } from 'util'
 import { logForDebugging } from './debug.js'
-import { getClaudeConfigHomeDir} from './envUtils.js'
+import {getEfrexConfigHomeDir} from './envUtils.js'
 import { getErrnoCode, isENOENT } from './errors.js'
 import { pathExists } from './file.js'
 type BackupFileName = string | null // The null value means the file does not exist in this version
@@ -235,7 +235,7 @@ function getBackupFileName(filePath: string, version: number): string {//sha256�
   return `${fileNameHash}@v${version}`//文件名后缀加上v版本号
 }
 function resolveBackupPath(backupFileName: string, sessionId?: string): string {
-  const configDir = getClaudeConfigHomeDir()
+  const configDir = getEfrexConfigHomeDir()
   return join(
     configDir,
     'file-history',

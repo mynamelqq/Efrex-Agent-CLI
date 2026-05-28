@@ -1,22 +1,29 @@
 import * as React from 'react';
 import chalk from 'chalk';
 import { stripANSI as stripAnsi } from 'bun';
-import { Ansi, Box, Text, useTerminalFocus } from '../ink.js';
+import { Ansi, Box, Text, useInput, useTerminalFocus } from '../ink.js';
+import { usePasteHandler } from '../hooks/usePasteHandler.js';
 import useTextInput from '../hooks/useTextInput.js';
 import { useDeclaredCursor } from '../ink/hooks/use-declared-cursor.js';
 import type { Message } from 'src/package/message.js';
 import {
+	formatImageRef,
 	formatPastedTextRef,
 	getPastedTextRefNumLines,
 	parseReferences
 } from 'src/history.js';
 import { PASTE_THRESHOLD } from 'src/utils/paste.js';
 import type { PastedContent } from 'src/utils/config.js';
+import type { ImageDimensions } from 'src/utils/imageResizer.js';
 
 const FOCUSED_INPUT_CURSOR_BG = '#f7f7f3';
 const FOCUSED_INPUT_CURSOR_FG = '#141414';
 const BLURRED_INPUT_CURSOR_BG = '#3a3a35';
 const BLURRED_INPUT_CURSOR_FG = '#f0f0ea';
+const PASTE_TOKEN_PATTERN =
+	/\[(?:Pasted text #\d+(?: \+\d+ lines)?|Image #\d+)\]/g;
+const PASTE_TOKEN_COLOR = '#f79aff';
+const PASTE_TOKEN_BG = '#16324a';
 
 type Props = {
 	messages: Message[];
@@ -63,13 +70,24 @@ export default function PromptInput({
 }: Props) {
 	const [cursorOffset, setCursorOffset] = React.useState(value.length);
 	const lastInternalValueRef = React.useRef(value);
+	const cursorOffsetRef = React.useRef(cursorOffset);
+	const pendingCursorOffsetRef = React.useRef<number | null>(null);
 	const nextPasteIdRef = React.useRef(-1);
+	cursorOffsetRef.current = cursorOffset;
 
 	if (nextPasteIdRef.current === -1) {
 		nextPasteIdRef.current = getInitialPasteId(messages, _pastedContents);
 	}
 
 	React.useEffect(() => {
+		if (pendingCursorOffsetRef.current !== null) {
+			const nextOffset = Math.min(pendingCursorOffsetRef.current, value.length);
+			cursorOffsetRef.current = nextOffset;
+			setCursorOffset(nextOffset);
+			pendingCursorOffsetRef.current = null;
+			return;
+		}
+
 		if (value !== lastInternalValueRef.current) {
 			lastInternalValueRef.current = value;
 			setCursorOffset(value.length);
@@ -90,14 +108,19 @@ export default function PromptInput({
 				return;
 			}
 
-			const safeOffset = Math.min(cursorOffset, value.length);
+			const currentValue = lastInternalValueRef.current;
+			const safeOffset = Math.min(cursorOffsetRef.current, currentValue.length);
 			const nextValue =
-				value.slice(0, safeOffset) + text + value.slice(safeOffset);
+				currentValue.slice(0, safeOffset) +
+				text +
+				currentValue.slice(safeOffset);
 			lastInternalValueRef.current = nextValue;
-			setCursorOffset(safeOffset + text.length);
+			cursorOffsetRef.current = safeOffset + text.length;
+			pendingCursorOffsetRef.current = cursorOffsetRef.current;
+			setCursorOffset(cursorOffsetRef.current);
 			onChange(nextValue);
 		},
-		[cursorOffset, onChange, value]
+		[onChange]
 	);
 
 	const onTextPaste = React.useCallback(
@@ -132,6 +155,31 @@ export default function PromptInput({
 		[height, insertTextAtCursor, setPastedContents]
 	);
 
+	const onImagePaste = React.useCallback(
+		(
+			base64Image: string,
+			mediaType?: string,
+			filename?: string,
+			dimensions?: ImageDimensions,
+			sourcePath?: string
+		) => {
+			const pasteId = nextPasteIdRef.current++;
+			const newContent: PastedContent = {
+				id: pasteId,
+				type: 'image',
+				content: base64Image,
+				mediaType: mediaType || 'image/png',
+				filename: filename || 'Pasted image',
+				dimensions,
+				sourcePath
+			};
+
+			setPastedContents(prev => ({ ...prev, [pasteId]: newContent }));
+			insertTextAtCursor(formatImageRef(pasteId));
+		},
+		[insertTextAtCursor, setPastedContents]
+	);
+
 	const terminalFocus = useTerminalFocus();
 	const invert = React.useCallback(
 		(text: string) =>
@@ -145,7 +193,7 @@ export default function PromptInput({
 		[terminalFocus]
 	);
 
-	const { renderedValue, cursorLine, cursorColumn } = useTextInput({
+	const { onInput, renderedValue, cursorLine, cursorColumn } = useTextInput({
 		value,
 		width,
 		maxVisibleLines,
@@ -162,9 +210,16 @@ export default function PromptInput({
 		onHistoryPrev,
 		onHistoryNext,
 		onCtrlC,
-		onCyclePermissionMode,
-		onPasteText: onTextPaste
+		onCyclePermissionMode
 	});
+
+	const { wrappedOnInput } = usePasteHandler({
+		onPaste: onTextPaste,
+		onInput,
+		onImagePaste
+	});
+
+	useInput(wrappedOnInput, { isActive });
 
 	React.useEffect(() => {
 		if (cursorOffset > value.length) {
@@ -190,10 +245,17 @@ export default function PromptInput({
 				.map(line => (line.length === 0 ? ' ' : line))
 				.join('\n');
 
+	const styledRenderedContent = isEmpty
+		? renderedContent
+		: renderedContent.replace(
+				PASTE_TOKEN_PATTERN,
+				match => chalk.bgHex(PASTE_TOKEN_BG).hex(PASTE_TOKEN_COLOR)(match)
+		  );
+
 	return (
 		<Box ref={cursorRef} width={width} flexShrink={0}>
 			<Text wrap="truncate-end">
-				<Ansi>{renderedContent}</Ansi>
+				<Ansi>{styledRenderedContent}</Ansi>
 			</Text>
 		</Box>
 	);

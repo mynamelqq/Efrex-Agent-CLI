@@ -7,7 +7,7 @@ import { EditableSettingSource } from './constants.js'
 import { getOriginalCwd } from 'src/bootstrap/state.js'
 import {writeFileSyncAndFlush_DEPRECATED}from "src/utils/file.js"
 import { logForDebugging } from '../debug.js'
-import { getClaudeConfigHomeDir } from '../envUtils.js'
+import { getEfrexConfigHomeDir } from '../envUtils.js'
 import { dirname } from 'path'
 import { isENOENT } from '../errors.js'
 import { mkdirSync } from 'fs'
@@ -90,7 +90,7 @@ function handleFileSystemError(error: unknown, path: string): void {
 export function getSettingsRootPathForSource(source: SettingSource): string {//目录
   switch (source) {
     case 'userSettings':
-      return resolve(getClaudeConfigHomeDir())//.efrex
+      return resolve(getEfrexConfigHomeDir())//.efrex
     case 'localSettings':
     case 'projectSettings':
       return resolve(getOriginalCwd())//用户项目目录

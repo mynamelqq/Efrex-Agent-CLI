@@ -147,18 +147,14 @@ function renderMessageNode(
     if (variant === 'transcript') {
       return (
         <Box key={message.id} flexDirection="column" width={width}>
-          <Text color="#8b949e" wrap="wrap">
-            {`you  ${message.text}`}
-          </Text>
+          {renderUserMarkdownNode(message.text, width, variant)}
         </Box>
       );
     }
 
     return (
       <Box key={message.id} flexDirection="column" width={width}>
-        <Text color={USER_MESSAGE_FG} backgroundColor={USER_MESSAGE_BG} wrap="wrap">
-          {`> ${message.text}`}
-        </Text>
+        {renderUserMarkdownNode(message.text, width, variant)}
       </Box>
     );
   }
@@ -230,14 +226,14 @@ function renderMessage(
 
   if (message.role === 'user') {
     if (variant === 'transcript') {
-      return wrapPlain(message.text, Math.max(1, width - 5)).map((line, index) =>
+      return markdownToLines(message.text, Math.max(1, width - 5)).map((line, index) =>
         `${index === 0 ? chalk.hex('#8b949e')('you  ') : '     '}${chalk.hex('#c9d1d9')(line)}`,
       );
     }
 
     const contentWidth = Math.max(1, width - 2);
     return [
-      ...wrapPlain(message.text, contentWidth).map((line, index) => {
+      ...markdownToLines(message.text, contentWidth).map((line, index) => {
         const prefix = index === 0 ? '> ' : '  ';
         return chalk.bgHex(USER_MESSAGE_BG).hex(USER_MESSAGE_FG)(
           padPlain(`${prefix}${truncatePlain(line, contentWidth)}`, width),
@@ -401,6 +397,37 @@ function markdownToLines(markdown: string, width: number): string[] {
   }
 
   return output.length > 0 ? trimTrailingBlankLines(output) : [''];
+}
+
+function renderUserMarkdownNode(
+  text: string,
+  width: number,
+  variant: 'default' | 'transcript',
+): React.ReactNode {
+  const lines = markdownToLines(text, Math.max(1, width - (variant === 'transcript' ? 5 : 2)));
+  return (
+    <Box flexDirection="column" width={width}>
+      {lines.map((line, index) => {
+        const prefix = variant === 'transcript'
+          ? index === 0
+            ? 'you  '
+            : '     '
+          : index === 0
+            ? '> '
+            : '  ';
+        return (
+          <Text
+            key={index}
+            color={variant === 'transcript' ? '#c9d1d9' : USER_MESSAGE_FG}
+            backgroundColor={variant === 'transcript' ? undefined : USER_MESSAGE_BG}
+            wrap="wrap"
+          >
+            {`${prefix}${line || ' '}`}
+          </Text>
+        );
+      })}
+    </Box>
+  );
 }
 
 function inlineStyle(text: string): string {

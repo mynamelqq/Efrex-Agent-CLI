@@ -10,7 +10,7 @@ import { getCwd } from '../utils/cwd.js'
 import { findCanonicalGitRoot } from './git.js'
 import { logForDebugging } from './debug.js'
 import { MemoryType } from './memory/types.js'
-import { getClaudeConfigHomeDir, getEfrexConfigHomeDir, isEnvTruthy } from './envUtils.js'
+import {  getEfrexConfigHomeDir, isEnvTruthy } from './envUtils.js'
 import { safeParseJSON } from './json.js'
 import { stripBOM } from './jsonRead.js'
 import { logError } from './log.js'
@@ -41,6 +41,7 @@ export type PastedContent = {
 export interface HistoryEntry {
   display: string
   pastedContents: Record<number, PastedContent>
+  sessionId?: string
 }
 export interface SerializedStructuredHistoryEntry {
   display: string
@@ -50,6 +51,7 @@ export interface SerializedStructuredHistoryEntry {
 export interface HistoryEntry {
   display: string
   pastedContents: Record<number, PastedContent>
+  sessionId?: string
 }
 
 export type ReleaseChannel = 'stable' | 'latest'

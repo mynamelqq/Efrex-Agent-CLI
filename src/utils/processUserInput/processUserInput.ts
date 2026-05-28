@@ -4,11 +4,12 @@ import type {
   ContentBlockParam,
   ImageBlockParam,
 } from '@anthropic-ai/sdk/resources/messages.mjs'
+import { storeImages } from '../imageStore.js'
 import { processTextPrompt } from './processTextPrompt.js'
 import { randomUUID } from 'crypto'
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
 import { createAttachmentMessage } from '../messages.js'
-
+import { createImageMetadataText,maybeResizeAndDownsampleImageBlock } from '../imageResizer.js'
 import { getContentText } from '../messages.js'
 import type { ToolUseContext } from '../../Tool.js'
 import { LocalJSXCommandContext } from 'src/types/command.js'
@@ -192,7 +193,19 @@ async function processUserInputBase(
   } else if (input.length > 0) {//数组
     const processedBlocks: ContentBlockParam[] = []
     for (const block of input) {//直接加到数组里去
+      if (block.type === 'image') {
+        const resized = await maybeResizeAndDownsampleImageBlock(block)
+        // Collect image metadata for isMeta message
+        if (resized.dimensions) {
+          const metadataText = createImageMetadataText(resized.dimensions)
+          if (metadataText) {
+            imageMetadataTexts.push(metadataText)
+          }
+        }
+        processedBlocks.push(resized.block)
+      } else {
         processedBlocks.push(block)
+      }
     }
     normalizedInput = processedBlocks
     // Extract the input string from the last content block if it is text,
@@ -209,6 +222,70 @@ async function processUserInputBase(
   if (inputString === null && mode !== 'prompt') {
     throw new Error(`Mode: ${mode} requires a string input.`)
   }
+  // Collect results preserving order
+  const imageContentBlocks: ContentBlockParam[] = []
+  // Extract and convert image content to content blocks early
+  // Keep track of IDs in order for message storage
+  const imageContents = pastedContents
+    ? Object.values(pastedContents).filter(isValidImagePaste)
+    : []
+  const imagePasteIds = imageContents.map(img => img.id)
+  // Store images to disk so Claude can reference the path in context
+  // (for manipulation with CLI tools, uploading to PRs, etc.)
+  const storedImagePaths = pastedContents
+    ? await storeImages(pastedContents)//保存引用的图片到磁盘
+    : new Map<number, string>()
+ const imageProcessingResults = await Promise.all(
+    imageContents.map(async pastedImage => {
+      const imageBlock: ImageBlockParam = {
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: (pastedImage.mediaType ||
+            'image/png') as Base64ImageSource['media_type'],
+          data: pastedImage.content,
+        },
+      }
+
+      const resized = await maybeResizeAndDownsampleImageBlock(imageBlock)
+      return {
+        resized,
+        originalDimensions: pastedImage.dimensions,
+        sourcePath:
+          pastedImage.sourcePath ?? storedImagePaths.get(pastedImage.id),
+      }
+    }),
+  )
+   for (const {
+    resized,
+    originalDimensions,
+    sourcePath,
+  } of imageProcessingResults) {
+    // Collect image metadata for isMeta message (prefer resized dimensions)
+    if (resized.dimensions) {
+      const metadataText = createImageMetadataText(
+        resized.dimensions,
+        sourcePath,
+      )
+      if (metadataText) {
+        imageMetadataTexts.push(metadataText)
+      }
+    } else if (originalDimensions) {
+      // Fall back to original dimensions if resize didn't provide them
+      const metadataText = createImageMetadataText(
+        originalDimensions,
+        sourcePath,
+      )
+      if (metadataText) {
+        imageMetadataTexts.push(metadataText)
+      }
+    } else if (sourcePath) {
+      // If we have a source path but no dimensions, still add source info
+      imageMetadataTexts.push(`[Image source: ${sourcePath}]`)
+    }
+    imageContentBlocks.push(resized.block)
+  }
+
 
   // with a helpful message rather than letting the model see raw "/config".
   let effectiveSkipSlash = skipSlashCommands
@@ -250,6 +327,8 @@ async function processUserInputBase(
   return addImageMetadataMessage(
     processTextPrompt(
       normalizedInput,
+      imageContentBlocks,
+      imagePasteIds,
       uuid,
       permissionMode,
     ),

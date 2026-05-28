@@ -1249,6 +1249,10 @@ function messageToViewport(
 	}
 
 	if (message.type === 'user') {
+		if (message.isMeta && !verbose) {
+			return null;
+		}
+
 		if (isToolResultUserMessage(message)) {
 			const toolResultBlock = getToolResultBlock(message);
 			const toolUse = toolResultBlock

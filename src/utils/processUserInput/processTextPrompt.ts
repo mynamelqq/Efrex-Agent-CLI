@@ -12,6 +12,8 @@ import { createUserMessage } from '../messages.js'
 
 export function processTextPrompt(
   input: string | Array<ContentBlockParam>,
+  imageContentBlocks: ContentBlockParam[],
+  imagePasteIds: number[],
   uuid?: string,
   permissionMode?: PermissionMode,
   isMeta?: boolean,
@@ -36,26 +38,27 @@ export function processTextPrompt(
   const isNegative =false// matchesNegativeKeyword(userPromptText)
   const isKeepGoing =false //matchesKeepGoingKeyword(userPromptText)
   // If we have pasted images, create a message with image content
-  // if (imageContentBlocks.length > 0) {//如果有粘贴的图片
-  //   // Build content: text first, then images below
-  //   const textContent =
-  //     typeof input === 'string'
-  //       ? input.trim()
-  //         ? [{ type: 'text' as const, text: input }]
-  //         : []
-  //       : input
-  //   const userMessage = createUserMessage({
-  //     content: [...textContent, ...imageContentBlocks],
-  //     uuid: uuid,
-  //     imagePasteIds: imagePasteIds.length > 0 ? imagePasteIds : undefined,
-  //     isMeta: isMeta || undefined,
-  //   })
+  if (imageContentBlocks.length > 0) {
+    // Build content: text first, then images below
+    const textContent =
+      typeof input === 'string'
+        ? input.trim()
+          ? [{ type: 'text' as const, text: input }]
+          : []
+        : input
+    const userMessage = createUserMessage({
+      content: [...textContent, ...imageContentBlocks],
+      uuid: uuid,
+      imagePasteIds: imagePasteIds.length > 0 ? imagePasteIds : undefined,
+      permissionMode,
+      isMeta: isMeta || undefined,
+    })
 
-  //   return {
-  //     messages: [userMessage, ...attachmentMessages],
-  //     shouldQuery: true,
-  //   }
-  // }
+    return {
+      messages: [userMessage],
+      shouldQuery: true,
+    }
+  }
 
   const userMessage = createUserMessage({
     content: input,

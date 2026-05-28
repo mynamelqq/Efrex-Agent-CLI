@@ -18,7 +18,7 @@ import type {
 } from 'src/package/message.js'
 import { getCwd } from '../utils/cwd.js'
 import { env } from '../utils/env.js'
-import { getClaudeConfigHomeDir, isEnvTruthy } from '../utils/envUtils.js'
+import { isEnvTruthy } from '../utils/envUtils.js'
 import { getErrnoCode } from '../utils/errors.js'
 import { normalizeMessagesForAPI } from "src/utils/api"
 import { logForDebugging } from "src/utils/debug"
@@ -204,7 +204,7 @@ function dehydrateValue(s: unknown): unknown {
     return s
   }
   const cwd = getCwd()
-  const configHome = getClaudeConfigHomeDir()
+  const configHome = getEfrexConfigHomeDir()
   let s1 = s
     .replace(/num_files="\d+"/g, 'num_files="[NUM]"')
     .replace(/duration_ms="\d+"/g, 'duration_ms="[DURATION]"')
