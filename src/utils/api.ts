@@ -1,4 +1,5 @@
 import { getCwd } from './cwd.js'
+import type { BetaTool, BetaToolUnion } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs'
 import { Tool, Tools, toolMatchesName } from 'src/Tool'
 import { ContentBlockParam } from 'src/package/message.js'
 import { SystemPrompt } from 'src/prompt.js'
@@ -35,7 +36,6 @@ import type {
   TombstoneMessage,
   ToolUseSummaryMessage,
   UserMessage,
-  BetaToolUnion,BetaTool
 } from 'src/package/message.js'
 import { createUserMessage } from './messages.js'
 import type { z } from 'zod/v4'
@@ -65,20 +65,20 @@ export async function toolToAPISchema(
     ? `${tool.name}:${JSON.stringify(tool.inputJSONSchema)}`
     : tool.name
   const cache = getToolSchemaCache()
-  let base = cache.get(cacheKey)
+  let base = cache.get(cacheKey) as BetaToolUnion | undefined
   if (!base) {
-    let input_schema = (
+    const input_schema = (
       'inputJSONSchema' in tool && tool.inputJSONSchema
         ? tool.inputJSONSchema
         : toJSONSchema(tool.inputSchema)
-    )as Record<string, unknown>
+    ) as BetaTool['input_schema']
     base = {
       name: tool.name,
       description: tool.searchHint || tool.name,
-      input_schema:input_schema
+      input_schema,
     }
     cache.set(cacheKey, base)
-    return base as BetaTool
+    return base
   }
   return base
 }

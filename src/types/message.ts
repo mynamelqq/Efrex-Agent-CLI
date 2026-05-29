@@ -26,6 +26,7 @@ import * as BetaMessagesAPI from './messages';
 import * as MessagesAPI from '../../messages/messages';
 import * as BetaAPI from '../beta';
 import * as BatchesAPI from './batches';
+import { Message } from 'src/package/message';
 import {
   BatchCancelParams,
   BatchCreateParams,
@@ -364,7 +365,7 @@ export interface BetaBashCodeExecutionToolResultErrorParam {
 
   type: 'bash_code_execution_tool_result_error';
 }
-
+export type SystemAPIErrorMessage = Message & { type: 'system' }
 export interface BetaCacheControlEphemeral {
   type: 'ephemeral';
 

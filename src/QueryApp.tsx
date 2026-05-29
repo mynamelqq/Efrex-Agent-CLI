@@ -34,7 +34,10 @@ import FullscreenLayout from './components/FullscreenLayout.js';
 import { ScrollKeybindingHandler } from './components/ScrollKeybindingHandler.js';
 import { PastedContent } from './utils/config.js';
 import { parseReferences } from './history.js';
-import type { Message as MessageType } from './package/message.js';
+import type {
+	ApiRetryStatusEvent,
+	Message as MessageType
+} from './package/message.js';
 import {
 	findToolByName,
 	type CompactProgressEvent,
@@ -113,6 +116,12 @@ type ParsedAssistantToolUse = {
 	userFacingToolName: string;
 };
 
+type ApiRetrySummary = {
+	attempt: number;
+	maxRetries: number;
+	remainingMs: number;
+};
+
 type StreamingAssistantState = {
 	active: boolean;
 	placeholderId: number | null;
@@ -124,6 +133,11 @@ type CompactUiState = {
 	active: boolean;
 	streamMode: 'requesting' | 'responding';
 	responseLength: number;
+	statusText: string | null;
+};
+
+type ApiRetryUiState = {
+	active: boolean;
 	statusText: string | null;
 };
 
@@ -907,7 +921,8 @@ function buildViewportMessages(
 	messages: MessageType[],
 	tools: readonly Tool[],
 	completedTurnFooters: CompletedTurnFooter[] = [],
-	verbose = false
+	verbose = false,
+	currentTimeMs = Date.now()
 ): ViewportMessage[] {
 	const viewportMessages: ViewportMessage[] = [];
 	const toolUseMessagesById = new Map<string, ViewportMessage>();
@@ -932,6 +947,11 @@ function buildViewportMessages(
 
 	messages.forEach((message, index) => {
 		const fallbackId = index + 1;
+
+		if (shouldCollapseApiRetryMessage(messages, index)) {
+			appendCompletedTurnFooter(fallbackId);
+			return;
+		}
 
 		if (message.type === 'assistant') {
 			let hasAssistantContent = false;
@@ -1037,7 +1057,8 @@ function buildViewportMessages(
 			fallbackId,
 			messages,
 			tools,
-			verbose
+			verbose,
+			currentTimeMs
 		);
 		if (viewportMessage) {
 			viewportMessages.push(viewportMessage);
@@ -1064,6 +1085,37 @@ function buildViewportMessages(
 	}
 
 	return viewportMessages;
+}
+
+function shouldCollapseApiRetryMessage(
+	messages: MessageType[],
+	index: number
+): boolean {
+	const current = messages[index];
+	if (!isApiRetrySystemMessage(current)) {
+		return false;
+	}
+
+	const next = messages[index + 1];
+	return isApiRetrySystemMessage(next);
+}
+
+function isApiRetrySystemMessage(
+	message: MessageType | undefined
+): message is MessageType & {
+	type: 'system';
+	subtype: 'api_error';
+	retryAttempt: number;
+	retryInMs: number;
+	maxRetries: number;
+} {
+	return (
+		message?.type === 'system' &&
+		message.subtype === 'api_error' &&
+		typeof message.retryAttempt === 'number' &&
+		typeof message.retryInMs === 'number' &&
+		typeof message.maxRetries === 'number'
+	);
 }
 
 function renderNodeToPlainText(node: React.ReactNode): string {
@@ -1239,7 +1291,8 @@ function messageToViewport(
 	fallbackId: number,
 	messages: MessageType[],
 	tools: readonly Tool[],
-	verbose: boolean
+	verbose: boolean,
+	currentTimeMs = Date.now()
 ): ViewportMessage | null {
 	const transcriptOnlyMessage = message as MessageType & {
 		isVisibleInTranscriptOnly?: boolean;
@@ -1431,6 +1484,11 @@ function messageToViewport(
 	}
 
 	if (message.type === 'system') {
+		const retrySummary = getApiRetrySummary(message, currentTimeMs);
+		if (retrySummary) {
+			return null;
+		}
+
 		const systemContent =
 			typeof message.content === 'string' ? message.content : null;
 		const text = systemContent ?? extractTextContent(message.message?.content);
@@ -1448,6 +1506,63 @@ function messageToViewport(
 	}
 
 	return null;
+}
+
+function getApiRetrySummary(
+	message: MessageType,
+	currentTimeMs: number
+): ApiRetrySummary | null {
+	if (message.type !== 'system' || message.subtype !== 'api_error') {
+		return null;
+	}
+
+	if (
+		typeof message.retryAttempt !== 'number' ||
+		typeof message.maxRetries !== 'number' ||
+		typeof message.retryInMs !== 'number'
+	) {
+		return null;
+	}
+
+	const retryInMs = Math.max(0, message.retryInMs);
+	const timestampMs =
+		typeof message.timestamp === 'string'
+			? Date.parse(message.timestamp)
+			: NaN;
+	const remainingMs = Number.isFinite(timestampMs)
+		? Math.max(0, timestampMs + retryInMs - currentTimeMs)
+		: retryInMs;
+
+	return {
+		attempt: message.retryAttempt,
+		maxRetries: message.maxRetries,
+		remainingMs
+	};
+}
+
+function formatRetryDuration(remainingMs: number): string {
+	if (remainingMs < 1000) {
+		return '1s';
+	}
+
+	const totalSeconds = Math.ceil(remainingMs / 1000);
+	if (totalSeconds < 60) {
+		return `${totalSeconds}s`;
+	}
+
+	const minutes = Math.floor(totalSeconds / 60);
+	const seconds = totalSeconds % 60;
+	return seconds === 0 ? `${minutes}m` : `${minutes}m ${seconds}s`;
+}
+
+function buildApiRetryText(summary: ApiRetrySummary): string {
+	const headline = `API request failed, retrying in ${formatRetryDuration(summary.remainingMs)}.`;
+	const attempt = `Attempt ${summary.attempt}/${summary.maxRetries + 1}`;
+	return `${headline}\n${attempt}`;
+}
+
+function buildApiRetryStatusText(summary: ApiRetrySummary): string {
+	return `API 请求重试中 (${summary.attempt}/${summary.maxRetries + 1})`;
 }
 export type Props = {
 	commands: Command[];
@@ -1527,6 +1642,7 @@ export default function QueryApp({
 	}, [commands, resetHistory]);
 	const [alertMessage, setAlertMessage] = useState<string | null>(null);
 	const [exitHint, setExitHint] = useState(false);
+	const exitHintRef = useRef(false);
 	const [streamingAssistant, setStreamingAssistant] =
 		useState<StreamingAssistantState>({
 			active: false,
@@ -1538,6 +1654,10 @@ export default function QueryApp({
 		active: false,
 		streamMode: 'requesting',
 		responseLength: 0,
+		statusText: null
+	});
+	const [apiRetryUiState, setApiRetryUiState] = useState<ApiRetryUiState>({
+		active: false,
 		statusText: null
 	});
 	const [messages, rawSetMessages] = useState<MessageType[]>([]);
@@ -1762,6 +1882,15 @@ export default function QueryApp({
 	}, [commands]);
 
 	const handleCtrlC = useCallback(() => {
+		if (exitHintRef.current) {
+			if (exitTimerRef.current) {
+				clearTimeout(exitTimerRef.current);
+				exitTimerRef.current = null;
+			}
+			exit();
+			return;
+		}
+
 		if (loading) {
 			queryGuard.forceEnd();
 			abortControllerRef.current?.abort('user-cancel');
@@ -1769,25 +1898,19 @@ export default function QueryApp({
 			return;
 		}
 
-		if (exitHint) {
-			if (exitTimerRef.current) {
-				clearTimeout(exitTimerRef.current);
-			}
-			exit();
-			return;
-		}
-
 		setInput('');
+		exitHintRef.current = true;
 		setExitHint(true);
 		if (exitTimerRef.current) {
 			clearTimeout(exitTimerRef.current);
 		}
 
 		exitTimerRef.current = setTimeout(() => {
+			exitHintRef.current = false;
 			setExitHint(false);
 			exitTimerRef.current = null;
 		}, 800);
-	}, [exit, exitHint, loading, queryGuard]);
+	}, [exit, loading, queryGuard]);
 
 	const repinScroll = useCallback(() => {
 		scrollRef.current?.scrollToBottom();
@@ -1795,6 +1918,12 @@ export default function QueryApp({
 
 	useInput(
 		(input, key, event) => {
+			if (key.ctrl && input === 'c' && exitHintRef.current) {
+				event.stopImmediatePropagation();
+				handleCtrlC();
+				return;
+			}
+
 			if (key.ctrl && input === 'o') {
 				event.stopImmediatePropagation();
 				setScreen(current =>
@@ -1808,6 +1937,9 @@ export default function QueryApp({
 				(key.escape || (key.ctrl && input === 'c'))
 			) {
 				event.stopImmediatePropagation();
+				if (key.ctrl && input === 'c') {
+					handleCtrlC();
+				}
 				setScreen('prompt');
 			}
 		},
@@ -1885,8 +2017,27 @@ export default function QueryApp({
 
 	const onQueryEvent = useCallback(
 		(event: MessageType | { type: string; [key: string]: unknown }) => {
+			if (event.type === 'api_retry_status') {
+				const retryEvent = event as ApiRetryStatusEvent;
+				const summary: ApiRetrySummary = {
+					attempt: retryEvent.retryAttempt,
+					maxRetries: retryEvent.maxRetries,
+					remainingMs: retryEvent.retryInMs
+				};
+
+				setApiRetryUiState({
+					active: true,
+					statusText: buildApiRetryStatusText(summary)
+				});
+				return;
+			}
+
 			handleMessageFromStream(event, {
 				onMessageStart: () => {
+					setApiRetryUiState({
+						active: false,
+						statusText: null
+					});
 					setStreamingAssistant(prev => ({
 						active: true,
 						placeholderId: prev.placeholderId,
@@ -1976,6 +2127,10 @@ export default function QueryApp({
 						setMessages(prev => [...prev, newMessage]);
 					}
 					if (newMessage.type === 'assistant') {
+						setApiRetryUiState({
+							active: false,
+							statusText: null
+						});
 						setStreamingAssistant({
 							active: false,
 							placeholderId: null,
@@ -2212,6 +2367,10 @@ const getToolUseContext = useCallback(
 				responseLength: 0,
 				statusText: null
 			});
+			setApiRetryUiState({
+				active: false,
+				statusText: null
+			});
 
 			try {
 				const latestMessages = messagesRef.current;
@@ -2246,6 +2405,10 @@ const getToolUseContext = useCallback(
 						active: false,
 						streamMode: 'requesting',
 						responseLength: 0,
+						statusText: null
+					});
+					setApiRetryUiState({
+						active: false,
 						statusText: null
 					});
 				}
@@ -2396,7 +2559,8 @@ const getToolUseContext = useCallback(
 		messages,
 		renderTools,
 		completedTurnFooters,
-		isTranscriptMode
+		isTranscriptMode,
+		Date.now()
 	);
 
 	if (loading && streamingAssistant.placeholderId !== null) {
@@ -2452,7 +2616,9 @@ const getToolUseContext = useCallback(
 	const highlightInputChrome =
 		isTerminalFocused && loading && !activeToolUseConfirm;
 	const statusText = showSpinner
-		? compactUiState.active
+		? apiRetryUiState.active
+			? apiRetryUiState.statusText
+			: compactUiState.active
 			? compactUiState.statusText
 			: streamingAssistant.text.trim().length > 0
 				? 'Efrex 正在生成回复...'
@@ -2461,7 +2627,9 @@ const getToolUseContext = useCallback(
 					: 'Efrex 正在思考...'
 		: null;
 	const statusMode = showSpinner
-		? compactUiState.active
+		? apiRetryUiState.active
+			? 'requesting'
+			: compactUiState.active
 			? compactUiState.streamMode === 'requesting'
 				? 'requesting'
 				: 'default'
@@ -2611,7 +2779,7 @@ const getToolUseContext = useCallback(
 								width={promptInputWidth}
 								maxVisibleLines={maxPromptInputRows}
 								cursorSyncKey={cursorSyncKey}
-								isActive={!activeToolUseConfirm && !toolJSX?.isLocalJSXCommand}
+								isActive={!exitHint && !activeToolUseConfirm && !toolJSX?.isLocalJSXCommand}
 								suspendSubmit={showCommandSelector}
 								suspendVerticalArrows={showCommandSelector}
 								onChange={handleInputChange}
@@ -2713,12 +2881,10 @@ const getToolUseContext = useCallback(
 				) : null}
 			</Box>
 
-			{!showCommandSelector ? (
+			{!showCommandSelector && exitHint ? (
 				<Box flexDirection="column" flexShrink={0}>
 					<Box>
-						{exitHint ? (
-							<Text color="subtle">再按一次 Ctrl+C 退出</Text>
-						) : ''}
+						<Text color="subtle">再按一次 Ctrl+C 退出</Text>
 					</Box>
 				</Box>
 			) : null}

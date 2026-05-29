@@ -1,11 +1,3 @@
-export type OpenAIToolSchema = {
-  type?: string
-  name: string
-  description?: string
-  input_schema?: Record<string, unknown>
-  defer_loading?: boolean
-  cache_control?: Record<string, unknown>
-}
 
 export type OpenAIStreamEvent = {
   type:

@@ -16,6 +16,7 @@ import { buildQueryConfig } from './query/config.js'
 import { ImageResizeError } from './utils/imageResizer.js'
 import { isPromptTooLongMessage } from './services/api/errors.js'
 import type {
+  ApiRetryStatusEvent,
   AssistantMessage,
   Message,
   RequestStartEvent,
@@ -78,7 +79,10 @@ function collectToolUseBlocks(assistantMessage: AssistantMessage): ToolUseBlock[
 
 export async function* query(
   params: QueryParams,
-): AsyncGenerator<StreamEvent | RequestStartEvent | Message | ToolUseSummaryMessage, Terminal> {
+): AsyncGenerator<
+  StreamEvent | RequestStartEvent | Message | ToolUseSummaryMessage | ApiRetryStatusEvent,
+  Terminal
+> {
   const consumedCommandUuids: string[] = []
   const terminal = yield* queryLoop(params, consumedCommandUuids)
   return terminal
@@ -90,6 +94,7 @@ async function* queryLoop(
 ): AsyncGenerator<
   | StreamEvent
   | RequestStartEvent
+  | ApiRetryStatusEvent
   | Message
   | TombstoneMessage
   | ToolUseSummaryMessage,

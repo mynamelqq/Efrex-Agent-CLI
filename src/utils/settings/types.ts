@@ -87,7 +87,7 @@ export const SettingsSchema = lazySchema(() =>
       // doesn't surface this in GlobalClaudeSettings. Read via getXaaIdpSettings().
       // .passthrough() on the outer object keeps an existing settings.json key
       // alive across env-var-off sessions — it's just not schema-validated then.
-      ...(isEnvTruthy(process.env.CLAUDE_CODE_ENABLE_XAA)
+      ...(isEnvTruthy(process.env.ENABLE_XAA)
         ? {
             xaaIdp: z
               .object({

@@ -1,17 +1,19 @@
-import type { SystemPrompt }from "src/prompt.js"
+import type { SystemPrompt } from 'src/prompt.js'
 import type {
+  ApiRetryStatusEvent,
   Message,
   StreamEvent,
   SystemAPIErrorMessage,
   AssistantMessage,
   UserMessage,
 } from 'src/package/message.js'
+import type OpenAI from 'openai'
 import type { Tools } from '../../../Tool.js'
 import type { Options } from '../efrex.js'
+import type { ThinkingConfig } from 'src/utils/effort.js'
 import { getOpenAIClient } from './client.js'
 import { normalizeMessagesForAPI, toolToAPISchema } from '../../../utils/api.js'
 import { logForDebugging } from '../../../utils/debug.js'
-import type { OpenAIToolSchema } from './types.js'
 import { messagesToOpenAI } from './convertMessages.js'
 import { toolsToOpenAI, toolChoiceToOpenAI } from './convertTools.js'
 import { adaptOpenAIStream } from './streamAdapter.js'
@@ -35,8 +37,8 @@ import {
   normalizeContentFromAPI,
   type SDKAssistantMessageError,
 } from '../../../utils/messages.js'
-import { getInitialEffortSetting, toPersistableEffort } from "src/utils/effort.js"
-import { getInitialSettings } from "src/utils/settings/settings.js"
+import { getInitialEffortSetting } from 'src/utils/effort.js'
+import { withRetry } from 'src/utils/withRetry.js'
 
 const deferredToolNames = new Set<string>()
 
@@ -72,6 +74,28 @@ function prependDeferredToolListIfNeeded<
   T extends AssistantMessage | UserMessage,
 >(messages: T[], _tools: Tools, _deferredToolNames: Set<string>): T[] {
   return messages
+}
+
+function toApiRetryStatusEvent(
+  message: SystemAPIErrorMessage,
+): ApiRetryStatusEvent | null {
+  if (
+    message.subtype !== 'api_error' ||
+    typeof message.retryInMs !== 'number' ||
+    typeof message.retryAttempt !== 'number' ||
+    typeof message.maxRetries !== 'number'
+  ) {
+    return null
+  }
+
+  return {
+    type: 'api_retry_status',
+    retryInMs: message.retryInMs,
+    retryAttempt: message.retryAttempt,
+    maxRetries: message.maxRetries,
+    uuid: message.uuid,
+    timestamp: message.timestamp,
+  }
 }
 
 function isOpenAIConvertibleMessage(
@@ -156,36 +180,32 @@ function assembleFinalAssistantOutputs(params: {
 export async function* queryModelOpenAI(
   messages: Message[],
   systemPrompt: SystemPrompt,
+  thinkingConfig: ThinkingConfig,
   tools: Tools,
   signal: AbortSignal,
   options: Options,
 ): AsyncGenerator<
-  StreamEvent | AssistantMessage | SystemAPIErrorMessage,
+  StreamEvent | AssistantMessage | SystemAPIErrorMessage | ApiRetryStatusEvent,
   void
 > {
   try {
     // 1. Resolve model name
-    // const openaiModel = resolveOpenAIModel(options.model)
-    const openaiModel=resolveOpenAIModel("")
+    const openaiModel = resolveOpenAIModel(options.model)
     // 2. Normalize messages using shared preprocessing
     const messagesForAPI = normalizeMessagesForAPI(messages, tools)
 
-    let filteredTools = tools
-
     // 6. Build tool schemas with deferLoading flag
     const toolSchemas = await Promise.all(
-      filteredTools.map(tool =>
+      tools.map(tool =>
         toolToAPISchema(tool, {
           // getToolPermissionContext: options.getToolPermissionContext,
           tools,
           // agents: options.agents,
           model: options.model,
-          deferLoading:  deferredToolNames.has(tool.name),
+          deferLoading: deferredToolNames.has(tool.name),
         }),
       ),
     )
-
-
 
     // 8. Convert messages and tools to OpenAI format
     const enableThinking = isOpenAIThinkingEnabled(openaiModel)
@@ -203,55 +223,12 @@ export async function* queryModelOpenAI(
     )
     const openaiTools = toolsToOpenAI(toolSchemas)
     const openaiToolChoice = toolChoiceToOpenAI(options.toolChoice)
+    let attemptNumber = 0
+    let start = Date.now()
 
-    // 10. Compute max_tokens — required by most OpenAI-compatible endpoints.
-    //     Without this the server uses a tiny default, and when
-    //     thinking is enabled the thinking phase consumes the entire budget
-    //     leaving no tokens for the final response.
-    //
-    //     Use upperLimit (not the slot-cap default) because the Anthropic path's
-    //     slot-reservation cap (CAPPED_DEFAULT_MAX_TOKENS=8k) is paired with an
-    //     auto-retry at 64k in query.ts. The OpenAI path has no such retry, so
-    //     using the capped 8k default would silently truncate responses in
-    //     multi-turn conversations where thinking consumes most of the budget.
-    //
-    //     Override priority:
-    //     1. options.maxOutputTokensOverride (programmatic)
-    //     2. OPENAI_MAX_TOKENS env var (OpenAI-specific, useful for local models
-    //        with small context windows, e.g. RTX 3060 12GB running 65536-token models)
-    //     3. CLAUDE_CODE_MAX_OUTPUT_TOKENS env var (generic override)
-    //     4. upperLimit default (64000)
-    const { upperLimit } = getModelMaxOutputTokens(openaiModel)
-    const maxTokens = upperLimit;
-
-    // 11. Get client
-    const client = getOpenAIClient({
-      maxRetries: 0,
-      // fetchOverride: options.fetchOverride as unknown as typeof fetch,
-      // source: options.querySource,
-    })
-
-    logForDebugging(
-      `[OpenAI] Calling model=${openaiModel}, messages=${openaiMessages}, tools=${openaiTools.length}, thinking=${enableThinking}`,
-    )
-
-    // 12. Call OpenAI API with streaming
-    const requestBody = buildOpenAIRequestBody({
-      model: openaiModel,
-      messages: openaiMessages,
-      tools: openaiTools,
-      toolChoice: openaiToolChoice,
-      enableThinking,
-      maxTokens,
-      temperatureOverride: options.temperatureOverride,
-      effortLevel:getInitialEffortSetting()
-    })
-    const stream = await client.chat.completions.create(requestBody, { signal })
-
-    // 将 OpenAI 的流数据转换为 Anthropic 的事件，然后将其处理为 // // 附加消息 + 流事件（与 Anthropic 的路径行为相匹配）
-    const adaptedStream = adaptOpenAIStream(stream, openaiModel)
-
-    //积累内容块和使用次数，与 claude.ts 中的 Anthropic 路径相同
+    const attemptStartTimes: number[] = []
+    const newMessages: AssistantMessage[] = []
+    let isAdvisorInProgress = false
     const contentBlocks: Record<number, any> = {}
     const collectedMessages: AssistantMessage[] = []
     let partialMessage: any
@@ -263,7 +240,73 @@ export async function* queryModelOpenAI(
       cache_read_input_tokens: 0,
     }
     let ttftMs = 0
-    const start = Date.now()
+    const { upperLimit } = getModelMaxOutputTokens(openaiModel)
+    const resolvedMaxTokens = resolveOpenAIMaxTokens(
+      upperLimit,
+      options.maxOutputTokensOverride,
+    )
+    let activeMaxTokens = resolvedMaxTokens
+
+    const generator = withRetry(
+      () => {
+
+        return getOpenAIClient({
+          maxRetries: 0,
+          // fetchOverride: options.fetchOverride as unknown as typeof fetch,
+          // source: options.querySource,
+        })
+      },
+      async (openai, attempt, context) => {
+        const maxTokens = context.maxTokensOverride ?? resolvedMaxTokens
+        activeMaxTokens = maxTokens
+
+        attemptNumber = attempt
+        start = Date.now()
+        attemptStartTimes.push(start)
+
+        const requestBody = buildOpenAIRequestBody({
+          model: openaiModel,
+          messages: openaiMessages,
+          tools: openaiTools,
+          toolChoice: openaiToolChoice,
+          enableThinking,
+          maxTokens,
+          temperatureOverride: options.temperatureOverride,
+          effortLevel: getInitialEffortSetting(),
+        })
+        return openai.chat.completions.create(requestBody, { signal })
+      },
+      {
+        model: options.model,
+        fallbackModel: options.fallbackModel,
+        thinkingConfig,
+        signal,
+      },
+    )
+
+    let stream: Awaited<ReturnType<OpenAI['chat']['completions']['create']>>
+    while (true) {
+      const next = await generator.next()
+      if (next.done) {
+        stream = next.value
+        break
+      }
+      const retryStatusEvent = toApiRetryStatusEvent(next.value)
+      if (retryStatusEvent) {
+        yield retryStatusEvent
+        continue
+      }
+      yield next.value
+    }
+
+    // reset state
+    newMessages.length = 0
+    ttftMs = 0
+    partialMessage = undefined
+    stopReason = null
+    isAdvisorInProgress = false
+
+    const adaptedStream = adaptOpenAIStream(stream, openaiModel)
 
     for await (const event of adaptedStream) {
       switch (event.type) {
@@ -282,7 +325,7 @@ export async function* queryModelOpenAI(
           const idx = (event as any).index
           const cb = (event as any).content_block
           if (cb.type === 'tool_use') {
-            contentBlocks[idx] = { ...cb, input: '' }//展开内容块 
+            contentBlocks[idx] = { ...cb, input: '' }
           } else if (cb.type === 'text') {
             contentBlocks[idx] = { ...cb, text: '' }
           } else if (cb.type === 'thinking') {
@@ -309,7 +352,6 @@ export async function* queryModelOpenAI(
           break
         }
         case 'content_block_stop': {
-          // Block accumulation is complete; assembly happens at message_stop.
           break
         }
         case 'message_delta': {
@@ -323,9 +365,6 @@ export async function* queryModelOpenAI(
           break
         }
         case 'message_stop': {
-          // Assemble ONE AssistantMessage with ALL content blocks, matching the
-          // Anthropic SDK path. Real usage (input + output tokens) is available
-          // here and injected so tokenCountWithEstimation() can read it.
           if (partialMessage) {
             for (const output of assembleFinalAssistantOutputs({
               partialMessage,
@@ -333,18 +372,15 @@ export async function* queryModelOpenAI(
               tools,
               usage,
               stopReason,
-              maxTokens,
+              maxTokens: activeMaxTokens,
             })) {
               if (output.type === 'assistant') {
                 collectedMessages.push(output)
               }
               yield output
             }
-            // Reset partialMessage so the post-loop safety fallback does not
-            // yield a second identical AssistantMessage.
             partialMessage = null
           }
-          // Track cost and token usage
           if (usage.input_tokens + usage.output_tokens > 0) {
             const costUSD = calculateUSDCost(openaiModel, usage as any)
             addToTotalSessionCost(costUSD, usage as any, options.model)
@@ -353,7 +389,6 @@ export async function* queryModelOpenAI(
         }
       }
 
-      // Also yield as StreamEvent for real-time display (matching Anthropic path)
       yield {
         type: 'stream_event',
         event,
@@ -361,17 +396,14 @@ export async function* queryModelOpenAI(
       } as StreamEvent
     }
 
-  
-
-    // Safety: if stream ended without message_stop, assemble and yield whatever we have
     if (partialMessage) {
-      for (const output of assembleFinalAssistantOutputs({//组装剩余的
+      for (const output of assembleFinalAssistantOutputs({
         partialMessage,
         contentBlocks,
         tools,
         usage,
         stopReason,
-        maxTokens,
+        maxTokens: activeMaxTokens,
       })) {
         yield output
       }

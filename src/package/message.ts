@@ -156,6 +156,15 @@ export type RequestStartEvent = {
   [key: string]: unknown
 }
 
+export type ApiRetryStatusEvent = {
+  type: 'api_retry_status'
+  retryInMs: number
+  retryAttempt: number
+  maxRetries: number
+  uuid?: UUID | string
+  timestamp?: string
+}
+
 export type StreamEvent = {
   type: 'stream_event'
   event: unknown

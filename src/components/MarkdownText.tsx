@@ -1,6 +1,7 @@
 import React from 'react';
 import {Box, Text} from '../ink.js';
 import {stringWidth} from '../ink/stringWidth.js';
+import {defaultMarkdownTheme, type MarkdownTheme} from '../utils/theme.js';
 
 type InlineSegment = {
   type: 'text' | 'bold' | 'italic' | 'code' | 'link' | 'strike';
@@ -225,47 +226,64 @@ function truncateCell(value: string, maxWidth: number): string {
   return `${output}…`;
 }
 
-function renderInline(text: string) {
+function renderInline(text: string, theme: MarkdownTheme) {
   return parseInline(text).map((segment, index) => {
     switch (segment.type) {
       case 'bold':
         return (
-          <Text key={index} bold color="magentaBright">
+          <Text key={index} bold color={theme.strong}>
             {segment.content}
           </Text>
         );
       case 'italic':
         return (
-          <Text key={index} italic color="magenta">
+          <Text key={index} italic color={theme.emphasis}>
             {segment.content}
           </Text>
         );
       case 'code':
         return (
-          <Text key={index} backgroundColor="gray" color="cyanBright">
+          <Text key={index} backgroundColor={theme.codeBackground} color={theme.codeText}>
             {segment.content}
           </Text>
         );
       case 'link':
         return (
-          <Text key={index} color="blueBright" underline>
+          <Text key={index} color={theme.link} underline>
             {segment.content}
             {segment.href ? ` (${segment.href})` : ''}
           </Text>
         );
       case 'strike':
         return (
-          <Text key={index} strikethrough dimColor>
+          <Text key={index} strikethrough color={theme.strike}>
             {segment.content}
           </Text>
         );
       default:
-        return <Text key={index}>{segment.content}</Text>;
+        return <Text key={index} color={theme.text}>{segment.content}</Text>;
     }
   });
 }
 
-function TableBlock({headers, rows, width}: {headers: string[]; rows: string[][]; width: number}) {
+function resolveMarkdownTheme(theme?: Partial<MarkdownTheme>): MarkdownTheme {
+  return {
+    ...defaultMarkdownTheme,
+    ...theme,
+  };
+}
+
+function TableBlock({
+  headers,
+  rows,
+  width,
+  theme,
+}: {
+  headers: string[];
+  rows: string[][];
+  width: number;
+  theme: MarkdownTheme;
+}) {
   const columnCount = Math.max(headers.length, ...rows.map(row => row.length));
   const normalizedRows = rows.map(row => Array.from({length: columnCount}, (_, index) => plainInline(row[index] ?? '')));
   const normalizedHeaders = Array.from({length: columnCount}, (_, index) => plainInline(headers[index] ?? ''));
@@ -280,23 +298,23 @@ function TableBlock({headers, rows, width}: {headers: string[]; rows: string[][]
 
   return (
     <Box flexDirection="column" marginY={1}>
-      <Text color="gray">{separator}</Text>
-      <Text color="white" bold>{renderRow(normalizedHeaders)}</Text>
-      <Text color="gray">{separator}</Text>
+      <Text color={theme.tableBorder}>{separator}</Text>
+      <Text color={theme.tableHeader} bold>{renderRow(normalizedHeaders)}</Text>
+      <Text color={theme.tableBorder}>{separator}</Text>
       {normalizedRows.map((row, index) => (
         <Text key={index}>{renderRow(row)}</Text>
       ))}
-      <Text color="gray">{separator}</Text>
+      <Text color={theme.tableBorder}>{separator}</Text>
     </Box>
   );
 }
 
-function CodeBlock({language, lines}: {language: string; lines: string[]}) {
+function CodeBlock({language, lines, theme}: {language: string; lines: string[]; theme: MarkdownTheme}) {
   return (
     <Box flexDirection="column" marginY={1}>
-      {language && <Text color="gray">{language}</Text>}
+      {language && <Text color={theme.separator}>{language}</Text>}
       {(lines.length > 0 ? lines : ['']).map((line, index) => (
-        <Text key={index} color="cyanBright" backgroundColor="gray">
+        <Text key={index} color={theme.codeText} backgroundColor={theme.codeBackground}>
           {line || ' '}
         </Text>
       ))}
@@ -330,25 +348,37 @@ function wrapVisualLines(text: string, width: number): string[] {
   return output;
 }
 
-function MarkdownTail({text, width, maxRows}: {text: string; width: number; maxRows: number}) {
+function MarkdownTail({text, width, maxRows, theme}: {text: string; width: number; maxRows: number; theme: MarkdownTheme}) {
   const lines = wrapVisualLines(text, width).slice(-Math.max(1, maxRows));
   const clipped = wrapVisualLines(text, width).length > lines.length;
 
   return (
     <Box flexDirection="column" flexShrink={0}>
-      {clipped && <Text color="gray">…</Text>}
+      {clipped && <Text color={theme.separator}>…</Text>}
       {lines.slice(clipped ? 1 : 0).map((line, index) => (
         <Text key={index} wrap="truncate-end">
-          {renderInline(line || ' ')}
+          {renderInline(line || ' ', theme)}
         </Text>
       ))}
     </Box>
   );
 }
 
-export default function MarkdownText({text, width = 80, maxRows}: {text: string; width?: number; maxRows?: number}) {
+export default function MarkdownText({
+  text,
+  width = 80,
+  maxRows,
+  theme,
+}: {
+  text: string;
+  width?: number;
+  maxRows?: number;
+  theme?: Partial<MarkdownTheme>;
+}) {
+  const markdownTheme = resolveMarkdownTheme(theme);
+
   if (maxRows && wrapVisualLines(text, width).length > maxRows) {
-    return <MarkdownTail text={text} width={width} maxRows={maxRows} />;
+    return <MarkdownTail text={text} width={width} maxRows={maxRows} theme={markdownTheme} />;
   }
 
   const blocks = parseBlocks(text);
@@ -361,14 +391,18 @@ export default function MarkdownText({text, width = 80, maxRows}: {text: string;
             return <Text key={index}> </Text>;
           case 'heading':
             return (
-              <Text key={index} bold color={block.level <= 2 ? 'blueBright' : 'cyanBright'}>
-                {renderInline(block.text)}
+              <Text
+                key={index}
+                bold
+                color={block.level <= 2 ? markdownTheme.heading : markdownTheme.headingStrong}
+              >
+                {renderInline(block.text, markdownTheme)}
               </Text>
             );
           case 'paragraph':
             return (
               <Text key={index} wrap="wrap">
-                {renderInline(block.text)}
+                {renderInline(block.text, markdownTheme)}
               </Text>
             );
           case 'code':
@@ -376,8 +410,8 @@ export default function MarkdownText({text, width = 80, maxRows}: {text: string;
           case 'quote':
             return (
               <Box key={index} flexDirection="row">
-                <Text color="gray">│ </Text>
-                <Text color="gray" wrap="wrap">{renderInline(block.text)}</Text>
+                <Text color={markdownTheme.quote}>│ </Text>
+                <Text color={markdownTheme.quote} wrap="wrap">{renderInline(block.text)}</Text>
               </Box>
             );
           case 'list':
@@ -385,16 +419,18 @@ export default function MarkdownText({text, width = 80, maxRows}: {text: string;
               <Box key={index} flexDirection="column">
                 {block.items.map((item, itemIndex) => (
                   <Box key={itemIndex} flexDirection="row">
-                    <Text color="cyanBright">{block.ordered ? `${itemIndex + 1}. ` : '• '}</Text>
-                    <Text wrap="wrap">{renderInline(item)}</Text>
+                    <Text color={markdownTheme.listMarker}>
+                      {block.ordered ? `${itemIndex + 1}. ` : '• '}
+                    </Text>
+                    <Text wrap="wrap">{renderInline(item, markdownTheme)}</Text>
                   </Box>
                 ))}
               </Box>
             );
           case 'table':
-            return <TableBlock key={index} headers={block.headers} rows={block.rows} width={width} />;
+            return <TableBlock key={index} headers={block.headers} rows={block.rows} width={width} theme={markdownTheme} />;
           case 'hr':
-            return <Text key={index} color="gray">{'─'.repeat(Math.max(8, Math.min(width, 80)))}</Text>;
+            return <Text key={index} color={markdownTheme.hr}>{'─'.repeat(Math.max(8, Math.min(width, 80)))}</Text>;
           default:
             return null;
         }

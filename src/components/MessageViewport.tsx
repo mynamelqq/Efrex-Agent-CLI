@@ -2,6 +2,7 @@ import React from 'react';
 import {Box, Text} from '../ink.js';
 import chalk from 'chalk';
 import {stringWidth} from '../ink/stringWidth.js';
+import MarkdownText from './MarkdownText.js';
 
 const USER_MESSAGE_BG = '#2e2f30';
 const USER_MESSAGE_FG = '#f0f0ea';
@@ -146,15 +147,25 @@ function renderMessageNode(
   if (message.role === 'user') {
     if (variant === 'transcript') {
       return (
-        <Box key={message.id} flexDirection="column" width={width}>
-          {renderUserMarkdownNode(message.text, width, variant)}
+        <Box key={message.id} flexDirection="row" width={width}>
+          <Box flexShrink={0} width={5}>
+            <Text color="#8b949e">you  </Text>
+          </Box>
+          <Box flexDirection="column" flexGrow={1} flexShrink={1} width={Math.max(1, width - 5)}>
+            <MarkdownText text={message.text} width={Math.max(1, width - 5)} />
+          </Box>
         </Box>
       );
     }
 
     return (
-      <Box key={message.id} flexDirection="column" width={width}>
-        {renderUserMarkdownNode(message.text, width, variant)}
+      <Box key={message.id} flexDirection="row" width={width}>
+        <Box backgroundColor={USER_MESSAGE_BG} flexShrink={0} width={2}>
+          <Text color={USER_MESSAGE_FG}>{'> '}</Text>
+        </Box>
+        <Box backgroundColor={USER_MESSAGE_BG} flexDirection="column" flexGrow={1} flexShrink={1} width={Math.max(1, width - 2)}>
+          <MarkdownText text={message.text} width={Math.max(1, width - 2)} />
+        </Box>
       </Box>
     );
   }
@@ -189,7 +200,11 @@ function renderMessageNode(
           </Text>
         </Box>
         <Box flexDirection="column" flexGrow={1} flexShrink={1} width={Math.max(1, width - 3)}>
-          {message.content}
+          {message.content ? (
+            message.content
+          ) : (
+            <MarkdownText text={message.text} width={Math.max(8, width - 3)} />
+          )}
         </Box>
       </Box>
     );
@@ -208,7 +223,11 @@ function renderMessageNode(
         <Text color={prefixColor}>{toolPrefix}</Text>
       </Box>
       <Box flexDirection="column" flexGrow={1} flexShrink={1} width={Math.max(1, width - 3)}>
-        {message.content}
+        {message.content ? (
+          message.content
+        ) : (
+          <Text wrap="wrap">{message.text || ' '}</Text>
+        )}
       </Box>
     </Box>
   );
@@ -225,18 +244,21 @@ function renderMessage(
   }
 
   if (message.role === 'user') {
+    const plainLines = plainTextToLines(
+      message.text,
+      variant === 'transcript' ? Math.max(1, width - 5) : Math.max(1, width - 2),
+    );
     if (variant === 'transcript') {
-      return markdownToLines(message.text, Math.max(1, width - 5)).map((line, index) =>
+      return plainLines.map((line, index) =>
         `${index === 0 ? chalk.hex('#8b949e')('you  ') : '     '}${chalk.hex('#c9d1d9')(line)}`,
       );
     }
 
-    const contentWidth = Math.max(1, width - 2);
     return [
-      ...markdownToLines(message.text, contentWidth).map((line, index) => {
+      ...plainLines.map((line, index) => {
         const prefix = index === 0 ? '> ' : '  ';
         return chalk.bgHex(USER_MESSAGE_BG).hex(USER_MESSAGE_FG)(
-          padPlain(`${prefix}${truncatePlain(line, contentWidth)}`, width),
+          padPlain(`${prefix}${truncatePlain(line, Math.max(1, width - 2))}`, width),
         );
       }),
     ];
@@ -251,7 +273,7 @@ function renderMessage(
     );
   }
 
-  const markdownLines = markdownToLines(message.text, Math.max(8, width - 3));
+  const plainLines = plainTextToLines(message.text, Math.max(8, width - 3));
   const assistantPrefix =
     variant === 'transcript'
       ? message.animatePrefix === 'blink'
@@ -265,7 +287,7 @@ function renderMessage(
         : '   '
       : chalk.hex(ASSISTANT_BRAND).bold('✦  ');
 
-  return markdownLines.map((line, index) => `${index === 0 ? assistantPrefix : '   '}${line}`);
+  return plainLines.map((line, index) => `${index === 0 ? assistantPrefix : '   '}${line}`);
 }
 
 function padMetaLine(text: string, width: number): string {
@@ -318,222 +340,26 @@ function getToolPrefix(
   };
 }
 
-function markdownToLines(markdown: string, width: number): string[] {
-  const lines = markdown.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-  const output: string[] = [];
-  let index = 0;
-
-  while (index < lines.length) {
-    const line = lines[index] ?? '';
-    const fence = /^\s*(`{3,}|~{3,})\s*([\w.+-]*)\s*$/.exec(line);
-
-    if (fence) {
-      const marker = fence[1][0];
-      const language = fence[2] ?? '';
-      if (language) {
-        output.push(chalk.gray(language));
-      }
-      index++;
-      while (index < lines.length && !new RegExp(`^\\s*${marker}{3,}\\s*$`).test(lines[index] ?? '')) {
-        output.push(...wrapPlain(lines[index] ?? '', width).map(codeLine => chalk.bgGray.cyanBright(codeLine || ' ')));
-        index++;
-      }
-      if (index < lines.length) {
-        index++;
-      }
-      continue;
-    }
-
-    if (/^\s*$/.test(line)) {
-      output.push('');
-      index++;
-      continue;
-    }
-
-    const heading = /^\s{0,3}(#{1,6})\s*(.+?)\s*#*\s*$/.exec(line);
-    if (heading) {
-      output.push(`${chalk.cyanBright.bold(heading[1])} ${inlineStyle(heading[2])}`);
-      index++;
-      continue;
-    }
-
-    if (/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
-      output.push(chalk.gray('─'.repeat(Math.max(8, Math.min(width, 80)))));
-      index++;
-      continue;
-    }
-
-    if (isTableStart(lines, index)) {
-      const headers = splitTableRow(lines[index]);
-      index += 2;
-      const rows: string[][] = [];
-      while (index < lines.length && isTableRow(lines[index] ?? '')) {
-        rows.push(splitTableRow(lines[index] ?? ''));
-        index++;
-      }
-      output.push(...renderTable(headers, rows, width));
-      continue;
-    }
-
-    const quote = /^\s{0,3}>\s?(.+)$/.exec(line);
-    if (quote) {
-      output.push(...wrapPreservingMarkdown(quote[1], Math.max(1, width - 2)).map(part => `${chalk.gray('│ ')}${chalk.gray(inlineStyle(part))}`));
-      index++;
-      continue;
-    }
-
-    const list = /^\s{0,3}(?:([-+*])|(\d+)[.)])\s+(.+)$/.exec(line);
-    if (list) {
-      const bullet = list[2] ? `${list[2]}. ` : '• ';
-      output.push(...wrapPreservingMarkdown(list[3], Math.max(1, width - stringWidth(bullet))).map((part, partIndex) =>
-        `${partIndex === 0 ? chalk.cyanBright(bullet) : ' '.repeat(stringWidth(bullet))}${inlineStyle(part)}`,
-      ));
-      index++;
-      continue;
-    }
-
-    output.push(...wrapPreservingMarkdown(line.trim(), width).map(part => inlineStyle(part)));
-    index++;
-  }
-
-  return output.length > 0 ? trimTrailingBlankLines(output) : [''];
+function plainTextToLines(markdown: string, width: number): string[] {
+  return trimTrailingBlankLines(wrapPlain(stripMarkdownSyntax(markdown), width));
 }
 
-function renderUserMarkdownNode(
-  text: string,
-  width: number,
-  variant: 'default' | 'transcript',
-): React.ReactNode {
-  const lines = markdownToLines(text, Math.max(1, width - (variant === 'transcript' ? 5 : 2)));
-  return (
-    <Box flexDirection="column" width={width}>
-      {lines.map((line, index) => {
-        const prefix = variant === 'transcript'
-          ? index === 0
-            ? 'you  '
-            : '     '
-          : index === 0
-            ? '> '
-            : '  ';
-        return (
-          <Text
-            key={index}
-            color={variant === 'transcript' ? '#c9d1d9' : USER_MESSAGE_FG}
-            backgroundColor={variant === 'transcript' ? undefined : USER_MESSAGE_BG}
-            wrap="wrap"
-          >
-            {`${prefix}${line || ' '}`}
-          </Text>
-        );
-      })}
-    </Box>
-  );
-}
-
-function inlineStyle(text: string): string {
-  const parts: string[] = [];
-  let index = 0;
-  const pattern = /(`[^`\n]+`)|(\*\*[\s\S]+?\*\*)|(__[\s\S]+?__)|(~~[\s\S]+?~~)|(\[[^\]\n]+]\([^)]+\))|(\*[^*\n]+\*)|(_[^_\n]+_)/;
-
-  while (index < text.length) {
-    const remaining = text.slice(index);
-    const match = pattern.exec(remaining);
-    if (!match) {
-      parts.push(remaining);
-      break;
-    }
-    if (match.index > 0) {
-      parts.push(remaining.slice(0, match.index));
-    }
-    const token = match[0];
-    if (token.startsWith('`')) {
-      parts.push(chalk.bgGray.cyanBright(token.slice(1, -1)));
-    } else if (token.startsWith('**') || token.startsWith('__')) {
-      parts.push(chalk.magentaBright.bold(token.slice(2, -2)));
-    } else if (token.startsWith('~~')) {
-      parts.push(chalk.dim.strikethrough(token.slice(2, -2)));
-    } else if (token.startsWith('[')) {
-      const linkMatch = /^\[([^\]\n]+)]\(([^)]+)\)$/.exec(token);
-      parts.push(chalk.blueBright.underline(`${linkMatch![1]} (${linkMatch![2]})`));
-    } else {
-      parts.push(chalk.magenta.italic(token.slice(1, -1)));
-    }
-    index += match.index + token.length;
-  }
-  return parts.join('');
-}
-
-function renderTable(headers: string[], rows: string[][], width: number): string[] {
-  const columnCount = Math.max(headers.length, ...rows.map(row => row.length));
-  const normalizedHeaders = Array.from({length: columnCount}, (_, index) => stripMarkdown(headers[index] ?? ''));
-  const normalizedRows = rows.map(row => Array.from({length: columnCount}, (_, index) => stripMarkdown(row[index] ?? '')));
-  const maxCellWidth = Math.max(4, Math.floor((Math.max(20, width) - columnCount * 3 - 1) / columnCount));
-  const columnWidths = Array.from({length: columnCount}, (_, column) => {
-    const values = [normalizedHeaders[column], ...normalizedRows.map(row => row[column])];
-    return Math.min(maxCellWidth, Math.max(3, ...values.map(value => stringWidth(truncatePlain(value, maxCellWidth)))));
-  });
-  const separator = chalk.gray(`+-${columnWidths.map(cellWidth => '-'.repeat(cellWidth)).join('-+-')}-+`);
-  const renderRow = (cells: string[]) =>
-    `| ${cells.map((cell, index) => padPlain(truncatePlain(cell, columnWidths[index]), columnWidths[index])).join(' | ')} |`;
-
-  return [
-    separator,
-    chalk.bold(renderRow(normalizedHeaders)),
-    separator,
-    ...normalizedRows.map(row => renderRow(row)),
-    separator,
-  ];
-}
-
-function isTableStart(lines: string[], index: number): boolean {
-  return isTableRow(lines[index] ?? '') && isTableSeparator(lines[index + 1] ?? '');
-}
-
-function isTableRow(line: string): boolean {
-  return line.includes('|') && splitTableRow(line).length >= 2;
-}
-
-function isTableSeparator(line: string): boolean {
-  const cells = splitTableRow(line);
-  return cells.length >= 2 && cells.every(cell => /^:?-{3,}:?$/.test(cell.trim()));
-}
-
-function splitTableRow(line: string): string[] {
-  const trimmed = line.trim().replace(/^\|/, '').replace(/\|$/, '');
-  return trimmed.split('|').map(cell => cell.trim());
-}
-
-function stripMarkdown(text: string): string {
-  const parts: string[] = [];
-  let index = 0;
-  const pattern = /(`[^`\n]+`)|(\*\*[\s\S]+?\*\*)|(__[\s\S]+?__)|(~~[\s\S]+?~~)|(\[[^\]\n]+]\([^)]+\))|(\*[^*\n]+\*)|(_[^_\n]+_)/;
-
-  while (index < text.length) {
-    const remaining = text.slice(index);
-    const match = pattern.exec(remaining);
-    if (!match) {
-      parts.push(remaining);
-      break;
-    }
-    if (match.index > 0) {
-      parts.push(remaining.slice(0, match.index));
-    }
-    const token = match[0];
-    if (token.startsWith('`')) {
-      parts.push(token.slice(1, -1));
-    } else if (token.startsWith('**') || token.startsWith('__')) {
-      parts.push(token.slice(2, -2));
-    } else if (token.startsWith('~~')) {
-      parts.push(token.slice(2, -2));
-    } else if (token.startsWith('[')) {
-      const linkMatch = /^\[([^\]\n]+)]\([^)]+\)$/.exec(token);
-      parts.push(linkMatch![1]);
-    } else {
-      parts.push(token.slice(1, -1));
-    }
-    index += match.index + token.length;
-  }
-  return parts.join('');
+function stripMarkdownSyntax(text: string): string {
+  return text
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\s{0,3}>\s?/gm, '')
+    .replace(/^\s{0,3}(?:[-+*]|\d+[.)])\s+/gm, '')
+    .replace(/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/gm, '')
+    .replace(/^\s*(`{3,}|~{3,})\s*[\w.+-]*\s*$/gm, '')
+    .replace(/\[([^\]\n]+)\]\([^)]+\)/g, '$1')
+    .replace(/`([^`\n]+)`/g, '$1')
+    .replace(/\*\*([\s\S]+?)\*\*/g, '$1')
+    .replace(/__([\s\S]+?)__/g, '$1')
+    .replace(/~~([\s\S]+?)~~/g, '$1')
+    .replace(/\*([^*\n]+)\*/g, '$1')
+    .replace(/_([^_\n]+)_/g, '$1');
 }
 
 function wrapPlain(text: string, width: number): string[] {
@@ -558,59 +384,6 @@ function wrapStyled(text: string, width: number): string[] {
         current = char;
       } else {
         current = next;
-      }
-    }
-    result.push(current);
-  }
-
-  return result;
-}
-
-function wrapPreservingMarkdown(text: string, width: number): string[] {
-  const safeWidth = Math.max(1, width);
-  const lines = text.split('\n');
-  const result: string[] = [];
-  const tokenPattern = /(`[^`\n]+`)|(\*\*[\s\S]+?\*\*)|(__[\s\S]+?__)|(~~[\s\S]+?~~)|(\[[^\]\n]+]\([^)]+\))|(\*[^*\n]+\*)|(_[^_\n]+_)/g;
-
-  for (const line of lines) {
-    if (line.length === 0) {
-      result.push('');
-      continue;
-    }
-
-    const segments: {text: string; atomic: boolean}[] = [];
-    let lastIndex = 0;
-    tokenPattern.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = tokenPattern.exec(line)) !== null) {
-      if (match.index > lastIndex) {
-        segments.push({text: line.slice(lastIndex, match.index), atomic: false});
-      }
-      segments.push({text: match[0], atomic: true});
-      lastIndex = match.index + match[0].length;
-    }
-    if (lastIndex < line.length) {
-      segments.push({text: line.slice(lastIndex), atomic: false});
-    }
-
-    let current = '';
-    for (const seg of segments) {
-      if (seg.atomic) {
-        if (stringWidth(current) > 0 && stringWidth(current + seg.text) > safeWidth) {
-          result.push(current);
-          current = seg.text;
-        } else {
-          current += seg.text;
-        }
-      } else {
-        for (const char of Array.from(seg.text)) {
-          if (stringWidth(current + char) > safeWidth) {
-            result.push(current);
-            current = char;
-          } else {
-            current += char;
-          }
-        }
       }
     }
     result.push(current);

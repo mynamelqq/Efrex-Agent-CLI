@@ -92,6 +92,43 @@ export type Theme = {
   rainbow_blue_shimmer: string
   rainbow_indigo_shimmer: string
   rainbow_violet_shimmer: string
+  markdown?: MarkdownTheme
+}
+
+export type MarkdownTheme = {
+  text: string
+  heading: string
+  headingStrong: string
+  emphasis: string
+  strong: string
+  codeText: string
+  codeBackground: string
+  link: string
+  strike: string
+  quote: string
+  separator: string
+  tableHeader: string
+  tableBorder: string
+  listMarker: string
+  hr: string
+}
+
+export const defaultMarkdownTheme: MarkdownTheme = {
+  text: 'ansi:white',
+  heading: 'ansi:blueBright',
+  headingStrong: 'ansi:cyanBright',
+  emphasis: 'ansi:magenta',
+  strong: 'ansi:magentaBright',
+  codeText: 'ansi:cyanBright',
+  codeBackground: 'ansi:black',
+  link: 'ansi:blueBright',
+  strike: 'ansi:blackBright',
+  quote: 'ansi:blackBright',
+  separator: 'ansi:blackBright',
+  tableHeader: 'ansi:white',
+  tableBorder: 'ansi:blackBright',
+  listMarker: 'ansi:cyanBright',
+  hr: 'ansi:blackBright',
 }
 
 
@@ -175,6 +212,23 @@ export const lightTheme: Theme = {
   rainbow_blue_shimmer: 'rgb(180,205,240)',
   rainbow_indigo_shimmer: 'rgb(195,180,230)',
   rainbow_violet_shimmer: 'rgb(230,180,210)',
+  markdown: {
+    text: 'rgb(34, 34, 34)',
+    heading: 'rgb(32, 88, 160)',
+    headingStrong: 'rgb(18, 115, 116)',
+    emphasis: 'rgb(153, 51, 153)',
+    strong: 'rgb(125, 43, 139)',
+    codeText: 'rgb(0, 120, 140)',
+    codeBackground: 'rgb(236, 238, 242)',
+    link: 'rgb(26, 92, 191)',
+    strike: 'rgb(132, 132, 132)',
+    quote: 'rgb(116, 124, 130)',
+    separator: 'rgb(173, 180, 188)',
+    tableHeader: 'rgb(24, 24, 24)',
+    tableBorder: 'rgb(173, 180, 188)',
+    listMarker: 'rgb(0, 120, 140)',
+    hr: 'rgb(173, 180, 188)',
+  },
 }
 
 /**
@@ -256,6 +310,23 @@ export const lightAnsiTheme: Theme = {
   rainbow_blue_shimmer: 'ansi:cyanBright',
   rainbow_indigo_shimmer: 'ansi:blueBright',
   rainbow_violet_shimmer: 'ansi:magentaBright',
+  markdown: {
+    text: 'ansi:white',
+    heading: 'ansi:blueBright',
+    headingStrong: 'ansi:cyanBright',
+    emphasis: 'ansi:magenta',
+    strong: 'ansi:magentaBright',
+    codeText: 'ansi:cyanBright',
+    codeBackground: 'ansi:black',
+    link: 'ansi:blueBright',
+    strike: 'ansi:blackBright',
+    quote: 'ansi:blackBright',
+    separator: 'ansi:blackBright',
+    tableHeader: 'ansi:white',
+    tableBorder: 'ansi:blackBright',
+    listMarker: 'ansi:cyanBright',
+    hr: 'ansi:blackBright',
+  },
 }
 
 export const defaultToolRenderTheme = lightAnsiTheme

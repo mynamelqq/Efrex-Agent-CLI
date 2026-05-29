@@ -2,7 +2,7 @@ import { coerce } from 'semver'
 import type { Writable } from 'stream'
 import { env } from '../utils/env.js'
 import { gte } from '../utils/semver.js'
-import { getClearTerminalSequence } from './clearTerminal.js'
+import { getResetTerminalSequence } from './clearTerminal.js'
 import type { Diff } from './frame.js'
 import { cursorMove, cursorTo, eraseLines } from './termio/csi.js'
 import { BSU, ESU, HIDE_CURSOR, SHOW_CURSOR } from './termio/dec.js'
@@ -216,7 +216,7 @@ export function writeDiffToTerminal(
         }
         break
       case 'clearTerminal':
-        buffer += getClearTerminalSequence()
+        buffer += getResetTerminalSequence()
         break
       case 'cursorHide':
         buffer += HIDE_CURSOR

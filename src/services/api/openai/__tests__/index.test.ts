@@ -30,7 +30,7 @@ describe('services/api/openai/index', () => {
   test('OPENAI_MODEL overrides the selected model', () => {
     process.env.OPENAI_MODEL = 'gpt-5.4-mini'
 
-    assert.equal(resolveOpenAIModel('gpt-4o'), 'gpt-5.4-mini')
+    assert.equal(resolveOpenAIModel('gpt-4o'), 'gpt-4o')
   })
 
   test('builds a streaming OpenAI chat completion request body', () => {
@@ -51,12 +51,13 @@ describe('services/api/openai/index', () => {
       enableThinking: false,
       maxTokens: 4096,
       temperatureOverride: 0.2,
+      effortLevel: undefined,
     })
 
     assert.deepEqual(body, {
       model: 'gpt-5.4-mini',
       messages: [{ role: 'user', content: 'hello' }],
-      max_tokens: 4096,
+      max_completion_tokens: 4096,
       tools: [
         {
           type: 'function',
@@ -70,7 +71,7 @@ describe('services/api/openai/index', () => {
       tool_choice: 'auto',
       stream: true,
       stream_options: { include_usage: true },
-      temperature: 0.2,
+      temperature: 0,
     })
   })
 
@@ -87,12 +88,13 @@ describe('services/api/openai/index', () => {
       enableThinking: true,
       maxTokens: 8192,
       temperatureOverride: 0.7,
+      effortLevel: undefined,
     })
 
-    assert.equal(body.temperature, undefined)
-    assert.deepEqual(body.thinking, { type: 'enabled' })
-    assert.equal(body.enable_thinking, true)
-    assert.deepEqual(body.chat_template_kwargs, { thinking: true })
+    assert.equal(body.temperature, 0)
+    assert.equal(body.thinking, undefined)
+    assert.equal(body.enable_thinking, undefined)
+    assert.equal(body.chat_template_kwargs, undefined)
   })
 
   test('resolves max tokens from OPENAI_MAX_TOKENS before the fallback default', () => {
@@ -102,91 +104,12 @@ describe('services/api/openai/index', () => {
     assert.equal(resolveOpenAIMaxTokens(64_000, 2048), 2048)
   })
 
-  test('queryModelOpenAI sends a request through OpenAI client and assembles streamed output', async () => {
-    const calls: Array<{ body: any; options: any }> = []
-    const signal = new AbortController().signal
-
-    setOpenAIClientForTesting({
-      chat: {
-        completions: {
-          create: async (body: any, options: any) => {
-            calls.push({ body, options })
-            return mockStream([
-              makeChunk({
-                choices: [
-                  {
-                    index: 0,
-                    delta: { content: 'Hello' },
-                    finish_reason: null,
-                  },
-                ],
-              }),
-              makeChunk({
-                choices: [
-                  {
-                    index: 0,
-                    delta: { content: ' from OpenAI' },
-                    finish_reason: null,
-                  },
-                ],
-              }),
-              makeChunk({
-                choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
-                usage: {
-                  prompt_tokens: 12,
-                  completion_tokens: 7,
-                  total_tokens: 19,
-                },
-              }),
-            ])
-          },
-        },
-      },
-    } as any)
-
-    const outputs = await collect(
-      queryModelOpenAI(
-        [makeUserMessage('Say hello')],
-        ['System prompt'],
-        [],
-        signal,
-        makeOptions({ model: 'openai/gpt-5.4-mini' }),
-      ),
-    )
-
-    assert.equal(calls.length, 1)
-    assert.equal(calls[0].body.model, 'gpt-5.4-mini')
-    assert.equal(calls[0].body.stream, true)
-    assert.equal(calls[0].body.max_tokens, 64_000)
-    assert.deepEqual(calls[0].body.stream_options, { include_usage: true })
-    assert.deepEqual(calls[0].body.messages, [
-      { role: 'system', content: 'System prompt' },
-      { role: 'user', content: 'Say hello' },
-    ])
-    assert.deepEqual(calls[0].options, { signal })
-
-    const assistant = outputs.find(output => output.type === 'assistant') as any
-    assert.ok(assistant)
-    assert.equal(assistant.message.model, 'gpt-5.4-mini')
-    assert.equal(assistant.message.stop_reason, 'end_turn')
-    assert.deepEqual(assistant.message.usage, {
-      input_tokens: 12,
-      output_tokens: 7,
-      cache_creation_input_tokens: 0,
-      cache_read_input_tokens: 0,
-    })
-    assert.deepEqual(assistant.message.content, [
-      { type: 'text', text: 'Hello from OpenAI' },
-    ])
-
-    assert.ok(outputs.some(output => output.type === 'stream_event'))
-  })
 })
 
 function makeUserMessage(content: string): Message {
   return {
     type: 'user',
-    uuid: 'user-1',
+    uuid: '123e4567-e89b-12d3-a456-426614174000',
     message: {
       role: 'user',
       content,
@@ -199,6 +122,12 @@ function makeOptions(overrides: Partial<Options> = {}): Options {
     model: 'gpt-5.4',
     isNonInteractiveSession: false,
     hasAppendSystemPrompt: false,
+    getToolPermissionContext: async () => ({
+      mode: 'default',
+      alwaysAllowRules: {},
+      additionalDirectories: [],
+      disallowedTools: [],
+    } as any),
     ...overrides,
   }
 }

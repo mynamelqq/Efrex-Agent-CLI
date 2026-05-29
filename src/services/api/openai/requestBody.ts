@@ -101,23 +101,21 @@ export function buildOpenAIRequestBody(params: {
       ...(toolChoice && { tool_choice: toolChoice }),
     }),
     stream: true,
-
     stream_options: { include_usage: true },
     // DeepSeek thinking mode: enable chain-of-thought output.
     // When active, temperature/top_p/presence_penalty/frequency_penalty are ignored by DeepSeek.
-    // ...(enableThinking && {
-    //   // Official DeepSeek API format
-    //   thinking: { type: 'enabled' },
-    //   // Self-hosted DeepSeek-V3.2 format
-    //   enable_thinking: true,
-    //   chat_template_kwargs: { thinking: true },
-    // }),
+    ...(enableThinking && {
+      // Official DeepSeek API format
+      thinking: { type: 'enabled' },
+      // Self-hosted DeepSeek-V3.2 format
+      enable_thinking: true,
+    }),
     // Only send temperature when thinking mode is off (DeepSeek ignores it anyway,
     // but other providers may respect it)
-    // ...(!enableThinking &&
-    //   temperatureOverride !== undefined && {
-    //     temperature: temperatureOverride,
-    //   }),
+    ...(!enableThinking &&
+      temperatureOverride !== undefined && {
+        temperature: temperatureOverride,
+      }),
     temperature:0.0
 
   }

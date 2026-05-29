@@ -38,11 +38,11 @@ function wrapFetchForUsage(base: typeof fetch): typeof fetch {
   return wrapped as unknown as typeof fetch
 }
 
-export function getOpenAIClient(options?: {
+export async function getOpenAIClient(options?: {
   maxRetries?: number
   fetchOverride?: typeof fetch
   source?: string
-}): OpenAI {
+}): Promise<OpenAI> {
   if (testClient) return testClient
   if (cachedClient) return cachedClient
 

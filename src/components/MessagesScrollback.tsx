@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import { Box, Text } from '../ink.js';
 import { stringWidth } from '../ink/stringWidth.js';
 import type { ViewportMessage } from './MessageViewport.js';
+import MarkdownText from './MarkdownText.js';
 
 type Props = {
 	headerLines?: string[];
@@ -92,14 +93,19 @@ function renderMessageRow(
 
 	if (message.role === 'user') {
 		return (
-			<Box flexDirection="column" width={width}>
-				<Text
-					color={USER_MESSAGE_FG}
+			<Box flexDirection="row" width={width}>
+				<Box backgroundColor={USER_MESSAGE_BG} flexShrink={0} width={2}>
+					<Text color={USER_MESSAGE_FG}>{'> '}</Text>
+				</Box>
+				<Box
 					backgroundColor={USER_MESSAGE_BG}
-					wrap="wrap"
+					flexDirection="column"
+					flexGrow={1}
+					flexShrink={1}
+					width={Math.max(1, width - 2)}
 				>
-					{`> ${message.text}`}
-				</Text>
+					<MarkdownText text={message.text} width={Math.max(1, width - 2)} />
+				</Box>
 			</Box>
 		);
 	}
@@ -128,7 +134,7 @@ function renderMessageRow(
 					{message.content ? (
 						message.content
 					) : (
-						<Text wrap="wrap">{message.text || ' '}</Text>
+						<MarkdownText text={message.text || ' '} width={Math.max(8, width - 3)} />
 					)}
 				</Box>
 			</Box>
@@ -150,7 +156,7 @@ function renderMessageRow(
 				{message.content ? (
 					message.content
 				) : (
-					<Text wrap="wrap">{message.text || ' '}</Text>
+					<MarkdownText text={message.text || ' '} width={Math.max(8, width - 3)} />
 				)}
 			</Box>
 		</Box>

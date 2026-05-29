@@ -1,19 +1,43 @@
 import type { ChatCompletionTool } from 'openai/resources/chat/completions/completions.mjs'
-import type { OpenAIToolSchema } from './types.js'
+import { BetaToolUnion } from '@anthropic-ai/sdk/resources/beta.mjs'
+export type OpenAIToolSchema = {
+  type?: string
+  name: string
+  description?: string
+  input_schema?: Record<string, unknown>
+  defer_loading?: boolean
+  cache_control?: Record<string, unknown>
+}
 
-export function toolsToOpenAI(tools: OpenAIToolSchema[]): ChatCompletionTool[] {
-  return tools
-    .filter(tool => tool.type === 'custom' || tool.type == null)
-    .map(tool => ({
-      type: 'function',
-      function: {
-        name: tool.name,
-        description: tool.description ?? '',
-        parameters: sanitizeJsonSchema(
-          tool.input_schema ?? { type: 'object', properties: {} },
-        ),
-      },
-    }))
+export function toolsToOpenAI(tools: BetaToolUnion[]): ChatCompletionTool[] {
+return tools
+    .filter(tool => {
+      // Only convert standard tools (skip server tools like computer_use, etc.)
+      const toolType = (tool as unknown as { type?: string }).type
+      return (
+        tool.type === 'custom' || !('type' in tool) || toolType !== 'server'
+      )
+    })
+    .map(tool => {
+      // Handle the various tool shapes from Anthropic SDK
+      const anyTool = tool as unknown as Record<string, unknown>
+      const name = (anyTool.name as string) || ''
+      const description = (anyTool.description as string) || ''
+      const inputSchema = anyTool.input_schema as
+        | Record<string, unknown>
+        | undefined
+
+      return {
+        type: 'function' as const,
+        function: {
+          name,
+          description,
+          parameters: sanitizeJsonSchema(
+            inputSchema || { type: 'object', properties: {} },
+          ),
+        },
+      } satisfies ChatCompletionTool
+    })
 }
 
 export function toolChoiceToOpenAI(

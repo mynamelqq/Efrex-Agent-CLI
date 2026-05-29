@@ -311,3 +311,8 @@ Claude.md有固定的格式，所以读取后解析markdown的代码很复杂
 image-cache文件夹中
 
 还增加了ide.ts初步检测终端环境是哪个ide
+
+继续往claude.ts的方向上靠，增加了withRetry重试函数，并用mock测试了前端ui基本可行，withRetry主要是针对429、529这种可重试的错误进行重试，还支持从响应头获取精确的速率限制重置时间，
+如果是400还会调整max_tokens计算可用上下文空间，退避策略是指数退避BASE_DELAY_MS * 2^(attempt-1)添加25%随机抖动
+
+还vibe coding 让ai增加一条支持anthropic的线路,ui方面主要是markdown优化

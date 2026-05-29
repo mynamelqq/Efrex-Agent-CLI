@@ -72,8 +72,10 @@ function StartupGate({
   const { errors } = getSettingsWithErrors();
 
   
-  await render(<StartupGate settingsErrors={errors} />, {
+  const app = await render(<StartupGate settingsErrors={errors} />, {
     exitOnCtrlC: false,
     
   });
+  await app.waitUntilExit();
+  gracefulShutdownSync(0);
 })();

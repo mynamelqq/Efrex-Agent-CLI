@@ -53,6 +53,21 @@ function isModernWindowsTerminal(): boolean {
 }
 
 /**
+ * Returns the ANSI escape sequence to clear the visible terminal surface while
+ * preserving scrollback.
+ */
+export function getResetTerminalSequence(): string {
+  if (process.platform === 'win32') {
+    if (isModernWindowsTerminal()) {
+      return ERASE_SCREEN + CURSOR_HOME
+    } else {
+      return ERASE_SCREEN + CURSOR_HOME_WINDOWS
+    }
+  }
+  return ERASE_SCREEN + CURSOR_HOME
+}
+
+/**
  * Returns the ANSI escape sequence to clear the terminal including scrollback.
  * Automatically detects terminal capabilities.
  */
