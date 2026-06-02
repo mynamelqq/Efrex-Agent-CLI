@@ -111,13 +111,13 @@ export function PowerShellPermissionRequest({
 	const [selectedIndex, setSelectedIndex] = React.useState(0);
 	const didResolveRef = React.useRef(false);
 	const startResolution = React.useCallback(
-		(action: () => void) => {
+		async (action: () => void | Promise<void>) => {
 			if (didResolveRef.current) {
 				return;
 			}
 
 			didResolveRef.current = true;
-			action();
+			await action();
 			onDone();
 		},
 		[onDone]
@@ -125,7 +125,7 @@ export function PowerShellPermissionRequest({
 
 	const reject = React.useCallback(() => {
 		onReject();
-		startResolution(() => {
+		void startResolution(() => {
 			toolUseConfirm.onReject();
 		});
 	}, [onReject, startResolution, toolUseConfirm]);
@@ -139,8 +139,11 @@ export function PowerShellPermissionRequest({
 			}
 
 			didResolveRef.current = true;
-			toolUseConfirm.onAllow(toolUseConfirm.input, permissionUpdates);
-			onDone();
+			void toolUseConfirm
+				.onAllow(toolUseConfirm.input, permissionUpdates)
+				.finally(() => {
+					onDone();
+				});
 		},
 		[onDone, toolUseConfirm]
 	);

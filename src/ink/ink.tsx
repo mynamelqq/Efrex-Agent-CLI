@@ -35,6 +35,7 @@ import { applySearchHighlight } from './searchHighlight.js';
 import { applySelectionOverlay, captureScrolledRows, clearSelection, createSelectionState, extendSelection, type FocusMove, findPlainTextUrlAt, getSelectedText, hasSelection, moveFocus, type SelectionState, selectLineAt, selectWordAt, shiftAnchor, shiftSelection, shiftSelectionForFollow, startSelection, updateSelection } from './selection.js';
 import { SYNC_OUTPUT_SUPPORTED, supportsExtendedKeys, type Terminal, writeDiffToTerminal } from './terminal.js';
 import { CURSOR_HOME, cursorMove, cursorPosition, DISABLE_KITTY_KEYBOARD, DISABLE_MODIFY_OTHER_KEYS, ENABLE_KITTY_KEYBOARD, ENABLE_MODIFY_OTHER_KEYS, ERASE_SCREEN } from './termio/csi.js';
+import { getClearTerminalSequence } from './clearTerminal.js';
 import { DBP, DFE, DISABLE_MOUSE_TRACKING, ENABLE_MOUSE_TRACKING, ENTER_ALT_SCREEN, EXIT_ALT_SCREEN, SHOW_CURSOR } from './termio/dec.js';
 import { CLEAR_ITERM2_PROGRESS, CLEAR_TAB_STATUS, setClipboard, supportsTabStatus, wrapForMultiplexer } from './termio/osc.js';
 import { TerminalWriteProvider } from './useTerminalNotification.js';
@@ -178,6 +179,10 @@ export default class Ink {
   // render() takes; deferring into the atomic block means old content stays
   // visible until the new frame is fully ready.
   private needsEraseBeforePaint = false;
+  // Set by explicit history resets such as /clear. The sequence is emitted
+  // together with the next committed frame so stale state cannot repaint
+  // between clearing the terminal and drawing the empty conversation.
+  private needsScrollbackClearBeforePaint = false;
   // Native cursor positioning: a component (via useDeclaredCursor) declares
   // where the terminal cursor should be parked after each frame. Terminal
   // emulators render IME preedit text at the physical cursor position, and
@@ -581,12 +586,16 @@ export default class Ink {
       }
     }
 
-    // Full-damage backstop: applies on BOTH alt-screen and main-screen.
-    // Layout shifts (spinner appears, status line resizes) can leave stale
-    // cells at sibling boundaries that per-node damage tracking misses.
-    // Selection/highlight overlays write via setCellStyleId which doesn't
-    // track damage. prevFrameContaminated covers the cleanup frame.
-    if (didLayoutShift() || selActive || hlActive || this.prevFrameContaminated) {
+    // Full-damage backstop: layout-shift recovery is only safe in alt-screen.
+    // On the main screen, a full-frame diff during ordinary layout churn
+    // (permission prompt, tool panel, status row changes) can be treated by
+    // the terminal as a fresh page rewrite, duplicating the whole interface in
+    // scrollback. Keep full-damage on the main screen only for explicitly
+    // contaminated previous frames (/clear, forceRedraw, overlay cleanup).
+    const needsFullDamage =
+      this.prevFrameContaminated ||
+      (this.altScreenActive && (didLayoutShift() || selActive || hlActive));
+    if (needsFullDamage) {
       frame.screen.damage = {
         x: 0,
         y: 0,
@@ -606,6 +615,16 @@ export default class Ink {
     // The CSI H write is deferred until after the diff is computed so we
     // can skip it for empty diffs (no writes → physical cursor unused).
     let prevFrame = this.frontFrame;
+    const shouldClearScrollback = this.needsScrollbackClearBeforePaint;
+    if (shouldClearScrollback) {
+      prevFrame = emptyFrame(
+        frame.viewport.height,
+        frame.viewport.width,
+        this.stylePool,
+        this.charPool,
+        this.hyperlinkPool
+      );
+    }
     if (this.altScreenActive) {
       prevFrame = {
         ...this.frontFrame,
@@ -649,6 +668,13 @@ export default class Ink {
     }
     const tOptimize = performance.now();
     const optimized = optimize(diff);
+    if (shouldClearScrollback && optimized.length > 0) {
+      this.needsScrollbackClearBeforePaint = false;
+      optimized.unshift({
+        type: 'stdout',
+        content: getClearTerminalSequence()
+      });
+    }
     const optimizeMs = performance.now() - tOptimize;
     const hasDiff = optimized.length > 0;
     if (isDebugRepaintsEnabled() && !this.altScreenActive && hasDiff) {
@@ -898,6 +924,14 @@ export default class Ink {
    */
   invalidatePrevFrame(): void {
     this.prevFrameContaminated = true;
+  }
+
+  /**
+   * Clear native scrollback atomically with the next committed frame.
+   */
+  scheduleScrollbackClear(): void {
+    if (!this.options.stdout.isTTY || this.isUnmounted || this.isPaused) return;
+    this.needsScrollbackClearBeforePaint = true;
   }
 
   /**

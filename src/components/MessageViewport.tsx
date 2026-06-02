@@ -4,6 +4,7 @@ import chalk from 'chalk';
 import {stringWidth} from '../ink/stringWidth.js';
 import MarkdownText from './MarkdownText.js';
 import { OffscreenFreeze } from './OffscreenFreeze.js';
+import MessageHeader from './MessageHeader.js';
 
 const USER_MESSAGE_BG = '#2e2f30';
 const USER_MESSAGE_FG = '#f0f0ea';
@@ -68,13 +69,7 @@ export default function MessageViewport({
 }: Props) {
   return (
     <Box flexDirection="column" flexShrink={0} width="100%">
-      {headerLines?.map((line, index) => (
-        <OffscreenFreeze key={`header-${index}`}>
-          <Text wrap="truncate-end">
-            {line || ' '}
-          </Text>
-        </OffscreenFreeze>
-      ))}
+      <MessageHeader lines={headerLines} />
       {alertMessage ? (
         <Text color="redBright">错误: {alertMessage}</Text>
       ) : null}

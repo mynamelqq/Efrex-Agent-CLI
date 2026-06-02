@@ -167,7 +167,11 @@ export class LogUpdate {
       next.viewport.height < prev.viewport.height ||
       (prev.viewport.width !== 0 && next.viewport.width !== prev.viewport.width)
     ) {
-      return fullResetSequence_CAUSES_FLICKER(next, 'resize', stylePool)
+      return fullResetSequence_CAUSES_FLICKER(
+        next,
+        'resize',
+        stylePool,
+      )
     }
 
     // DECSTBM scroll optimization: when a ScrollBox's scrollTop changed,
@@ -239,7 +243,13 @@ export class LogUpdate {
       logForDebugging(
         `Full reset (shrink->below): prevHeight=${prev.screen.height}, nextHeight=${next.screen.height}, viewport=${prev.viewport.height}`,
       )
-      return fullResetSequence_CAUSES_FLICKER(next, 'offscreen', stylePool)
+      return fullResetSequence_CAUSES_FLICKER(
+        next,
+        'offscreen',
+        stylePool,
+        undefined,
+        !altScreen,
+      )
     }
 
     if (
@@ -263,11 +273,17 @@ export class LogUpdate {
       if (scrollbackChangeY >= 0) {
         const prevLine = readLine(prev.screen, scrollbackChangeY)
         const nextLine = readLine(next.screen, scrollbackChangeY)
-        return fullResetSequence_CAUSES_FLICKER(next, 'offscreen', stylePool, {
-          triggerY: scrollbackChangeY,
-          prevLine,
-          nextLine,
-        })
+        return fullResetSequence_CAUSES_FLICKER(
+          next,
+          'offscreen',
+          stylePool,
+          {
+            triggerY: scrollbackChangeY,
+            prevLine,
+            nextLine,
+          },
+          !altScreen,
+        )
       }
     }
 
@@ -291,6 +307,8 @@ export class LogUpdate {
           next,
           'offscreen',
           this.options.stylePool,
+          undefined,
+          !altScreen,
         )
       }
 
@@ -404,11 +422,17 @@ export class LogUpdate {
       }
     })
     if (needsFullReset) {
-      return fullResetSequence_CAUSES_FLICKER(next, 'offscreen', stylePool, {
-        triggerY: resetTriggerY,
-        prevLine: readLine(prev.screen, resetTriggerY),
-        nextLine: readLine(next.screen, resetTriggerY),
-      })
+      return fullResetSequence_CAUSES_FLICKER(
+        next,
+        'offscreen',
+        stylePool,
+        {
+          triggerY: resetTriggerY,
+          prevLine: readLine(prev.screen, resetTriggerY),
+          nextLine: readLine(next.screen, resetTriggerY),
+        },
+        !altScreen,
+      )
     }
 
     // Reset styles before rendering new rows (they'll set their own styles)
@@ -503,6 +527,7 @@ function fullResetSequence_CAUSES_FLICKER(
   reason: FlickerReason,
   stylePool: StylePool,
   debug?: { triggerY: number; prevLine: string; nextLine: string },
+  clearScrollback = false,
 ): Diff {
   // After clearTerminal, cursor is at (0, 0)
   const screen = new VirtualScreen({ x: 0, y: 0 }, frame.viewport.width)
@@ -511,7 +536,10 @@ function fullResetSequence_CAUSES_FLICKER(
   } else {
     renderVisibleFrameViewport(screen, frame, stylePool)
   }
-  return [{ type: 'clearTerminal', reason, debug }, ...screen.diff]
+  return [
+    { type: 'clearTerminal', reason, debug, clearScrollback },
+    ...screen.diff,
+  ]
 }
 
 /**

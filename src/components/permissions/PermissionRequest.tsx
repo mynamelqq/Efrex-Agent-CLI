@@ -415,28 +415,31 @@ export function PermissionRequest({
 	const didResolveRef = React.useRef(false);
 
 	const startResolution = React.useCallback(
-		(action: () => void) => {
+		async (action: () => void | Promise<void>) => {
 			if (didResolveRef.current) {
 				return;
 			}
 
 			didResolveRef.current = true;
-			action();
-			onDone();
+			try {
+				await action();
+			} finally {
+				onDone();
+			}
 		},
 		[onDone]
 	);
 
 	const reject = React.useCallback(() => {
 		onReject();
-		startResolution(() => {
+		void startResolution(() => {
 			toolUseConfirm.onReject();
 		});
 	}, [onReject, startResolution, toolUseConfirm]);
 
 	const allow = React.useCallback(
 		(permissionUpdates: PermissionUpdate[] = []) => {
-			startResolution(() => {
+			void startResolution(() => {
 				toolUseConfirm.onAllow(
 					toolUseConfirm.input,
 					permissionUpdates

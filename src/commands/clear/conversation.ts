@@ -24,6 +24,8 @@ import {
   resetSessionFilePointer,
 } from '../../utils/sessionStorage.js'
 import { clearSessionCaches } from './cache'
+import instances from '../../ink/instances.js'
+
 
 
 export async function clearConversation({
@@ -34,6 +36,8 @@ export async function clearConversation({
   getAppState,
   setAppState,
   setConversationId,
+  setCompletedTurnFooters,
+  resetMainScroll,
 }: {
   setMessages: (updater: (prev: Message[]) => Message[]) => void
   readFileState: FileStateCache
@@ -42,6 +46,8 @@ export async function clearConversation({
   getAppState?: () => AppState
   setAppState?: (f: (prev: AppState) => AppState) => void
   setConversationId?: (id: UUID) => void
+  setCompletedTurnFooters?: (footers: { afterMessageCount: number; text: string }[]) => void
+  resetMainScroll?: () => void
 }): Promise<void> {
 
   // Signal to inference that this conversation's cache can be evicted.
@@ -56,6 +62,11 @@ export async function clearConversation({
   const preservedAgentIds = new Set<string>()
 
   setMessages(() => [])
+  setCompletedTurnFooters?.([])
+  resetMainScroll?.()
+  const ink = instances.get(process.stdout)
+  ink?.invalidatePrevFrame()
+  ink?.scheduleScrollbackClear()
   // Force logo re-render by updating conversationId
   if (setConversationId) {
     setConversationId(randomUUID())

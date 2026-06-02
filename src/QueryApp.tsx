@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import chalk from 'chalk';
 // import { useMainLoopModel } from './hooks/useMainLoopModel.js';
 import { CommandResultDisplay } from './types/command.js';
@@ -15,6 +15,7 @@ import {
 	useWindowSize
 } from './ink.js';
 import { getTerminalFocused } from './ink/terminal-focus-state.js';
+import instances from './ink/instances.js';
 import { stringWidth } from './ink/stringWidth.js';
 import { createAbortController } from './utils/abortController.js';
 import { createFileStateCacheWithSizeLimit,READ_FILE_STATE_CACHE_SIZE } from './utils/fileStateCache.js';
@@ -162,12 +163,6 @@ const COMMAND_ROW_SELECTED_FG = '#7dd3fc';
 const COMMAND_ROW_SELECTED_DESC = '#b7c9d3';
 const TURN_META_ID_BASE = 1_000_000_000;
 
-const GLIMMER_PAD_COLUMNS = 10;
-const GLIMMER_WIDTH_COLUMNS = 8;
-const statusSegmenter =
-	typeof Intl !== 'undefined' && 'Segmenter' in Intl
-		? new Intl.Segmenter('zh-Hans', { granularity: 'grapheme' })
-		: null;
 
 function getCurrentModel(): string {
 	return getAnthropicModel();
@@ -346,52 +341,6 @@ function renderHighlightedText(
 	);
 }
 
-function splitGraphemes(text: string): string[] {
-	if (statusSegmenter) {
-		return Array.from(
-			statusSegmenter.segment(text),
-			segment => segment.segment
-		);
-	}
-
-	return Array.from(text);
-}
-
-function getShimmerSegments(
-	text: string,
-	glimmerIndex: number
-): { before: string; shimmer: string; after: string } {
-	const graphemes = splitGraphemes(text);
-	const shimmerStart = glimmerIndex;
-	const shimmerEnd = glimmerIndex + GLIMMER_WIDTH_COLUMNS;
-
-	let cursor = 0;
-	const before: string[] = [];
-	const shimmer: string[] = [];
-	const after: string[] = [];
-
-	for (const grapheme of graphemes) {
-		const width = stringWidth(grapheme);
-		const nextCursor = cursor + width;
-		const intersects = nextCursor > shimmerStart && cursor < shimmerEnd;
-
-		if (intersects) {
-			shimmer.push(grapheme);
-		} else if (nextCursor <= shimmerStart) {
-			before.push(grapheme);
-		} else {
-			after.push(grapheme);
-		}
-
-		cursor = nextCursor;
-	}
-
-	return {
-		before: before.join(''),
-		shimmer: shimmer.join(''),
-		after: after.join('')
-	};
-}
 function padDisplay(text: string, width: number): string {
     return `${text}${' '.repeat(Math.max(0, width - stringWidth(text)))}`;
 }
@@ -400,12 +349,6 @@ function centerDisplay(text: string, width: number): string {
     const textWidth = stringWidth(text);
     const leftPad = Math.max(0, Math.floor((width - textWidth) / 2));
     return `${' '.repeat(leftPad)}${text}${' '.repeat(Math.max(0, width - textWidth - leftPad))}`;
-}
-function getStatusLabelSegments(
-	text: string,
-	glimmerIndex: number
-): { before: string; shimmer: string; after: string } {
-	return getShimmerSegments(text, glimmerIndex);
 }
 
 function normalizeLineEndings(text: string): string {
@@ -487,8 +430,6 @@ function getTranscriptHeaderLines({
 	const rule = muted(
 		` ${'─'.repeat(Math.max(0, boxWidth - stringWidth(brandPlain) - 2))}`
 	);
-
-	// Keep the full welcome card in the native-scrollback layout by design.
 
 	const leftWidth = Math.max(28, Math.min(52, Math.floor(innerWidth * 0.42)));
 	const rightWidth = Math.max(20, innerWidth - leftWidth - 1);
@@ -1242,6 +1183,39 @@ function buildStreamingPlaceholderText(
 	return sections.join('\n\n');
 }
 
+function shouldAppendStreamingPlaceholder(
+	baseViewportMessages: ViewportMessage[],
+	streamingPlaceholder: ViewportMessage | null
+): boolean {
+	if (!streamingPlaceholder) {
+		return false;
+	}
+
+	if (
+		streamingPlaceholder.role === 'tool' &&
+		streamingPlaceholder.toolDisplayStyle === 'use'
+	) {
+		for (let index = baseViewportMessages.length - 1; index >= 0; index--) {
+			const message = baseViewportMessages[index];
+			if (message.role === 'meta') {
+				continue;
+			}
+
+			if (
+				message.role === 'tool' &&
+				message.toolDisplayStyle === 'use' &&
+				message.toolPhase === 'call'
+			) {
+				return false;
+			}
+
+			break;
+		}
+	}
+
+	return true;
+}
+
 function isToolResultUserMessage(message: MessageType): boolean {
 	if (message.type !== 'user' || !Array.isArray(message.message?.content)) {
 		return false;
@@ -1715,25 +1689,11 @@ export default function QueryApp({
 		isImmediate?: boolean;
 	} | null>(null);
 	const loadingStartTimeRef = useRef<number | null>(null);
-	const [animationTick, setAnimationTick] = useState(0);
 
 	useLogMessages(
 		messages,
 		messages.length === initialMessages?.length
 	);
-
-	useEffect(() => {
-		if (!loading) {
-			setAnimationTick(0);
-			return;
-		}
-
-		const timer = setInterval(() => {
-			setAnimationTick(prev => prev + 1);
-		}, 50);
-
-		return () => clearInterval(timer);
-	}, [loading]);
 
 	useEffect(() => {
 		if (loading) {
@@ -1745,14 +1705,6 @@ export default function QueryApp({
 
 		loadingStartTimeRef.current = null;
 	}, [loading]);
-
-	const blinkVisible = Math.floor(animationTick / 14) % 2 === 0;
-	const breathingCycle = 24;
-	const breathingPhase = animationTick % breathingCycle;
-	const breathingStrength =
-		breathingPhase <= breathingCycle / 2
-			? breathingPhase / (breathingCycle / 2)
-			: (breathingCycle - breathingPhase) / (breathingCycle / 2);
 
 	const setMessages = useCallback(
 		(updater: React.SetStateAction<MessageType[]>) => {
@@ -1916,6 +1868,10 @@ export default function QueryApp({
 
 	const repinScroll = useCallback(() => {
 		scrollRef.current?.scrollToBottom();
+	}, []);
+
+	const resetMainScroll = useCallback(() => {
+		scrollRef.current?.scrollTo(0);
 	}, []);
 
 	useInput(
@@ -2233,6 +2189,8 @@ const getToolUseContext = useCallback(
 			onCompactProgress: handleCompactProgress,
 			messages,
 			setToolJSX,
+			setCompletedTurnFooters,
+			resetMainScroll,
 			setMessages,
 			updateFileHistoryState(updater: (prev: FileHistoryState) => FileHistoryState) {
 			// Perf: skip the setState when the updater returns the same reference
@@ -2484,7 +2442,7 @@ const getToolUseContext = useCallback(
 			
 			await handlePromptSubmit({
 				input: value,
-				onInputChange: setInput,
+				onInputChange: handleInputChange,
 				helpers: {
 					setCursorOffset: () => {
 						setCursorSyncKey(prev => prev + 1);
@@ -2509,6 +2467,7 @@ const getToolUseContext = useCallback(
 		[
 			commands,
 			getToolUseContext,
+			handleInputChange,
 			mainLoopModel,
 			messages,
 			onQuery,
@@ -2540,62 +2499,103 @@ const getToolUseContext = useCallback(
 
 	const isTranscriptMode = screen === 'transcript';
 	const activeToolUseConfirm = toolUseConfirmQueue[0];
+	const previousTranscriptModeRef = useRef(isTranscriptMode);
+	useLayoutEffect(() => {
+		const wasTranscriptMode = previousTranscriptModeRef.current;
+		previousTranscriptModeRef.current = isTranscriptMode;
+
+		if (
+			wasTranscriptMode &&
+			!isTranscriptMode &&
+			!isFullscreenEnvEnabled()
+		) {
+			instances.get(process.stdout)?.invalidatePrevFrame();
+		}
+	}, [isTranscriptMode]);
+	const previousActiveToolUseConfirmRef = useRef(activeToolUseConfirm);
+	useLayoutEffect(() => {
+		const previousActiveToolUseConfirm =
+			previousActiveToolUseConfirmRef.current;
+		previousActiveToolUseConfirmRef.current = activeToolUseConfirm;
+
+		if (
+			previousActiveToolUseConfirm &&
+			!activeToolUseConfirm &&
+			!isFullscreenEnvEnabled()
+		) {
+			instances.get(process.stdout)?.invalidatePrevFrame();
+		}
+	}, [activeToolUseConfirm]);
 	const renderTools = activeTools;
-	const viewportMessages = buildViewportMessages(
-		messages,
-		renderTools,
-		completedTurnFooters,
-		isTranscriptMode,
-		Date.now()
+	const baseViewportMessages = useMemo(
+		() => buildViewportMessages(
+			messages,
+			renderTools,
+			completedTurnFooters,
+			isTranscriptMode,
+			Date.now()
+		),
+		[messages, renderTools, completedTurnFooters, isTranscriptMode]
 	);
 
-	if (loading && streamingAssistant.placeholderId !== null) {
-		if (streamingAssistant.text.trim().length > 0) {
-			viewportMessages.push({
-				id: streamingAssistant.placeholderId,
-				role: 'assistant',
-				text: buildStreamingPlaceholderText(streamingAssistant),
-				animatePrefix: 'blink'
-			});
-		} else if (streamingAssistant.pendingToolCalls.length > 0) {
-			viewportMessages.push({
-				id: streamingAssistant.placeholderId,
-				role: 'tool',
-				text: streamingAssistant.pendingToolCalls.join('\n'),
-				toolPhase: 'call',
-				toolDisplayStyle: 'use',
-				animatePrefix: 'blink'
-			});
+	const streamingPlaceholder = useMemo(() => {
+		if (loading && streamingAssistant.placeholderId !== null) {
+			if (streamingAssistant.text.trim().length > 0) {
+				return {
+					id: streamingAssistant.placeholderId,
+					role: 'assistant' as const,
+					text: buildStreamingPlaceholderText(streamingAssistant),
+					animatePrefix: 'blink' as const
+				};
+			} else if (streamingAssistant.pendingToolCalls.length > 0) {
+				return {
+					id: streamingAssistant.placeholderId,
+					role: 'tool' as const,
+					text: streamingAssistant.pendingToolCalls.join('\n'),
+					toolPhase: 'call' as const,
+					toolDisplayStyle: 'use' as const,
+					animatePrefix: 'blink' as const
+				};
+			}
 		}
-	}
+		return null;
+	}, [loading, streamingAssistant.placeholderId, streamingAssistant.text, streamingAssistant.pendingToolCalls]);
 
-	const nonFullscreenViewportMessages =
-		!isTranscriptMode &&
-		toolJSX &&
-		!(toolJSX.isLocalJSXCommand && toolJSX.isImmediate)
-			? [
-					...viewportMessages,
-					{
-						id: TURN_META_ID_BASE + viewportMessages.length + 2,
-						role: 'meta' as const,
-						text: '',
-						content: <Box flexDirection="column" width="100%">{toolJSX.jsx}</Box>
-					}
-				]
-			: viewportMessages;
+	const viewportMessages = useMemo(() => {
+		if (
+			shouldAppendStreamingPlaceholder(
+				baseViewportMessages,
+				streamingPlaceholder
+			)
+		) {
+			return [...baseViewportMessages, streamingPlaceholder!];
+		}
+
+		return baseViewportMessages;
+	}, [baseViewportMessages, streamingPlaceholder]);
+
+	const hasInlineLoadingPlaceholder =
+		loading &&
+		streamingAssistant.placeholderId !== null &&
+		(streamingAssistant.text.trim().length > 0 ||
+			streamingAssistant.pendingToolCalls.length > 0);
 
 	const { model: modelLabel, effort: effortLabel } = useTranscriptHeaderInfo();
 
-	const transcriptHeaderLines = getTranscriptHeaderLines({
-		cwd: process.cwd(),
-		model: modelLabel,
-		effort: effortLabel,
-		width: messageWidth,
-		welcome: messages.length === 0 && !showSpinner
-	});
+	const cwd = process.cwd();
+	const transcriptHeaderLines = useMemo(
+		() => getTranscriptHeaderLines({
+			cwd,
+			model: modelLabel,
+			effort: effortLabel,
+			width: messageWidth,
+			welcome: false
+		}),
+		[cwd, modelLabel, effortLabel, messageWidth]
+	);
 	const highlightInputChrome =
 		isTerminalFocused && loading && !activeToolUseConfirm;
-	const statusText = showSpinner
+	const statusText = showSpinner && !hasInlineLoadingPlaceholder
 		? apiRetryUiState.active
 			? apiRetryUiState.statusText
 			: compactUiState.active
@@ -2619,22 +2619,6 @@ const getToolUseContext = useCallback(
 		: null;
 
 
-	const statusPrefix = statusText ? '•' : null;
-	const statusPrefixDim = breathingStrength < 0.35;
-	const statusPrefixBold = breathingStrength > 0.7;
-
-	const statusMessageWidth = statusText ? stringWidth(statusText) : 0;
-	const glimmerSpeed = statusMode === 'requesting' ? 55 : 50;
-	const elapsedMs = animationTick * 50;
-	const glimmerCycleLength = statusMessageWidth + GLIMMER_PAD_COLUMNS * 2;
-	const cyclePosition =
-		glimmerCycleLength > 0 ? Math.floor(elapsedMs / glimmerSpeed) : 0;
-	const glimmerIndex = statusText
-		? (cyclePosition % glimmerCycleLength) - GLIMMER_PAD_COLUMNS
-		: 0;
-	const statusSegments = statusText
-		? getStatusLabelSegments(statusText, glimmerIndex)
-		: null;
 	const commandSelectorQuery = getSlashCommandQuery(input.trim());
 	const visibleCommandWindow = getVisibleWindow(
 		filteredCommands,
@@ -2701,35 +2685,28 @@ const getToolUseContext = useCallback(
 		executeQueuedInput,
 		queryGuard,
 	});
+	const toolPermissionOverlay = activeToolUseConfirm ? (
+		<PermissionRequest
+			key={activeToolUseConfirm.toolUseID}
+			onDone={shiftToolUseConfirmQueue}
+			onReject={handlePermissionReject}
+			toolUseConfirm={activeToolUseConfirm}
+			toolUseContext={activeToolUseConfirm.toolUseContext}
+			verbose={false}
+			workerBadge={undefined}
+			currentMessageCount={messages.length}
+		/>
+	) : null;
 	const bottomContent = (
 		<Box flexDirection="column" width="100%">
 			{showSpinner &&
 			!activeToolUseConfirm &&
-			statusText &&
-			statusPrefix &&
-			statusSegments ? (
+			statusText ? (
 				<StatusAnimationRow
-					prefix={statusPrefix}
-					prefixDim={statusPrefixDim}
-					prefixBold={statusPrefixBold}
-					before={statusSegments.before}
-					shimmer={statusSegments.shimmer}
-					after={statusSegments.after}
+					statusText={statusText}
+					statusMode={statusMode}
 					startedAtMs={loadingStartTimeRef.current}
 					toolCount={streamingAssistant.pendingToolCalls.length}
-				/>
-			) : null}
-
-			{activeToolUseConfirm && isFullscreenEnvEnabled() ? (
-				<PermissionRequest
-					key={activeToolUseConfirm.toolUseID}
-					onDone={shiftToolUseConfirmQueue}
-					onReject={handlePermissionReject}
-					toolUseConfirm={activeToolUseConfirm}
-					toolUseContext={activeToolUseConfirm.toolUseContext}
-					verbose={false}
-					workerBadge={undefined}
-					currentMessageCount={messages.length}
 				/>
 			) : null}
 
@@ -2881,7 +2858,7 @@ const getToolUseContext = useCallback(
 				width={messageWidth}
 				alertMessage={alertMessage}
 				statusLine={null}
-				blinkOn={blinkVisible}
+				blinkOn={false}
 			/>
 			{toolJSX && !(toolJSX.isLocalJSXCommand && toolJSX.isImmediate) ? (
 				<Box flexDirection="column" width="100%">
@@ -2891,31 +2868,25 @@ const getToolUseContext = useCallback(
 		</Box>
 	);
 
-	const nonFullscreenScrollableContent = (
-		<Box flexDirection="column">
-			{messages.length === 0 &&
-			nonFullscreenViewportMessages.length === 0 &&
-			!alertMessage ? (
-				<MessageViewport
-					headerLines={transcriptHeaderLines}
-					messages={[]}
-					width={messageWidth}
-					alertMessage={alertMessage}
-					statusLine={null}
-					blinkOn={blinkVisible}
-				/>
-			) : null}
-			{nonFullscreenViewportMessages.length > 0 || alertMessage ? (
-				<MessagesScrollback
-					headerLines={transcriptHeaderLines}
-					messages={nonFullscreenViewportMessages}
-					width={messageWidth}
-					alertMessage={alertMessage}
-					blinkOn={false}
-				/>
-			) : null}
-		</Box>
+	const transcriptMessageLimit = 30;
+	const hiddenTranscriptMessageCount = Math.max(
+		0,
+		viewportMessages.length - transcriptMessageLimit
 	);
+	const transcriptViewportMessages = isFullscreenEnvEnabled()
+		? viewportMessages
+		: [
+				...(hiddenTranscriptMessageCount > 0
+					? [
+							{
+								id: TURN_META_ID_BASE - 1,
+								role: 'meta' as const,
+								text: `… ${hiddenTranscriptMessageCount} earlier messages hidden`
+							}
+						]
+					: []),
+				...viewportMessages.slice(-transcriptMessageLimit)
+			];
 
 	const transcriptScrollableContent = (
 		<Box flexDirection="column" width="100%" paddingTop={1}>
@@ -2936,11 +2907,11 @@ const getToolUseContext = useCallback(
 				<Box width={transcriptColumnWidth}>
 					<MessageViewport
 						headerLines={[]}
-						messages={viewportMessages}
+						messages={transcriptViewportMessages}
 						width={transcriptColumnWidth}
 						alertMessage={alertMessage}
 						statusLine={null}
-						blinkOn={blinkVisible}
+						blinkOn={false}
 						variant="transcript"
 					/>
 				</Box>
@@ -2963,6 +2934,25 @@ const getToolUseContext = useCallback(
 		</Box>
 	);
 
+	const nonFullscreenTranscriptScrollableContent = (
+		<Box flexDirection="column">
+			<MessagesScrollback
+				headerLines={transcriptHeaderLines}
+				messages={viewportMessages}
+				width={messageWidth}
+				alertMessage={alertMessage}
+				blinkOn={false}
+				virtualScroll
+				scrollRef={scrollRef}
+			/>
+			{toolJSX && !(toolJSX.isLocalJSXCommand && toolJSX.isImmediate) ? (
+				<Box flexDirection="column" width="100%">
+					{toolJSX.jsx}
+				</Box>
+			) : null}
+		</Box>
+	);
+
 	if (isTranscriptMode) {
 		if (isFullscreenEnvEnabled()) {
 			return (
@@ -2971,19 +2961,32 @@ const getToolUseContext = useCallback(
 						scrollRef={scrollRef}
 						isActive
 					/>
-					<FullscreenLayout
-						scrollRef={scrollRef}
-						scrollable={transcriptScrollableContent}
-						bottom={transcriptBottom}
-					/>
+				<FullscreenLayout
+					scrollRef={scrollRef}
+					scrollable={transcriptScrollableContent}
+					bottom={transcriptBottom}
+				/>
 				</AlternateScreen>
 			);
 		}
 
 		return (
-			<Box flexDirection="column" paddingX={1} paddingY={0}>
-				{transcriptScrollableContent}
-				{transcriptBottom}
+			<Box
+				flexDirection="column"
+				paddingX={1}
+				paddingY={0}
+				height={terminalRows}
+				overflow="hidden"
+			>
+				<ScrollKeybindingHandler
+					scrollRef={scrollRef}
+					isActive
+				/>
+				<FullscreenLayout
+					scrollRef={scrollRef}
+					scrollable={nonFullscreenTranscriptScrollableContent}
+					bottom={transcriptBottom}
+				/>
 			</Box>
 		);
 	}
@@ -2998,6 +3001,7 @@ const getToolUseContext = useCallback(
 				<FullscreenLayout
 					scrollRef={scrollRef}
 					scrollable={scrollableContent}
+					overlay={toolPermissionOverlay}
 					bottom={bottomContent}
 				/>
 			</AlternateScreen>
@@ -3006,22 +3010,9 @@ const getToolUseContext = useCallback(
 
 	return (
 		<Box flexDirection="column" paddingX={1} paddingY={0}>
-			{nonFullscreenScrollableContent}
+			{scrollableContent}
 			{bottomContent}
-			{activeToolUseConfirm ? (
-				<Box position="absolute" bottom={0} left={0} right={0} opaque>
-					<PermissionRequest
-						key={activeToolUseConfirm.toolUseID}
-						onDone={shiftToolUseConfirmQueue}
-						onReject={handlePermissionReject}
-						toolUseConfirm={activeToolUseConfirm}
-						toolUseContext={activeToolUseConfirm.toolUseContext}
-						verbose={false}
-						workerBadge={undefined}
-						currentMessageCount={messages.length}
-					/>
-				</Box>
-			) : null}
+			{toolPermissionOverlay}
 		</Box>
 	);
 }

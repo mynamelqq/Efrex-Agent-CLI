@@ -69,6 +69,10 @@ export type ToolPermissionContext = DeepImmutable<{
 	/** Stores the permission mode before model-initiated plan mode entry, so it can be restored on exit */
 	prePlanMode?: PermissionMode;
 }>;
+export type CompletedTurnFooter = {
+	afterMessageCount: number;
+	text: string;
+};
 export type ToolResult<T> = {
 	type?: string;
 	data: T;
@@ -125,6 +129,8 @@ export type ToolUseContext = {
 	onCompactProgress?: (event: CompactProgressEvent) => void;
 	messages: Message[];
 	setToolJSX?: SetToolJSXFn;
+	setCompletedTurnFooters?: (footers: CompletedTurnFooter[]) => void;
+	resetMainScroll?: () => void;
 };
 // Type for any schema that outputs an object with string keys
 export type AnyObject = z.ZodType<{ [key: string]: unknown }>;

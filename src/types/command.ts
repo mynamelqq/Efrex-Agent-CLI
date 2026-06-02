@@ -10,10 +10,10 @@ import { ToolUseContext } from '../Tool.js';
 
 export type LocalCommandResult =
   | { type: 'text'; value: string }
-  | {
-      type: 'compact'
-      displayText?: string
-    }
+  // | {
+  //     type: 'compact'
+  //     displayText?: string
+  //   }
   | { type: 'skip' } // Skip messages
 
 export type PromptCommand = {

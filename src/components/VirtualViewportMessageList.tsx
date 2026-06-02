@@ -1,67 +1,67 @@
-import React, { type RefObject } from 'react';
-import chalk from 'chalk';
+import React from 'react';
 import { Box, Text } from '../ink.js';
 import type { ScrollBoxHandle } from '../ink/components/ScrollBox.js';
-import { stringWidth } from '../ink/stringWidth.js';
 import type { ViewportMessage } from './MessageViewport.js';
-import MarkdownText from './MarkdownText.js';
+import { InVirtualListContext } from './messageActions.js';
+import { useVirtualScroll } from '../hooks/useVirtualScroll.js';
 import { OffscreenFreeze } from './OffscreenFreeze.js';
-import MessageHeader from './MessageHeader.js';
-import VirtualViewportMessageList from './VirtualViewportMessageList.js';
+import { stringWidth } from '../ink/stringWidth.js';
+import chalk from 'chalk';
+import MarkdownText from './MarkdownText.js';
 
 type Props = {
-	headerLines?: string[];
 	messages: ViewportMessage[];
 	width: number;
-	alertMessage?: string | null;
+	scrollRef: React.RefObject<ScrollBoxHandle | null>;
 	blinkOn?: boolean;
-	virtualScroll?: boolean;
-	scrollRef?: RefObject<ScrollBoxHandle | null>;
 };
 
 const USER_MESSAGE_BG = '#2e2f30';
 const USER_MESSAGE_FG = '#f0f0ea';
 const ASSISTANT_BRAND = '#23d3b6';
 
-export default React.memo(function MessagesScrollback({
-	headerLines,
+export default React.memo(function VirtualViewportMessageList({
 	messages,
 	width,
-	alertMessage,
-	blinkOn = false,
-	virtualScroll = false,
-	scrollRef
-}: Props) {
-	return (
-		<Box flexDirection="column" flexShrink={0} width="100%">
-			<MessageHeader lines={headerLines} />
-			{alertMessage ? <Text color="redBright">错误: {alertMessage}</Text> : null}
-			{virtualScroll && scrollRef ? (
-				<VirtualViewportMessageList
-					messages={messages}
-					width={width}
-					scrollRef={scrollRef}
-					blinkOn={blinkOn}
-				/>
-			) : (
-				messages.map((message, index) => (
-					<OffscreenFreeze key={`${message.id}-${index}`}>
-						<Box flexDirection="column" width="100%">
-							{shouldInsertSpacer(messages[index - 1], message) ? <Text>{' '}</Text> : null}
-							{renderMessageRow(message, width, blinkOn)}
-						</Box>
-					</OffscreenFreeze>
-				))
-			)}
-		</Box>
+	scrollRef,
+	blinkOn = false
+}: Props): React.ReactNode {
+	const itemKeys = React.useMemo(
+		() => messages.map((message, index) => `${message.id}-${index}`),
+		[messages]
 	);
-}, (prev, next) =>
-	prev.messages === next.messages &&
-	prev.width === next.width &&
-	prev.alertMessage === next.alertMessage &&
-	prev.headerLines === next.headerLines
-	// blinkOn intentionally omitted — only affects streaming cursor animation
-);
+	const { range, topSpacer, bottomSpacer, measureRef, spacerRef } =
+		useVirtualScroll(scrollRef, itemKeys, width);
+	const [start, end] = range;
+
+	return (
+		<InVirtualListContext.Provider value={true}>
+			<Box flexDirection="column" flexShrink={0} width="100%">
+				<Box ref={spacerRef} flexDirection="column" flexShrink={0} height={topSpacer} />
+				{messages.slice(start, end).map((message, offset) => {
+					const index = start + offset;
+					const previous = messages[index - 1];
+					return (
+						<Box
+							key={itemKeys[index]}
+							ref={measureRef(itemKeys[index]!)}
+							flexDirection="column"
+							width="100%"
+						>
+							{shouldInsertSpacer(previous, message) ? <Text>{' '}</Text> : null}
+							<OffscreenFreeze>
+								<Box flexDirection="column" width="100%">
+									{renderMessageRow(message, width, blinkOn)}
+								</Box>
+							</OffscreenFreeze>
+						</Box>
+					);
+				})}
+				<Box flexDirection="column" flexShrink={0} height={bottomSpacer} />
+			</Box>
+		</InVirtualListContext.Provider>
+	);
+});
 
 function shouldInsertSpacer(
 	previousMessage: ViewportMessage | undefined,
@@ -79,11 +79,7 @@ function shouldInsertSpacer(
 		return false;
 	}
 
-	if (previousMessage.role === 'meta') {
-		return false;
-	}
-
-	return true;
+	return previousMessage.role !== 'meta';
 }
 
 function renderMessageRow(
@@ -91,7 +87,10 @@ function renderMessageRow(
 	width: number,
 	blinkOn: boolean
 ): React.ReactNode {
-	if (isCompactBoundaryViewportMessage(message)) {
+	if (
+		message.role === 'assistant' &&
+		message.text.trim() === 'Conversation compacted'
+	) {
 		return (
 			<Box marginY={1}>
 				<Text dimColor>✻ Conversation compacted (Ctrl+O for history)</Text>
@@ -180,13 +179,6 @@ function renderMessageRow(
 				)}
 			</Box>
 		</Box>
-	);
-}
-
-function isCompactBoundaryViewportMessage(message: ViewportMessage): boolean {
-	return (
-		message.role === 'assistant' &&
-		message.text.trim() === 'Conversation compacted'
 	);
 }
 

@@ -121,18 +121,21 @@ export default function createRenderer(
     // would copy stale inverted cells / blanks / nothing. When clean, blit
     // restores the O(unchanged) fast path for steady-state frames (spinner
     // tick, text stream).
-    // Removing an absolute-positioned node poisons prevScreen: it may
-    // have painted over non-siblings (e.g. an overlay over a ScrollBox
-    // earlier in tree order), so their blits would restore the removed
-    // node's pixels. hasRemovedChild only shields direct siblings.
-    // Normal-flow removals don't paint cross-subtree and are fine.
-    const absoluteRemoved = consumeAbsoluteRemovedFlag()
-    renderNodeToOutput(node, output, {
-      prevScreen:
-        absoluteRemoved || options.prevFrameContaminated
-          ? undefined
-          : prevScreen,
-    })
+		// Removing an absolute-positioned node can poison prevScreen: it may
+		// have painted over non-siblings (e.g. an overlay over a ScrollBox
+		// earlier in tree order), so their blits would restore the removed
+		// node's pixels. On the main screen, treating that as a root-level
+		// full repaint is worse: VS Code pushes the old frame into scrollback
+		// and the user sees duplicated pages. Keep the conservative fallback
+		// for alt-screen, but let main-screen rely on targeted pending clears.
+		const absoluteRemoved = consumeAbsoluteRemovedFlag()
+		renderNodeToOutput(node, output, {
+			prevScreen:
+				(options.altScreen && absoluteRemoved) ||
+				options.prevFrameContaminated
+					? undefined
+					: prevScreen,
+		})
 
     const renderedScreen = output.get()
 

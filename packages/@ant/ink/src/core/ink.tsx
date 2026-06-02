@@ -76,6 +76,7 @@ import {
   ENABLE_MODIFY_OTHER_KEYS,
   ERASE_SCREEN,
 } from './termio/csi.js';
+import { getClearTerminalSequence } from './clearTerminal.js';
 import {
   DBP,
   DFE,
@@ -220,6 +221,10 @@ export default class Ink {
   // render() takes; deferring into the atomic block means old content stays
   // visible until the new frame is fully ready.
   private needsEraseBeforePaint = false;
+  // Set by explicit history resets such as /clear. The sequence is emitted
+  // together with the next committed frame so stale state cannot repaint
+  // between clearing the terminal and drawing the empty conversation.
+  private needsScrollbackClearBeforePaint = false;
   // Native cursor positioning: a component (via useDeclaredCursor) declares
   // where the terminal cursor should be parked after each frame. Terminal
   // emulators render IME preedit text at the physical cursor position, and
@@ -672,6 +677,16 @@ export default class Ink {
     // The CSI H write is deferred until after the diff is computed so we
     // can skip it for empty diffs (no writes → physical cursor unused).
     let prevFrame = this.frontFrame;
+    const shouldClearScrollback = this.needsScrollbackClearBeforePaint;
+    if (shouldClearScrollback) {
+      prevFrame = emptyFrame(
+        frame.viewport.height,
+        frame.viewport.width,
+        this.stylePool,
+        this.charPool,
+        this.hyperlinkPool,
+      );
+    }
     if (this.altScreenActive) {
       prevFrame = { ...this.frontFrame, cursor: ALT_SCREEN_ANCHOR_CURSOR };
     }
@@ -723,6 +738,13 @@ export default class Ink {
 
     const tOptimize = performance.now();
     const optimized = optimize(diff);
+    if (shouldClearScrollback && optimized.length > 0) {
+      this.needsScrollbackClearBeforePaint = false;
+      optimized.unshift({
+        type: 'stdout',
+        content: getClearTerminalSequence(),
+      });
+    }
     const optimizeMs = performance.now() - tOptimize;
     const hasDiff = optimized.length > 0;
     if (this.altScreenActive && hasDiff) {
@@ -953,6 +975,14 @@ export default class Ink {
    */
   invalidatePrevFrame(): void {
     this.prevFrameContaminated = true;
+  }
+
+  /**
+   * Clear native scrollback atomically with the next committed frame.
+   */
+  scheduleScrollbackClear(): void {
+    if (!this.options.stdout.isTTY || this.isUnmounted || this.isPaused) return;
+    this.needsScrollbackClearBeforePaint = true;
   }
 
   /**

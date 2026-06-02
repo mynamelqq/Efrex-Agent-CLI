@@ -359,87 +359,86 @@ async function getMessagesForSlashCommand(
             });
         });
       }
-      // case 'local': {
-      //   const displayArgs = command.isSensitive && args.trim() ? '***' : args;
-      //   const userMessage = createUserMessage({
-      //     content: prepareUserContent({
-      //       inputString: formatCommandInput(command, displayArgs),
-      //       precedingInputBlocks,
-      //     }),
-      //   });
+      case 'local': {
+        const displayArgs = command.isSensitive && args.trim() ? '***' : args;
+        const userMessage = createUserMessage({
+          content: prepareUserContent({
+            inputString: formatCommandInput(command, displayArgs),
+            precedingInputBlocks,
+          }),
+        });
 
-      //   try {
-      //     const syntheticCaveatMessage = createSyntheticUserCaveatMessage();
-      //     const mod = await command.load();
-      //     const result = await mod.call(args, context);
+        try {
+          const syntheticCaveatMessage = createSyntheticUserCaveatMessage();
+          const mod = await command.load();
+          const result = await mod.call(args, context);
+          if (result.type === 'skip') {
+            return {
+              messages: [],
+              shouldQuery: false,
+              command,
+            };
+          }
 
-      //     if (result.type === 'skip') {
-      //       return {
-      //         messages: [],
-      //         shouldQuery: false,
-      //         command,
-      //       };
-      //     }
+          // Use discriminated union to handle different result types
+          // if (result.type === 'compact') {
+          //   // Append slash command messages to messagesToKeep so that
+          //   // attachments and hookResults come after user messages
+          //   const slashCommandMessages = [
+          //     syntheticCaveatMessage,
+          //     userMessage,
+          //     ...(result.displayText
+          //       ? [
+          //           createUserMessage({
+          //             content: `<local-command-stdout>${result.displayText}</local-command-stdout>`,
+          //             // --resume looks at latest timestamp message to determine which message to resume from
+          //             // This is a perf optimization to avoid having to recaculcate the leaf node every time
+          //             // Since we're creating a bunch of synthetic messages for compact, it's important to set
+          //             // the timestamp of the last message to be slightly after the current time
+          //             // This is mostly important for sdk / -p mode
+          //             timestamp: new Date(Date.now() + 100).toISOString(),
+          //           }),
+          //         ]
+          //       : []),
+          //   ];
+          //   const compactionResultWithSlashMessages = {
+          //     ...result.compactionResult,
+          //     messagesToKeep: [...(result.compactionResult.messagesToKeep ?? []), ...slashCommandMessages],
+          //   };
+          //   // Reset microcompact state since full compact replaces all
+          //   // messages — old tool IDs are no longer relevant. Budget state
+          //   // (on toolUseContext) needs no reset: stale entries are inert
+          //   // (UUIDs never repeat, so they're never looked up).
+          //   resetMicrocompactState();
+          //   return {
+          //     messages: buildPostCompactMessages(compactionResultWithSlashMessages) as AssistantMessage[],
+          //     shouldQuery: false,
+          //     command,
+          //   };
+          // }
 
-      //     // Use discriminated union to handle different result types
-      //     if (result.type === 'compact') {
-      //       // Append slash command messages to messagesToKeep so that
-      //       // attachments and hookResults come after user messages
-      //       const slashCommandMessages = [
-      //         syntheticCaveatMessage,
-      //         userMessage,
-      //         ...(result.displayText
-      //           ? [
-      //               createUserMessage({
-      //                 content: `<local-command-stdout>${result.displayText}</local-command-stdout>`,
-      //                 // --resume looks at latest timestamp message to determine which message to resume from
-      //                 // This is a perf optimization to avoid having to recaculcate the leaf node every time
-      //                 // Since we're creating a bunch of synthetic messages for compact, it's important to set
-      //                 // the timestamp of the last message to be slightly after the current time
-      //                 // This is mostly important for sdk / -p mode
-      //                 timestamp: new Date(Date.now() + 100).toISOString(),
-      //               }),
-      //             ]
-      //           : []),
-      //       ];
-      //       const compactionResultWithSlashMessages = {
-      //         ...result.compactionResult,
-      //         messagesToKeep: [...(result.compactionResult.messagesToKeep ?? []), ...slashCommandMessages],
-      //       };
-      //       // Reset microcompact state since full compact replaces all
-      //       // messages — old tool IDs are no longer relevant. Budget state
-      //       // (on toolUseContext) needs no reset: stale entries are inert
-      //       // (UUIDs never repeat, so they're never looked up).
-      //       resetMicrocompactState();
-      //       return {
-      //         messages: buildPostCompactMessages(compactionResultWithSlashMessages) as AssistantMessage[],
-      //         shouldQuery: false,
-      //         command,
-      //       };
-      //     }
-
-      //     // Text result — use system message so it doesn't render as a user bubble
-      //     return {
-      //       messages: [
-      //         userMessage,
-      //         createCommandInputMessage(`<local-command-stdout>${result.value}</local-command-stdout>`),
-      //       ],
-      //       shouldQuery: false,
-      //       command,
-      //       resultText: result.value,
-      //     };
-      //   } catch (e) {
-      //     logError(e);
-      //     return {
-      //       messages: [
-      //         userMessage,
-      //         createCommandInputMessage(`<local-command-stderr>${String(e)}</local-command-stderr>`),
-      //       ],
-      //       shouldQuery: false,
-      //       command,
-      //     };
-      //   }
-      // }
+          // Text result — use system message so it doesn't render as a user bubble
+          return {
+            messages: [
+              userMessage,
+              createCommandInputMessage(`<local-command-stdout>${result.value}</local-command-stdout>`),
+            ],
+            shouldQuery: false,
+            command,
+            resultText: result.value,
+          };
+        } catch (e) {
+          logError(e);
+          return {
+            messages: [
+              userMessage,
+              createCommandInputMessage(`<local-command-stderr>${String(e)}</local-command-stderr>`),
+            ],
+            shouldQuery: false,
+            command,
+          };
+        }
+      }
     }
   } catch (e) {
     if (e instanceof MalformedCommandError) {

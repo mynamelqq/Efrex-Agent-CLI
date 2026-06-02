@@ -10,8 +10,10 @@ import type { ScrollBoxHandle } from '../ink/components/ScrollBox.js';
 import ScrollBox from '../ink/components/ScrollBox.js';
 
 type Props = {
+	top?: ReactNode;
 	scrollable: ReactNode;
 	bottom: ReactNode;
+	overlay?: ReactNode;
 	scrollRef?: RefObject<ScrollBoxHandle | null>;
 };
 
@@ -85,12 +87,19 @@ function Scrollbar({
 }
 
 export function FullscreenLayout({
+	top,
 	scrollable,
 	bottom,
+	overlay,
 	scrollRef
 }: Props): React.ReactNode {
 	return (
 		<Box flexDirection="column" height="100%" width="100%" overflow="hidden">
+			{top ? (
+				<Box flexDirection="column" flexShrink={0} width="100%">
+					{top}
+				</Box>
+			) : null}
 			<Box
 				flexDirection="row"
 				flexGrow={1}
@@ -110,6 +119,11 @@ export function FullscreenLayout({
 					</ScrollBox>
 				</Box>
 				<Scrollbar scrollRef={scrollRef} />
+				{overlay ? (
+					<Box position="absolute" bottom={0} left={0} right={1} opaque>
+						{overlay}
+					</Box>
+				) : null}
 			</Box>
 			<Box flexDirection="column" flexShrink={0}>
 				{bottom}

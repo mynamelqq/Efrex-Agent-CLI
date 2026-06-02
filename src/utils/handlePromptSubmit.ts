@@ -182,6 +182,17 @@ export async function handlePromptSubmit(
     bridgeOrigin,
     uuid,
   }
+
+  // Direct submits should clear the live input UI immediately. Some local
+  // slash commands, such as /clear, intentionally return no messages and do
+  // not flow through onQuery(), so waiting for the query path leaves stale
+  // prompt text and slash-menu state on screen.
+  clearInput('')
+  setCursorOffset(0)
+  setPastedContents({})
+  resetHistory()
+  clearBuffer()
+
   await executeUserInput({
     queuedCommands: [cmd],
     messages,
