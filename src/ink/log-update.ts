@@ -21,6 +21,7 @@ import {
 } from './screen.js'
 import {
   CURSOR_HOME,
+  ERASE_LINE,
   scrollDown as csiScrollDown,
   scrollUp as csiScrollUp,
   RESET_SCROLL_REGION,
@@ -62,7 +63,7 @@ export class LogUpdate {
     this.state.previousOutput = ''
   }
 
-  private renderFullFrame(frame: Frame): Diff {
+  private stringifyFullFrame(frame: Frame): string {
     const { screen } = frame
     const lines: string[] = []
     let currentStyles: AnsiCode[] = []
@@ -105,10 +106,15 @@ export class LogUpdate {
       lines.push(line.trimEnd())
     }
 
-    if (lines.length === 0) {
+    return lines.join('\n')
+  }
+
+  private renderFullFrame(frame: Frame): Diff {
+    const content = this.stringifyFullFrame(frame)
+    if (content.length === 0) {
       return []
     }
-    return [{ type: 'stdout', content: lines.join('\n') }]
+    return [{ type: 'stdout', content }]
   }
 
   private getRenderOpsForDone(prev: Frame): Diff {
@@ -128,6 +134,24 @@ export class LogUpdate {
   ): Diff {
     if (!this.options.isTTY) {
       return this.renderFullFrame(next)
+    }
+
+    // Main-screen startup can remount from an empty frame several times while
+    // React/Ink finishes its initial commit cycle. In that case the terminal
+    // would receive the same full welcome screen repeatedly, because each pass
+    // looks like a fresh "grow from empty" render. Cache the last full-frame
+    // text and skip identical empty-frame replays.
+    if (!altScreen && prev.screen.width === 0 && prev.screen.height === 0) {
+      const nextOutput = this.stringifyFullFrame(next)
+      if (
+        nextOutput.length > 0 &&
+        nextOutput === this.state.previousOutput
+      ) {
+        return []
+      }
+      this.state.previousOutput = nextOutput
+    } else if (!altScreen && next.screen.height === 0) {
+      this.state.previousOutput = ''
     }
 
     const startTime = performance.now()
@@ -417,36 +441,13 @@ export class LogUpdate {
     // CSI H (see ink.tsx onRender) which resets to (0,0) regardless. This
     // saves a CR + cursorMove round-trip (~6-10 bytes) every frame.
     //
-    // Main screen: if cursor needs to be past the last line of content
-    // (typical: cursor.y = screen.height), emit \n to create that line
-    // since cursor movement can't create new lines.
     if (altScreen) {
       // no-op; next frame's CSI H anchors cursor
-    } else if (next.cursor.y >= next.screen.height) {
-      // Move to column 0 of current line, then emit newlines to reach target row
-      screen.txn(prev => {
-        const rowsToCreate = next.cursor.y - prev.y
-        if (rowsToCreate > 0) {
-          // Use CR to resolve pending wrap (if any) without advancing
-          // to the next line, then LF to create each new row.
-          const patches: Diff = new Array<Diff[number]>(1 + rowsToCreate)
-          patches[0] = CARRIAGE_RETURN
-          for (let i = 0; i < rowsToCreate; i++) {
-            patches[1 + i] = NEWLINE
-          }
-          return [patches, { dx: -prev.x, dy: rowsToCreate }]
-        }
-        // At or past target row - need to move cursor to correct position
-        const dy = next.cursor.y - prev.y
-        if (dy !== 0 || prev.x !== next.cursor.x) {
-          // Use CR to clear pending wrap (if any), then cursor move
-          const patches: Diff = [CARRIAGE_RETURN]
-          patches.push({ type: 'cursorMove', x: next.cursor.x, y: dy })
-          return [patches, { dx: next.cursor.x - prev.x, dy }]
-        }
-        return [[], { dx: 0, dy: 0 }]
-      })
     } else {
+      // Growth already creates new terminal rows in renderFrameSlice().
+      // Restoring the cursor after in-place edits must only navigate through
+      // existing rows. Emitting LF here on a steady-state frame pushes the
+      // main screen into native scrollback on every animation tick.
       moveCursorTo(screen, next.cursor.x, next.cursor.y)
     }
 
@@ -505,16 +506,173 @@ function fullResetSequence_CAUSES_FLICKER(
 ): Diff {
   // After clearTerminal, cursor is at (0, 0)
   const screen = new VirtualScreen({ x: 0, y: 0 }, frame.viewport.width)
-  renderFrame(screen, frame, stylePool)
+  if (frame.screen.height <= frame.viewport.height) {
+    renderFrameInViewport(screen, frame, stylePool)
+  } else {
+    renderVisibleFrameViewport(screen, frame, stylePool)
+  }
   return [{ type: 'clearTerminal', reason, debug }, ...screen.diff]
 }
 
-function renderFrame(
+/**
+ * Repaint only the currently visible main-screen rows after a full reset.
+ *
+ * The terminal scrollback already contains the rows above this slice. Replaying
+ * the full React screen would append that history again in terminals such as
+ * VS Code's integrated terminal. Paint with cursor movement only: LF would
+ * scroll the visible page into history again.
+ */
+function renderVisibleFrameViewport(
   screen: VirtualScreen,
   frame: Frame,
   stylePool: StylePool,
 ): void {
-  renderFrameSlice(screen, frame, 0, frame.screen.height, stylePool)
+  const visibleContentRows = Math.max(0, frame.viewport.height - 1)
+  const startY = Math.max(0, frame.screen.height - visibleContentRows)
+  renderFrameSliceAtViewportTop(
+    screen,
+    frame,
+    startY,
+    frame.screen.height,
+    stylePool,
+  )
+  parkAfterViewportPaint(screen, frame, startY)
+}
+
+function renderFrameSliceAtViewportTop(
+  screen: VirtualScreen,
+  frame: Frame,
+  startY: number,
+  endY: number,
+  stylePool: StylePool,
+): void {
+  let currentStyleId = stylePool.none
+  let currentHyperlink: Hyperlink = undefined
+  let lastRenderedStyleId = -1
+
+  const { width: screenWidth, cells, charPool, hyperlinkPool } = frame.screen
+  let index = startY * screenWidth
+
+  for (let sourceY = startY; sourceY < endY; sourceY += 1) {
+    const viewportY = sourceY - startY
+    lastRenderedStyleId = -1
+
+    for (let x = 0; x < screenWidth; x += 1, index += 1) {
+      const cell = visibleCellAtIndex(
+        cells,
+        charPool,
+        hyperlinkPool,
+        index,
+        lastRenderedStyleId,
+      )
+      if (!cell) {
+        continue
+      }
+
+      moveCursorTo(screen, x, viewportY)
+      currentHyperlink = transitionHyperlink(
+        screen.diff,
+        currentHyperlink,
+        cell.hyperlink,
+      )
+
+      const styleStr = stylePool.transition(currentStyleId, cell.styleId)
+      if (writeCellWithStyleStr(screen, cell, styleStr)) {
+        currentStyleId = cell.styleId
+        lastRenderedStyleId = cell.styleId
+      }
+    }
+
+    currentStyleId = transitionStyle(
+      screen.diff,
+      stylePool,
+      currentStyleId,
+      stylePool.none,
+    )
+    currentHyperlink = transitionHyperlink(
+      screen.diff,
+      currentHyperlink,
+      undefined,
+    )
+  }
+
+  transitionStyle(screen.diff, stylePool, currentStyleId, stylePool.none)
+  transitionHyperlink(screen.diff, currentHyperlink, undefined)
+}
+
+function renderFrameInViewport(
+  screen: VirtualScreen,
+  frame: Frame,
+  stylePool: StylePool,
+): void {
+  let currentStyleId = stylePool.none
+  let currentHyperlink: Hyperlink = undefined
+  let lastRenderedStyleId = -1
+
+  const { width: screenWidth, cells, charPool, hyperlinkPool } = frame.screen
+  let index = 0
+
+  for (let y = 0; y < frame.screen.height; y += 1) {
+    lastRenderedStyleId = -1
+
+    for (let x = 0; x < screenWidth; x += 1, index += 1) {
+      const cell = visibleCellAtIndex(
+        cells,
+        charPool,
+        hyperlinkPool,
+        index,
+        lastRenderedStyleId,
+      )
+      if (!cell) {
+        continue
+      }
+
+      moveCursorTo(screen, x, y)
+
+      currentHyperlink = transitionHyperlink(
+        screen.diff,
+        currentHyperlink,
+        cell.hyperlink,
+      )
+
+      const styleStr = stylePool.transition(currentStyleId, cell.styleId)
+      if (writeCellWithStyleStr(screen, cell, styleStr)) {
+        currentStyleId = cell.styleId
+        lastRenderedStyleId = cell.styleId
+      }
+    }
+
+    currentStyleId = transitionStyle(
+      screen.diff,
+      stylePool,
+      currentStyleId,
+      stylePool.none,
+    )
+    currentHyperlink = transitionHyperlink(
+      screen.diff,
+      currentHyperlink,
+      undefined,
+    )
+  }
+
+  parkAfterViewportPaint(screen, frame, 0)
+}
+
+function parkAfterViewportPaint(
+  screen: VirtualScreen,
+  frame: Frame,
+  sourceStartY: number,
+): void {
+  const physicalY = Math.max(
+    0,
+    Math.min(frame.viewport.height - 1, frame.cursor.y - sourceStartY),
+  )
+  moveCursorTo(screen, frame.cursor.x, physicalY)
+
+  // The physical cursor is parked inside the visible viewport, while future
+  // diffs use coordinates in the full React screen. Relative movement stays
+  // correct as long as we resume from the corresponding logical position.
+  screen.cursor = { ...frame.cursor }
 }
 
 /**
@@ -555,6 +713,13 @@ function renderFrameSlice(
         return [patches, { dx: -prev.x, dy: rowsToAdvance }]
       })
     }
+    // A line exposed by LF scrolling may still contain terminal pixels from
+    // the previous viewport. Sparse rendering intentionally skips blank
+    // cells, so clear the new row before painting its visible cells.
+    screen.txn(prev => [
+      [CARRIAGE_RETURN, { type: 'stdout', content: ERASE_LINE }],
+      { dx: -prev.x, dy: 0 },
+    ])
     // Reset at start of each line — no cell rendered yet
     lastRenderedStyleId = -1
 

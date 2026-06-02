@@ -1,7 +1,17 @@
-import {isEnvTruthy} from './envUtils.js';
+import { isEnvDefinedFalsy, isEnvTruthy } from './envUtils.js';
+
+
 
 export function isFullscreenEnvEnabled(): boolean {
-  return isEnvTruthy(process.env.EFREX_FULLSCREEN);
+  if (isEnvTruthy(process.env.EFREX_FULLSCREEN)) {
+    return true
+  }
+
+  if (isEnvDefinedFalsy(process.env.EFREX_FULLSCREEN)) {
+    return false
+  }
+
+  return false
 }
 
 export function isMouseClicksDisabled(): boolean {

@@ -406,12 +406,12 @@ export default function MarkdownText({
               </Text>
             );
           case 'code':
-            return <CodeBlock key={index} language={block.language} lines={block.lines} />;
+            return <CodeBlock key={index} language={block.language} lines={block.lines} theme={markdownTheme} />;
           case 'quote':
             return (
               <Box key={index} flexDirection="row">
                 <Text color={markdownTheme.quote}>│ </Text>
-                <Text color={markdownTheme.quote} wrap="wrap">{renderInline(block.text)}</Text>
+                <Text color={markdownTheme.quote} wrap="wrap">{renderInline(block.text, markdownTheme)}</Text>
               </Box>
             );
           case 'list':

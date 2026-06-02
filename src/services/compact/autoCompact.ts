@@ -119,7 +119,6 @@ export async function autoCompactIfNeeded(
   )
 
   if (!shouldCompact) {
-
     return { wasCompacted: false }
   }
 

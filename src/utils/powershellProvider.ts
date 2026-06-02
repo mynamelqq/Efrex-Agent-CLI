@@ -58,7 +58,11 @@ export function createPowerShellProvider(shellPath: string): ShellProvider {
       // exit code (was 0 — old logic only looked at $? which the trailing
       // cmdlet set true). Both rarer than the git/npm/curl stderr case.
       const cwdTracking = `\n; $_ec = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } elseif ($?) { 0 } else { 1 }\n; (Get-Location).Path | Out-File -FilePath '${escapedCwdFilePath}' -Encoding utf8 -NoNewline\n; exit $_ec`
-      const psCommand = command + cwdTracking//跨 session 维护 CWD
+      // Flush PowerShell's formatting pipeline before cwd tracking calls
+      // `exit`. Without Out-Default, object output from commands such as
+      // `Get-ChildItem | Select-Object` can be discarded before it is written.
+      // Dot-sourcing keeps stateful commands such as Set-Location in scope.
+      const psCommand = `. {\n${command}\n} | Out-Default${cwdTracking}`//跨 session 维护 CWD
 
       // Sandbox wraps the returned commandString as `<binShell> -c '<cmd>'` —
       // hardcoded `-c`, no way to inject -NoProfile -NonInteractive. So for

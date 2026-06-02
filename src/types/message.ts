@@ -1,242 +1,11 @@
 // File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
 
-import { AnthropicError } from '../../../error';
-import { Anthropic } from '../../../client';
-import { APIPromise } from '../../../core/api-promise';
-import { APIResource } from '../../../core/resource';
-import { Stream } from '../../../core/streaming';
-import { MODEL_NONSTREAMING_TOKENS } from '../../../internal/constants';
-import { buildHeaders } from '../../../internal/headers';
-import { RequestOptions } from '../../../internal/request-options';
-import { stainlessHelperHeader } from '../../../lib/stainless-helper-header';
-import {
-  parseBetaMessage,
-  type ExtractParsedContentFromBetaParams,
-  type ParsedBetaMessage,
-} from '../../../lib/beta-parser';
-import { BetaMessageStream } from '../../../lib/BetaMessageStream';
-import {
-  BetaToolRunner,
-  BetaToolRunnerParams,
-  BetaToolRunnerRequestOptions,
-} from '../../../lib/tools/BetaToolRunner';
-import { ToolError } from '../../../lib/tools/ToolError';
-import type { Model } from '../../messages/messages';
-import * as BetaMessagesAPI from './messages';
-import * as MessagesAPI from '../../messages/messages';
-import * as BetaAPI from '../beta';
-import * as BatchesAPI from './batches';
+
 import { Message } from 'src/package/message';
-import {
-  BatchCancelParams,
-  BatchCreateParams,
-  BatchDeleteParams,
-  BatchListParams,
-  BatchResultsParams,
-  BatchRetrieveParams,
-  Batches,
-  BetaDeletedMessageBatch,
-  BetaMessageBatch,
-  BetaMessageBatchCanceledResult,
-  BetaMessageBatchErroredResult,
-  BetaMessageBatchExpiredResult,
-  BetaMessageBatchIndividualResponse,
-  BetaMessageBatchRequestCounts,
-  BetaMessageBatchResult,
-  BetaMessageBatchSucceededResult,
-  BetaMessageBatchesPage,
-} from './batches';
 
-const DEPRECATED_MODELS: {
-  [K in Model]?: string;
-} = {
-  'claude-1.3': 'November 6th, 2024',
-  'claude-1.3-100k': 'November 6th, 2024',
-  'claude-instant-1.1': 'November 6th, 2024',
-  'claude-instant-1.1-100k': 'November 6th, 2024',
-  'claude-instant-1.2': 'November 6th, 2024',
-  'claude-3-sonnet-20240229': 'July 21st, 2025',
-  'claude-3-opus-20240229': 'January 5th, 2026',
-  'claude-2.1': 'July 21st, 2025',
-  'claude-2.0': 'July 21st, 2025',
-  'claude-3-7-sonnet-latest': 'February 19th, 2026',
-  'claude-3-7-sonnet-20250219': 'February 19th, 2026',
-};
 
-const MODELS_TO_WARN_WITH_THINKING_ENABLED: Model[] = ['claude-opus-4-6'];
 
-export class Messages extends APIResource {
-  batches: BatchesAPI.Batches = new BatchesAPI.Batches(this._client);
 
-  /**
-   * Send a structured list of input messages with text and/or image content, and the
-   * model will generate the next message in the conversation.
-   *
-   * The Messages API can be used for either single queries or stateless multi-turn
-   * conversations.
-   *
-   * Learn more about the Messages API in our
-   * [user guide](https://docs.claude.com/en/docs/initial-setup)
-   *
-   * @example
-   * ```ts
-   * const betaMessage = await client.beta.messages.create({
-   *   max_tokens: 1024,
-   *   messages: [{ content: 'Hello, world', role: 'user' }],
-   *   model: 'claude-opus-4-6',
-   * });
-   * ```
-   */
-  create(params: MessageCreateParamsNonStreaming, options?: RequestOptions): APIPromise<BetaMessage>;
-  create(
-    params: MessageCreateParamsStreaming,
-    options?: RequestOptions,
-  ): APIPromise<Stream<BetaRawMessageStreamEvent>>;
-  create(
-    params: MessageCreateParamsBase,
-    options?: RequestOptions,
-  ): APIPromise<Stream<BetaRawMessageStreamEvent> | BetaMessage>;
-  create(
-    params: MessageCreateParams,
-    options?: RequestOptions,
-  ): APIPromise<BetaMessage> | APIPromise<Stream<BetaRawMessageStreamEvent>> {
-    // Transform deprecated output_format to output_config.format
-    const modifiedParams = transformOutputFormat(params);
-
-    const { betas, ...body } = modifiedParams;
-
-    if (body.model in DEPRECATED_MODELS) {
-      console.warn(
-        `The model '${body.model}' is deprecated and will reach end-of-life on ${
-          DEPRECATED_MODELS[body.model]
-        }\nPlease migrate to a newer model. Visit https://docs.anthropic.com/en/docs/resources/model-deprecations for more information.`,
-      );
-    }
-
-    if (
-      body.model in MODELS_TO_WARN_WITH_THINKING_ENABLED &&
-      body.thinking &&
-      body.thinking.type === 'enabled'
-    ) {
-      console.warn(
-        `Using Claude with ${body.model} and 'thinking.type=enabled' is deprecated. Use 'thinking.type=adaptive' instead which results in better model performance in our testing: https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking`,
-      );
-    }
-
-    let timeout = (this._client as any)._options.timeout as number | null;
-    if (!body.stream && timeout == null) {
-      const maxNonstreamingTokens = MODEL_NONSTREAMING_TOKENS[body.model] ?? undefined;
-      timeout = this._client.calculateNonstreamingTimeout(body.max_tokens, maxNonstreamingTokens);
-    }
-
-    // Collect helper info from tools and messages
-    const helperHeader = stainlessHelperHeader(body.tools, body.messages);
-
-    return this._client.post('/v1/messages?beta=true', {
-      body,
-      timeout: timeout ?? 600000,
-      ...options,
-      headers: buildHeaders([
-        { ...(betas?.toString() != null ? { 'anthropic-beta': betas?.toString() } : undefined) },
-        helperHeader,
-        options?.headers,
-      ]),
-      stream: modifiedParams.stream ?? false,
-    }) as APIPromise<BetaMessage> | APIPromise<Stream<BetaRawMessageStreamEvent>>;
-  }
-
-  /**
-   * Send a structured list of input messages with text and/or image content, along with an expected `output_format` and
-   * the response will be automatically parsed and available in the `parsed_output` property of the message.
-   *
-   * @example
-   * ```ts
-   * const message = await client.beta.messages.parse({
-   *   model: 'claude-3-5-sonnet-20241022',
-   *   max_tokens: 1024,
-   *   messages: [{ role: 'user', content: 'What is 2+2?' }],
-   *   output_format: zodOutputFormat(z.object({ answer: z.number() }), 'math'),
-   * });
-   *
-   * console.log(message.parsed_output?.answer); // 4
-   * ```
-   */
-  parse<Params extends MessageCreateParamsNonStreaming>(
-    params: Params,
-    options?: RequestOptions,
-  ): APIPromise<ParsedBetaMessage<ExtractParsedContentFromBetaParams<Params>>> {
-    options = {
-      ...options,
-      headers: buildHeaders([
-        { 'anthropic-beta': [...(params.betas ?? []), 'structured-outputs-2025-12-15'].toString() },
-        options?.headers,
-      ]),
-    };
-
-    return this.create(params, options).then((message) =>
-      parseBetaMessage(message, params, { logger: this._client.logger ?? console }),
-    ) as APIPromise<ParsedBetaMessage<ExtractParsedContentFromBetaParams<Params>>>;
-  }
-
-  /**
-   * Create a Message stream
-   */
-  stream<Params extends BetaMessageStreamParams>(
-    body: Params,
-    options?: RequestOptions,
-  ): BetaMessageStream<ExtractParsedContentFromBetaParams<Params>> {
-    return BetaMessageStream.createMessage(this, body, options);
-  }
-
-  /**
-   * Count the number of tokens in a Message.
-   *
-   * The Token Count API can be used to count the number of tokens in a Message,
-   * including tools, images, and documents, without creating it.
-   *
-   * Learn more about token counting in our
-   * [user guide](https://docs.claude.com/en/docs/build-with-claude/token-counting)
-   *
-   * @example
-   * ```ts
-   * const betaMessageTokensCount =
-   *   await client.beta.messages.countTokens({
-   *     messages: [{ content: 'string', role: 'user' }],
-   *     model: 'claude-opus-4-6',
-   *   });
-   * ```
-   */
-  countTokens(
-    params: MessageCountTokensParams,
-    options?: RequestOptions,
-  ): APIPromise<BetaMessageTokensCount> {
-    // Transform deprecated output_format to output_config.format
-    const modifiedParams = transformOutputFormat(params);
-
-    const { betas, ...body } = modifiedParams;
-    return this._client.post('/v1/messages/count_tokens?beta=true', {
-      body,
-      ...options,
-      headers: buildHeaders([
-        { 'anthropic-beta': [...(betas ?? []), 'token-counting-2024-11-01'].toString() },
-        options?.headers,
-      ]),
-    });
-  }
-
-  toolRunner(
-    body: BetaToolRunnerParams & { stream?: false },
-    options?: BetaToolRunnerRequestOptions,
-  ): BetaToolRunner<false>;
-  toolRunner(
-    body: BetaToolRunnerParams & { stream: true },
-    options?: BetaToolRunnerRequestOptions,
-  ): BetaToolRunner<true>;
-  toolRunner(body: BetaToolRunnerParams, options?: BetaToolRunnerRequestOptions): BetaToolRunner<boolean>;
-  toolRunner(body: BetaToolRunnerParams, options?: BetaToolRunnerRequestOptions): BetaToolRunner<boolean> {
-    return new BetaToolRunner(this._client as Anthropic, body, options);
-  }
-}
 
 /**
  * Transform deprecated output_format to output_config.format
@@ -247,12 +16,6 @@ function transformOutputFormat<T extends MessageCreateParams | MessageCountToken
     return params;
   }
 
-  if (params.output_config?.format) {
-    throw new AnthropicError(
-      'Both output_format and output_config.format were provided. ' +
-        'Please use only output_config.format (output_format is deprecated).',
-    );
-  }
 
   const { output_format, ...rest } = params;
 
@@ -1471,12 +1234,7 @@ export interface BetaMessage {
    */
   context_management: BetaContextManagementResponse | null;
 
-  /**
-   * The model that will complete your prompt.\n\nSee
-   * [models](https://docs.anthropic.com/en/docs/models-overview) for additional
-   * details and options.
-   */
-  model: MessagesAPI.Model;
+
 
   /**
    * Conversational role of the generated message.
@@ -1712,49 +1470,8 @@ export interface BetaRawContentBlockStopEvent {
   type: 'content_block_stop';
 }
 
-export interface BetaRawMessageDeltaEvent {
-  /**
-   * Information about context management strategies applied during the request
-   */
-  context_management: BetaContextManagementResponse | null;
 
-  delta: BetaRawMessageDeltaEvent.Delta;
 
-  type: 'message_delta';
-
-  /**
-   * Billing and rate-limit usage.
-   *
-   * Anthropic's API bills and rate-limits by token counts, as tokens represent the
-   * underlying cost to our systems.
-   *
-   * Under the hood, the API transforms requests into a format suitable for the
-   * model. The model's output then goes through a parsing stage before becoming an
-   * API response. As a result, the token counts in `usage` will not match one-to-one
-   * with the exact visible content of an API request or response.
-   *
-   * For example, `output_tokens` will be non-zero, even for an empty string response
-   * from Claude.
-   *
-   * Total input tokens in a request is the summation of `input_tokens`,
-   * `cache_creation_input_tokens`, and `cache_read_input_tokens`.
-   */
-  usage: BetaMessageDeltaUsage;
-}
-
-export namespace BetaRawMessageDeltaEvent {
-  export interface Delta {
-    /**
-     * Information about the container used in the request (for the code execution
-     * tool)
-     */
-    container: BetaMessagesAPI.BetaContainer | null;
-
-    stop_reason: BetaMessagesAPI.BetaStopReason | null;
-
-    stop_sequence: string | null;
-  }
-}
 
 export interface BetaRawMessageStartEvent {
   message: BetaMessage;
@@ -1766,13 +1483,6 @@ export interface BetaRawMessageStopEvent {
   type: 'message_stop';
 }
 
-export type BetaRawMessageStreamEvent =
-  | BetaRawMessageStartEvent
-  | BetaRawMessageDeltaEvent
-  | BetaRawMessageStopEvent
-  | BetaRawContentBlockStartEvent
-  | BetaRawContentBlockDeltaEvent
-  | BetaRawContentBlockStopEvent;
 
 export interface BetaRedactedThinkingBlock {
   data: string;
@@ -3580,12 +3290,7 @@ export interface MessageCreateParamsBase {
    */
   messages: Array<BetaMessageParam>;
 
-  /**
-   * Body param: The model that will complete your prompt.\n\nSee
-   * [models](https://docs.anthropic.com/en/docs/models-overview) for additional
-   * details and options.
-   */
-  model: MessagesAPI.Model;
+
 
   /**
    * Body param: Top-level cache control automatically applies a cache_control marker
@@ -3816,16 +3521,9 @@ export interface MessageCreateParamsBase {
    */
   top_p?: number;
 
-  /**
-   * Header param: Optional header to specify the beta version(s) you want to use.
-   */
-  betas?: Array<BetaAPI.AnthropicBeta>;
 }
 
-export namespace MessageCreateParams {
-  export type MessageCreateParamsNonStreaming = BetaMessagesAPI.MessageCreateParamsNonStreaming;
-  export type MessageCreateParamsStreaming = BetaMessagesAPI.MessageCreateParamsStreaming;
-}
+
 
 export interface MessageCreateParamsNonStreaming extends MessageCreateParamsBase {
   /**
@@ -3917,12 +3615,7 @@ export interface MessageCountTokensParams {
    */
   messages: Array<BetaMessageParam>;
 
-  /**
-   * Body param: The model that will complete your prompt.\n\nSee
-   * [models](https://docs.anthropic.com/en/docs/models-overview) for additional
-   * details and options.
-   */
-  model: MessagesAPI.Model;
+
 
   /**
    * Body param: Top-level cache control automatically applies a cache_control marker
@@ -4094,19 +3787,8 @@ export interface MessageCountTokensParams {
     | BetaMCPToolset
   >;
 
-  /**
-   * Header param: Optional header to specify the beta version(s) you want to use.
-   */
-  betas?: Array<BetaAPI.AnthropicBeta>;
 }
 
-export { BetaToolRunner, type BetaToolRunnerParams } from '../../../lib/tools/BetaToolRunner';
-export { ToolError } from '../../../lib/tools/ToolError';
-
-Messages.Batches = Batches;
-
-Messages.BetaToolRunner = BetaToolRunner;
-Messages.ToolError = ToolError;
 
 export declare namespace Messages {
   export {
@@ -4208,10 +3890,7 @@ export declare namespace Messages {
     type BetaRawContentBlockDeltaEvent as BetaRawContentBlockDeltaEvent,
     type BetaRawContentBlockStartEvent as BetaRawContentBlockStartEvent,
     type BetaRawContentBlockStopEvent as BetaRawContentBlockStopEvent,
-    type BetaRawMessageDeltaEvent as BetaRawMessageDeltaEvent,
-    type BetaRawMessageStartEvent as BetaRawMessageStartEvent,
-    type BetaRawMessageStopEvent as BetaRawMessageStopEvent,
-    type BetaRawMessageStreamEvent as BetaRawMessageStreamEvent,
+
     type BetaRedactedThinkingBlock as BetaRedactedThinkingBlock,
     type BetaRedactedThinkingBlockParam as BetaRedactedThinkingBlockParam,
     type BetaRequestDocumentBlock as BetaRequestDocumentBlock,
@@ -4315,26 +3994,5 @@ export declare namespace Messages {
     type MessageCountTokensParams as MessageCountTokensParams,
   };
 
-  export { type BetaToolRunnerParams, BetaToolRunner };
-  export { ToolError };
 
-  export {
-    Batches as Batches,
-    type BetaDeletedMessageBatch as BetaDeletedMessageBatch,
-    type BetaMessageBatch as BetaMessageBatch,
-    type BetaMessageBatchCanceledResult as BetaMessageBatchCanceledResult,
-    type BetaMessageBatchErroredResult as BetaMessageBatchErroredResult,
-    type BetaMessageBatchExpiredResult as BetaMessageBatchExpiredResult,
-    type BetaMessageBatchIndividualResponse as BetaMessageBatchIndividualResponse,
-    type BetaMessageBatchRequestCounts as BetaMessageBatchRequestCounts,
-    type BetaMessageBatchResult as BetaMessageBatchResult,
-    type BetaMessageBatchSucceededResult as BetaMessageBatchSucceededResult,
-    type BetaMessageBatchesPage as BetaMessageBatchesPage,
-    type BatchCreateParams as BatchCreateParams,
-    type BatchRetrieveParams as BatchRetrieveParams,
-    type BatchListParams as BatchListParams,
-    type BatchDeleteParams as BatchDeleteParams,
-    type BatchCancelParams as BatchCancelParams,
-    type BatchResultsParams as BatchResultsParams,
-  };
 }

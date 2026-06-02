@@ -27,7 +27,9 @@ import { ImageResizeError } from '../../utils/imageResizer.js'
 
 
 
-
+export function getImageTooLargeErrorMessage(): string {
+  return 'Image was too large. Try resizing the image or using a different approach.'
+}
 export const API_ERROR_MESSAGE_PREFIX = 'API Error'
 
 export function startsWithApiErrorPrefix(text: string): boolean {

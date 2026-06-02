@@ -2,19 +2,10 @@ import React from 'react'
 import { Box, Text, useApp, useInput } from './ink.js'
 import QueryApp from './QueryApp.js'
 import { isWorkSpaceTruested, trustFoler } from '../utils/load.js'
-import { getAllBaseTools } from './tools.js'
-import { init } from './entrypoints/init.js'
-
+import { Props as queryAppProps } from './QueryApp.js'
 import { EBP, DBP } from './ink/termio/dec.js'
-import { getGlobalConfig } from './utils/config.js'
-import { getCommands } from './commands.js'
 import { AppStateProvider } from './state/AppState.js'
 import { AppState } from './state/AppState.js'
-import { getInitialSettings } from './utils/settings/settings.js'
-import { getInitialEffortSetting } from './utils/effort.js'
-import { shouldEnableThinkingByDefault } from './utils/thinking.js'
-import { getInitialMainLoopModel } from './bootstrap/state.js'
-import { getEmptyToolPermissionContext } from './Tool.js'
 function TrustPrompt({ onTrust }: { onTrust: () => void }) {
   const { exit } = useApp()
   const [selectedIndex, setSelectedIndex] = React.useState(0)
@@ -71,25 +62,13 @@ function TrustPrompt({ onTrust }: { onTrust: () => void }) {
     </Box>
   )
 }
-
-export default function Launcher() {
+type AppWrapperProps = {
+  initialState: AppState;
+};
+type LauncherProps = AppWrapperProps & queryAppProps;
+export default function Launcher(props: LauncherProps) {
+  const { initialState, ...replProps } = props;
   const [trusted, setTrusted] = React.useState(isWorkSpaceTruested())
-  const [commands, setCommands] = React.useState<Awaited<ReturnType<typeof getCommands>> | null>(null)
-  const thinkingEnabled=shouldEnableThinkingByDefault()
-  const initialState: AppState = {
-      settings: getInitialSettings(),
-      mainLoopModel: process.env.MODEL as string,
-      toolPermissionContext: getEmptyToolPermissionContext(),
-      fileHistory: {
-        snapshots: [],
-        trackedFiles: new Set(),
-        snapshotSequence: 0,
-      },
-      inbox: {
-        messages: [],
-      },
-      effortValue: getInitialEffortSetting(),
-    };
   React.useEffect(() => {
     // Enable bracketed paste mode
     process.stdout.write(EBP)
@@ -98,40 +77,15 @@ export default function Launcher() {
       process.stdout.write(DBP)
     }
   }, [])
-
-  React.useEffect(() => {
-    let mounted = true
-    void getCommands().then(result => {
-      if (mounted) {
-        setCommands(result)
-      }
-    })
-    return () => {
-      mounted = false
-    }
-  }, [])
-
   if (!trusted) {
     return <TrustPrompt onTrust={() => setTrusted(true)} />
-  }
-
-  if (!commands) {
-    return (
-      <Box paddingX={1} paddingY={1}>
-        <Text dimColor>Loading commands...</Text>
-      </Box>
-    )
   }
 
   return (
     <AppStateProvider initialState={initialState}>
       <QueryApp
-        debug={false}
-        thinkingConfig={{ type: 'adaptive' }}
-        initialTools={[]}
-        initialMessages={[]}
-        commands={commands}
-      />
+        {...replProps}  >
+      </QueryApp>    
     </AppStateProvider>
   )
 }

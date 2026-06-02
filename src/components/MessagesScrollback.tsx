@@ -4,6 +4,7 @@ import { Box, Text } from '../ink.js';
 import { stringWidth } from '../ink/stringWidth.js';
 import type { ViewportMessage } from './MessageViewport.js';
 import MarkdownText from './MarkdownText.js';
+import { OffscreenFreeze } from './OffscreenFreeze.js';
 
 type Props = {
 	headerLines?: string[];
@@ -27,17 +28,18 @@ export default function MessagesScrollback({
 	return (
 		<Box flexDirection="column" flexShrink={0} width="100%">
 			{headerLines?.map((line, index) => (
-				<Text key={`header-${index}`} wrap="truncate-end">
-					{line || ' '}
-				</Text>
+				<OffscreenFreeze key={`header-${index}`}>
+					<Text wrap="truncate-end">{line || ' '}</Text>
+				</OffscreenFreeze>
 			))}
 			{alertMessage ? <Text color="redBright">错误: {alertMessage}</Text> : null}
 			{messages.map((message, index) => (
-				<Box key={`${message.id}-${index}`} flexDirection="column" width="100%">
-					{shouldInsertSpacer(messages[index - 1], message) ? <Text>{' '}</Text> : null}
-					{renderMessageRow(message, width, blinkOn)}
-					{message.role === 'meta' && index < messages.length - 1 ? <Text>{' '}</Text> : null}
-				</Box>
+				<OffscreenFreeze key={`${message.id}-${index}`}>
+					<Box flexDirection="column" width="100%">
+						{shouldInsertSpacer(messages[index - 1], message) ? <Text>{' '}</Text> : null}
+						{renderMessageRow(message, width, blinkOn)}
+					</Box>
+				</OffscreenFreeze>
 			))}
 		</Box>
 	);
@@ -63,10 +65,6 @@ function shouldInsertSpacer(
 		return false;
 	}
 
-	if (currentMessage.role === 'meta') {
-		return true;
-	}
-
 	return true;
 }
 
@@ -84,6 +82,10 @@ function renderMessageRow(
 	}
 
 	if (message.role === 'meta') {
+		if (message.content) {
+			return message.content;
+		}
+
 		return (
 			<Text color="gray" dimColor wrap="truncate-end">
 				{message.text ? padMetaLine(message.text, width) : ' '}

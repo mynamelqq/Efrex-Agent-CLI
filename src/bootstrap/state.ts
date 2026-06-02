@@ -5,6 +5,17 @@ import { cwd } from "process";
 import { SessionId } from "src/types/ids";
 import { realpathSync } from 'fs'
 import { randomUUID } from "crypto";
+// Usage & Model
+export type ModelUsage = {
+  inputTokens: number
+  outputTokens: number
+  cacheReadInputTokens: number
+  cacheCreationInputTokens: number
+  webSearchRequests: number
+  costUSD: number
+  contextWindow: number
+  maxOutputTokens: number
+}
 
 type State = {
   originalCwd: string
@@ -49,6 +60,7 @@ type State = {
   // Telemetry state
   statsStore: { observe(name: string, value: number): void } | null
   sessionId: SessionId
+  modelUsage: { [modelName: string]: ModelUsage }
   // Parent session ID for tracking session lineage (e.g., plan mode -> implementation)
   parentSessionId: SessionId | undefined
   // CLAUDE.md content cached by context.ts for the auto-mode classifier.
@@ -123,6 +135,10 @@ type State = {
   }>
   // SDK-provided betas (e.g., context-1m-2025-08-07)
   sdkBetas: string[] | undefined
+  // Messages from the last API request (ant-only; reference, not clone).
+  // Captures the exact post-compaction, CLAUDE.md-injected message set sent
+  // to the API so /share's serialized_conversation.json reflects reality.
+  lastAPIRequestMessages: BetaMessageStreamParams['messages'] | null
   // Main thread agent type (from --agent flag or settings)
   mainThreadAgentType: string | undefined
   // Remote mode (--remote flag)
@@ -133,6 +149,8 @@ type State = {
   systemPromptSectionCache: Map<string, string | null>
   // Last date emitted to the model (for detecting midnight date changes)
   lastEmittedDate: string | null
+  // Last API request for bug reports
+  lastAPIRequest: Omit<BetaMessageStreamParams, 'messages'> | null
   // Additional directories from --add-dir flag (for CLAUDE.md loading)
   additionalDirectoriesForClaudeMd: string[]
   // Channel server allowlist from --channels flag (servers whose channel
@@ -202,12 +220,15 @@ function getInitialState(): State {
     cachedEfrexMdContent:null,
     projectRoot: resolvedCwd,
     totalCostUSD: 0,
+    lastAPIRequestMessages: null,
+    modelUsage: {},
     totalAPIDuration: 0,
     totalAPIDurationWithoutRetries: 0,
     initialMainLoopModel:"",
     totalToolDuration: 0,
     turnHookDurationMs: 0,
     turnToolDurationMs: 0,
+    lastAPIRequest: null,
     turnClassifierDurationMs: 0,
     turnToolCount: 0,
     turnHookCount: 0,
@@ -405,4 +426,65 @@ export function setLastApiCompletionTimestamp(timestamp: number): void {
 }
 export function setCachedEfrexMdContent(content: string | null): void {
   STATE.cachedEfrexMdContent = content
+}
+// exported for testing
+export function getUserType(): string {
+  return process.env.USER_TYPE || 'external'
+}
+
+export function getEntrypoint(): string | undefined {
+  return process.env.ENTRYPOINT
+}
+
+/**
+ * Atomically switch the active session. `sessionId` and `sessionProjectDir`
+ * always change together — there is no separate setter for either, so they
+ * cannot drift out of sync (CC-34).
+ *
+ * @param projectDir — directory containing `<sessionId>.jsonl`. Omit (or
+ *   pass `null`) for sessions in the current project — the path will derive
+ *   from originalCwd at read time. Pass `dirname(transcriptPath)` when the
+ *   session lives in a different project directory (git worktrees,
+ *   cross-project resume). Every call resets the project dir; it never
+ *   carries over from the previous session.
+ */
+export function switchSession(
+  sessionId: SessionId,
+  projectDir: string | null = null,
+): void {
+  // Drop the outgoing session's plan-slug entry so the Map stays bounded
+  // across repeated /resume. Only the current session's slug is ever read
+  // (plans.ts getPlanSlug defaults to getSessionId()).
+  STATE.planSlugCache.delete(STATE.sessionId)
+  STATE.sessionId = sessionId
+  STATE.sessionProjectDir = projectDir
+  // sessionSwitched.emit(sessionId)
+}
+
+export function setLastAPIRequest(
+  params: Omit<BetaMessageStreamParams, 'messages'> | null,
+): void {
+  STATE.lastAPIRequest = params
+}
+export function resetCostState(): void {
+  STATE.totalCostUSD = 0
+  STATE.totalAPIDuration = 0
+  STATE.totalAPIDurationWithoutRetries = 0
+  STATE.totalToolDuration = 0
+  STATE.startTime = Date.now()
+  STATE.totalLinesAdded = 0
+  STATE.totalLinesRemoved = 0
+  STATE.hasUnknownModelCost = false
+  STATE.modelUsage = {}
+  STATE.promptId = null
+}
+
+export function getLastMainRequestId(): string | undefined {
+  return STATE.lastMainRequestId
+}
+
+export function setLastAPIRequestMessages(
+  messages: BetaMessageStreamParams['messages'] | null,
+): void {
+  STATE.lastAPIRequestMessages = messages
 }

@@ -1,5 +1,6 @@
 import { useContext } from 'react'
 import TerminalFocusContext from '../components/TerminalFocusContext.js'
+import { isFullscreenEnvEnabled } from '../../utils/fullscreen.js'
 
 /**
  * Hook to check if the terminal has focus.
@@ -11,6 +12,9 @@ import TerminalFocusContext from '../components/TerminalFocusContext.js'
  * @returns true if the terminal is focused (or focus state is unknown)
  */
 export function useTerminalFocus(): boolean {
+  if (!isFullscreenEnvEnabled()) {
+    return true
+  }
   const { isTerminalFocused } = useContext(TerminalFocusContext)
   return isTerminalFocused
 }

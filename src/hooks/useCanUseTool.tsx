@@ -14,7 +14,7 @@ import {
   createPermissionContext,
   createPermissionQueueOps,
 } from './toolPermission/PermissionContext.js';
-import { handleInteractivePermission } from './toolPermission/interactiveHandler.js';
+import { handleInteractivePermission } from './toolPermission/handlers/interactiveHandler.js';
 import { PermissionDecision } from 'src/types/permissions.js';
 import { hasPermissionsToUseTool } from 'src/utils/permissions/permissions.js';
 export type CanUseToolFn<Input extends Record<string, unknown> = Record<string, unknown>> = (

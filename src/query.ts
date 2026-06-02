@@ -362,7 +362,7 @@ async function* queryLoop(
           ) {
             withheld = true
         }
-        if (isWithheldMaxOutputTokens(message)) {
+        if (isWithheldMaxOutputTokens(message as Message)) {
             withheld = true
         }
         if (!withheld) {

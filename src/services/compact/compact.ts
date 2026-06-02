@@ -146,7 +146,6 @@ export async function compactConversation(
     }
 
     if (!summary) {
-
       throw new Error(
         `Failed to generate conversation summary - response did not contain valid text content`,
       )
@@ -159,7 +158,6 @@ export async function compactConversation(
 
     // Clear the cache
     context.readFileState.clear()
-    // context.loadedNestedMemoryPaths?.clear()
 
     // Intentionally NOT resetting sentSkillNames: re-injecting the full
     // skill_listing (~4K tokens) post-compact is pure cache_creation with
@@ -295,9 +293,6 @@ async function streamCompactSummary({
       let hasStartedStreaming = false
       let response: AssistantMessage | undefined
       context.setResponseLength?.(() => 0)
-
-
-
       const tools: Tool[] = [FileReadTool]
 
       const streamingGen = queryModelWithStreaming({

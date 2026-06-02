@@ -10,6 +10,7 @@ import useAppImpl from './ink/hooks/use-app.js';
 import useInputImpl from './ink/hooks/use-input.js';
 import useStdinImpl from './ink/hooks/use-stdin.js';
 import { useTerminalFocus as useTerminalFocusImpl } from './ink/hooks/use-terminal-focus.js';
+import { useTerminalViewport as useTerminalViewportImpl } from './ink/hooks/use-terminal-viewport.js';
 import type {
 	Instance,
 	RenderOptions,
@@ -41,6 +42,7 @@ export const useApp = useAppImpl;
 export const useInput = useInputImpl;
 export const useStdin = useStdinImpl;
 export const useTerminalFocus = useTerminalFocusImpl;
+export const useTerminalViewport = useTerminalViewportImpl;
 
 export function useWindowSize(): { columns: number; rows: number } {
 	return (

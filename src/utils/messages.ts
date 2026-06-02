@@ -5,6 +5,7 @@ import { PermissionMode } from 'src/types/permissions'
 import { randomUUID, type UUID } from 'crypto'
 import { DeepImmutable } from './messageQueueManager'
 import { APIError } from '@anthropic-ai/sdk'
+import { BetaUsage as Usage } from '../package/message'
 import type { BetaContentBlock } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs'
 import { Tools } from 'src/Tool'
 import { findToolByName } from 'src/Tool'
@@ -169,7 +170,12 @@ export function createAssistantAPIErrorMessage({
   errorDetails?: string
 }): AssistantMessage {
   return baseCreateAssistantMessage({
-    content: content === '' ? NO_CONTENT_MESSAGE : content,
+    content: [
+      {
+        type: 'text' as const,
+        text: content === '' ? NO_CONTENT_MESSAGE : content,
+      } as BetaContentBlock, // NOTE: citations field is not supported in Bedrock API
+    ],
     isApiErrorMessage: true,
     apiError,
     error,
@@ -220,13 +226,13 @@ function baseCreateAssistantMessage({
     speed: null,
   },
 }: {
-  content: MessageContent
+  content: BetaContentBlock[]
   isApiErrorMessage?: boolean
   apiError?: AssistantMessage['apiError']
   error?: SDKAssistantMessageError
   errorDetails?: string
   isVirtual?: true
-  usage?: BetaUsage
+  usage?: Usage
 }): AssistantMessage {
   return {
     type: 'assistant',
@@ -234,11 +240,15 @@ function baseCreateAssistantMessage({
     timestamp: new Date().toISOString(),
     message: {
       id: randomUUID(),
-      model: '<synthetic>',
+      container: null,
+      model: SYNTHETIC_MODEL,
       role: 'assistant',
-      finish_reason: 'stop',
+      stop_reason: 'stop_sequence',
+      stop_sequence: '',
+      type: 'message',
       usage,
-      content,
+      content: content as ContentBlock[],
+      context_management: null,
     },
     requestId: undefined,
     apiError,
@@ -569,7 +579,7 @@ export function findLastCompactBoundaryIndex<
  *
  * Note: The boundary itself is a system message and will be filtered by normalizeMessagesForAPI.
  */
-export function getMessagesAfterCompactBoundary<//找到位于压缩边界后的消息
+export function getMessagesAfterCompactBoundary<//找到位于最后面压缩边界后的消息
   T extends Message | NormalizedMessage,
 >(messages: T[], options?: { includeSnipped?: boolean }): T[] {
   const boundaryIndex = findLastCompactBoundaryIndex(messages)
@@ -995,4 +1005,435 @@ export function createSystemAPIErrorMessage(
     timestamp: new Date().toISOString(),
     uuid: randomUUID(),
   }
+}
+export function createAssistantMessage({
+  content,
+  usage,
+  isVirtual,
+}: {
+  content: string | BetaContentBlock[]
+  usage?: Usage
+  isVirtual?: true
+}): AssistantMessage {
+  return baseCreateAssistantMessage({
+    content:
+      typeof content === 'string'
+        ? [
+            {
+              type: 'text' as const,
+              text: content === '' ? NO_CONTENT_MESSAGE : content,
+            } as BetaContentBlock, // NOTE: citations field is not supported in Bedrock API
+          ]
+        : content,
+    usage,
+    isVirtual,
+  })
+}
+
+/**
+ * Filter orphaned thinking-only assistant messages.
+ *
+ * During streaming, each content block is yielded as a separate message with the same
+ * message.id. When messages are loaded for resume, interleaved user messages or attachments
+ * can prevent proper merging by message.id, leaving orphaned assistant messages that contain
+ * only thinking blocks. These cause "thinking blocks cannot be modified" API errors.
+ *
+ * A thinking-only message is "orphaned" if there is NO other assistant message with the
+ * same message.id that contains non-thinking content (text, tool_use, etc). If such a
+ * message exists, the thinking block will be merged with it in normalizeMessagesForAPI().
+ */
+export function filterOrphanedThinkingOnlyMessages(
+  messages: (UserMessage | AssistantMessage)[],
+): (UserMessage | AssistantMessage)[]
+export function filterOrphanedThinkingOnlyMessages(
+  messages: Message[],
+): Message[]
+export function filterOrphanedThinkingOnlyMessages(
+  messages: Message[],
+): Message[] {
+  // First pass: collect message.ids that have non-thinking content
+  // These will be merged later in normalizeMessagesForAPI()
+  const messageIdsWithNonThinkingContent = new Set<string>()
+  for (const msg of messages) {
+    if (msg.type !== 'assistant') continue
+
+    const content = msg.message?.content
+    if (!Array.isArray(content)) continue
+
+    const hasNonThinking = (content as Array<{ type: string }>).some(
+      block => block.type !== 'thinking' && block.type !== 'redacted_thinking',
+    )
+    if (hasNonThinking && msg.message?.id) {
+      messageIdsWithNonThinkingContent.add(msg.message.id as string)
+    }
+  }
+
+  // Second pass: filter out thinking-only messages that are truly orphaned
+  const filtered = messages.filter(msg => {
+    if (msg.type !== 'assistant') {
+      return true
+    }
+
+    const content = msg.message?.content
+    if (!Array.isArray(content) || content.length === 0) {
+      return true
+    }
+
+    // Check if ALL content blocks are thinking blocks
+    const allThinking = (content as Array<{ type: string }>).every(
+      block => block.type === 'thinking' || block.type === 'redacted_thinking',
+    )
+
+    if (!allThinking) {
+      return true // Has non-thinking content, keep it
+    }
+
+    // It's thinking-only. Keep it if there's another message with same id
+    // that has non-thinking content (they'll be merged later)
+    if (
+      msg.message?.id &&
+      messageIdsWithNonThinkingContent.has(msg.message.id as string)
+    ) {
+      return true
+    }
+
+    return false
+  })
+
+  return filtered
+}
+type ToolUseResultMessage = NormalizedUserMessage & {
+  message: { content: [ToolResultBlockParam] }
+}
+
+export function isToolUseResultMessage(
+  message: Message,
+): message is ToolUseResultMessage {
+  return (
+    message.type === 'user' &&
+    ((Array.isArray(message.message?.content) &&
+      (message.message?.content as Array<{ type: string }>)[0]?.type ===
+        'tool_result') ||
+      Boolean(message.toolUseResult))
+  )
+}
+export function filterUnresolvedToolUses(messages: Message[]): Message[] {
+  // Collect all tool_use IDs and tool_result IDs directly from message content blocks.
+  // This avoids calling normalizeMessages() which generates new UUIDs — if those
+  // normalized messages were returned and later recorded to the transcript JSONL,
+  // the UUID dedup would not catch them, causing exponential transcript growth on
+  // every session resume.
+  const toolUseIds = new Set<string>()
+  const toolResultIds = new Set<string>()
+
+  for (const msg of messages) {
+    if (msg.type !== 'user' && msg.type !== 'assistant') continue
+    const content = msg.message?.content
+    if (!Array.isArray(content)) continue
+    for (const block of content as Array<{
+      type: string
+      id?: string
+      tool_use_id?: string
+    }>) {
+      if (block.type === 'tool_use') {
+        toolUseIds.add(block.id!)
+      }
+      if (block.type === 'tool_result') {
+        toolResultIds.add(block.tool_use_id!)
+      }
+    }
+  }
+
+  const unresolvedIds = new Set(
+    [...toolUseIds].filter(id => !toolResultIds.has(id)),
+  )
+
+  if (unresolvedIds.size === 0) {
+    return messages
+  }
+
+  // Filter out assistant messages whose tool_use blocks are all unresolved
+  return messages.filter(msg => {
+    if (msg.type !== 'assistant') return true
+    const content = msg.message?.content
+    if (!Array.isArray(content)) return true
+    const toolUseBlockIds: string[] = []
+    for (const b of content as Array<{ type: string; id?: string }>) {
+      if (b.type === 'tool_use') {
+        toolUseBlockIds.push(b.id!)
+      }
+    }
+    if (toolUseBlockIds.length === 0) return true
+    // Remove message only if ALL its tool_use blocks are unresolved
+    return !toolUseBlockIds.every(id => unresolvedIds.has(id))
+  })
+}
+function normalizeUserTextContent(
+  a: string | ContentBlockParam[],
+): ContentBlockParam[] {
+  if (typeof a === 'string') {
+    return [{ type: 'text', text: a }]
+  }
+  return a
+}
+/**
+ * Concatenate two content block arrays, appending `\n` to a's last text block
+ * when the seam is text-text. The API concatenates adjacent text blocks in a
+ * user message without a separator, so two queued prompts `"2 + 2"` +
+ * `"3 + 3"` would otherwise reach the model as `"2 + 23 + 3"`.
+ *
+ * Blocks stay separate; the `\n` goes on a's side so no block's startsWith
+ * changes — smooshSystemReminderSiblings classifies via
+ * `startsWith('<system-reminder>')`, and prepending to b would break that
+ * when b is an SR-wrapped attachment.
+ */
+function joinTextAtSeam(
+  a: ContentBlockParam[],
+  b: ContentBlockParam[],
+): ContentBlockParam[] {
+  const lastA = a.at(-1)
+  const firstB = b[0]
+  if (lastA?.type === 'text' && firstB?.type === 'text') {
+    return [...a.slice(0, -1), { ...lastA, text: lastA.text + '\n' }, ...b]
+  }
+  return [...a, ...b]
+}
+/**
+ * In thecontent[] list on a UserMessage, tool_result blocks much come first
+ * to avoid "tool result must follow tool use" API errors.
+ */
+function hoistToolResults(content: ContentBlockParam[]): ContentBlockParam[] {
+  const toolResults: ContentBlockParam[] = []
+  const otherBlocks: ContentBlockParam[] = []
+
+  for (const block of content) {
+    if (block.type === 'tool_result') {
+      toolResults.push(block)
+    } else {
+      otherBlocks.push(block)
+    }
+  }
+
+  return [...toolResults, ...otherBlocks]
+}
+
+export function mergeUserMessages(a: UserMessage, b: UserMessage): UserMessage {
+  const lastContent = normalizeUserTextContent(
+    a.message.content as string | ContentBlockParam[],
+  )
+  const currentContent = normalizeUserTextContent(
+    b.message.content as string | ContentBlockParam[],
+  )
+  return {
+    ...a,
+    // Preserve the non-meta message's uuid so [id:] tags (derived from uuid)
+    // stay stable across API calls (meta messages like system context get fresh uuids each call)
+    uuid: a.isMeta ? b.uuid : a.uuid,
+    message: {
+      ...a.message,
+      content: hoistToolResults(joinTextAtSeam(lastContent, currentContent)),
+    },
+  }
+}
+/**
+ * Filter out assistant messages with only whitespace-only text content.
+ *
+ * The API requires "text content blocks must contain non-whitespace text".
+ * This can happen when the model outputs whitespace (like "\n\n") before a thinking block,
+ * but the user cancels mid-stream, leaving only the whitespace text.
+ *
+ * This function removes such messages entirely rather than keeping a placeholder,
+ * since whitespace-only content has no semantic value.
+ *
+ * Also used by conversationRecovery to filter these from the main state during session resume.
+ */
+export function filterWhitespaceOnlyAssistantMessages(
+  messages: (UserMessage | AssistantMessage)[],
+): (UserMessage | AssistantMessage)[]
+export function filterWhitespaceOnlyAssistantMessages(
+  messages: Message[],
+): Message[]
+export function filterWhitespaceOnlyAssistantMessages(
+  messages: Message[],
+): Message[] {
+  let hasChanges = false
+
+  const filtered = messages.filter(message => {
+    if (message.type !== 'assistant') {
+      return true
+    }
+
+    const content = message.message?.content
+    if (!Array.isArray(content) || content.length === 0) {
+      return true
+    }
+
+    if (hasOnlyWhitespaceTextContent(content)) {
+      hasChanges = true
+      return false
+    }
+
+    return true
+  })
+
+  if (!hasChanges) {
+    return messages
+  }
+
+  // Removing assistant messages may leave adjacent user messages that need
+  // merging (the API requires alternating user/assistant roles).
+  const merged: Message[] = []
+  for (const message of filtered) {
+    const prev = merged.at(-1)
+    if (message.type === 'user' && prev?.type === 'user') {
+      merged[merged.length - 1] = mergeUserMessages(
+        prev as UserMessage,
+        message as UserMessage,
+      ) // lvalue
+    } else {
+      merged.push(message)
+    }
+  }
+  return merged
+}
+/**
+ * Check if an assistant message has only whitespace-only text content blocks.
+ * Returns true if all content blocks are text blocks with only whitespace.
+ * Returns false if there are any non-text blocks (like tool_use) or text with actual content.
+ */
+function hasOnlyWhitespaceTextContent(
+  content: Array<{ type: string; text?: string }>,
+): boolean {
+  if (content.length === 0) {
+    return false
+  }
+
+  for (const block of content) {
+    // If there's any non-text block (tool_use, thinking, etc.), the message is valid
+    if (block.type !== 'text') {
+      return false
+    }
+    // If there's a text block with non-whitespace content, the message is valid
+    if (block.text !== undefined && block.text.trim() !== '') {
+      return false
+    }
+  }
+
+  // All blocks are text blocks with only whitespace
+  return true
+}
+// Deterministic UUID derivation. Produces a stable UUID-shaped string from a
+// parent UUID + content block index so that the same input always produces the
+// same key across calls. Used by normalizeMessages and synthetic message creation.
+export function deriveUUID(parentUUID: UUID, index: number): UUID {
+  const hex = index.toString(16).padStart(12, '0')
+  return `${parentUUID.slice(0, 24)}${hex}` as UUID
+}
+// Split messages, so each content block gets its own message
+export function normalizeMessages(
+  messages: AssistantMessage[],
+): NormalizedAssistantMessage[]
+export function normalizeMessages(
+  messages: UserMessage[],
+): NormalizedUserMessage[]
+export function normalizeMessages(
+  messages: (AssistantMessage | UserMessage)[],
+): (NormalizedAssistantMessage | NormalizedUserMessage)[]
+export function normalizeMessages(messages: Message[]): NormalizedMessage[]
+export function normalizeMessages(messages: Message[]): NormalizedMessage[] {
+  // isNewChain tracks whether we need to generate new UUIDs for messages when normalizing.
+  // When a message has multiple content blocks, we split it into multiple messages,
+  // each with a single content block. When this happens, we need to generate new UUIDs
+  // for all subsequent messages to maintain proper ordering and prevent duplicate UUIDs.
+  // This flag is set to true once we encounter a message with multiple content blocks,
+  // and remains true for all subsequent messages in the normalization process.
+  let isNewChain = false
+  return messages.flatMap(message => {
+    switch (message.type) {
+      case 'assistant': {
+        const aMsg = message as AssistantMessage
+        const assistantContent = Array.isArray(aMsg.message.content)
+          ? aMsg.message.content
+          : []
+        isNewChain = isNewChain || assistantContent.length > 1
+        return assistantContent.map((_, index) => {
+          const uuid = isNewChain
+            ? deriveUUID(message.uuid, index)
+            : message.uuid
+          return {
+            type: 'assistant' as const,
+            timestamp: message.timestamp,
+            message: {
+              ...aMsg.message,
+              content: [_],
+              context_management: aMsg.message.context_management ?? null,
+            },
+            isMeta: message.isMeta,
+            isVirtual: message.isVirtual,
+            requestId: message.requestId,
+            uuid,
+            error: message.error,
+            isApiErrorMessage: message.isApiErrorMessage,
+            advisorModel: message.advisorModel,
+          } as NormalizedAssistantMessage
+        })
+      }
+      case 'attachment':
+        return [message]
+      case 'progress':
+        return [message]
+      case 'system':
+        return [message]
+      case 'user': {
+        const uMsg = message as UserMessage
+        if (typeof uMsg.message.content === 'string') {
+          const uuid = isNewChain ? deriveUUID(uMsg.uuid, 0) : uMsg.uuid
+          return [
+            {
+              ...uMsg,
+              uuid,
+              message: {
+                ...uMsg.message,
+                content: [{ type: 'text', text: uMsg.message.content }],
+              },
+            } as NormalizedMessage,
+          ]
+        }
+        isNewChain = isNewChain || (uMsg.message.content?.length ?? 0) > 1
+        let imageIndex = 0
+        return (uMsg.message.content ?? []).map((_, index) => {
+          const isImage = _.type === 'image'
+          // For image content blocks, extract just the ID for this image
+          const imageId =
+            isImage && uMsg.imagePasteIds
+              ? (uMsg.imagePasteIds as number[])[imageIndex]
+              : undefined
+          if (isImage) imageIndex++
+          return {
+            ...createUserMessage({
+              content: [_],
+              toolUseResult: uMsg.toolUseResult,
+              mcpMeta: uMsg.mcpMeta as {
+                _meta?: Record<string, unknown>
+                structuredContent?: Record<string, unknown>
+              },
+              isMeta: uMsg.isMeta === true ? true : undefined,
+              isVisibleInTranscriptOnly:
+                uMsg.isVisibleInTranscriptOnly === true ? true : undefined,
+              isVirtual:
+                (uMsg.isVirtual as boolean | undefined) === true
+                  ? true
+                  : undefined,
+              timestamp: uMsg.timestamp as string | undefined,
+              imagePasteIds: imageId !== undefined ? [imageId] : undefined,
+
+            }),
+            uuid: isNewChain ? deriveUUID(uMsg.uuid, index) : uMsg.uuid,
+          } as NormalizedMessage
+        })
+      }
+      default:
+        return [message]
+    }
+  })
 }

@@ -12,9 +12,9 @@ import {
 	Text,
 	useApp,
 	useInput,
-	useTerminalFocus,
 	useWindowSize
 } from './ink.js';
+import { getTerminalFocused } from './ink/terminal-focus-state.js';
 import { stringWidth } from './ink/stringWidth.js';
 import { createAbortController } from './utils/abortController.js';
 import { createFileStateCacheWithSizeLimit,READ_FILE_STATE_CACHE_SIZE } from './utils/fileStateCache.js';
@@ -23,6 +23,7 @@ import { buildEffectiveSystemPrompt } from './utils/systemPrompt.js';
 import { addToHistory } from './history.js';
 import { useMemo } from 'react';
 import { useArrowKeyHistory } from './hooks/useArrowKeyHistory.js';
+import { useLogMessages } from './hooks/useLogMessages.js';
 import type { ProcessUserInputContext } from './utils/executeUserInput.js';
 import type { ScrollBoxHandle } from './ink/components/ScrollBox.js';
 import { AlternateScreen } from './ink/components/AlternateScreen.js';
@@ -487,9 +488,7 @@ function getTranscriptHeaderLines({
 		` ${'─'.repeat(Math.max(0, boxWidth - stringWidth(brandPlain) - 2))}`
 	);
 
-	// if (!welcome || boxWidth < 72) {
-	// 	return [`${brand}${rule}`, chalk.gray(fitDisplay(meta, boxWidth)), ''];
-	// }
+	// Keep the full welcome card in the native-scrollback layout by design.
 
 	const leftWidth = Math.max(28, Math.min(52, Math.floor(innerWidth * 0.42)));
 	const rightWidth = Math.max(20, innerWidth - leftWidth - 1);
@@ -1611,7 +1610,7 @@ export default function QueryApp({
 }: Props) {
 	const { exit } = useApp();
 	const { columns, rows } = useWindowSize();
-	const isTerminalFocused = useTerminalFocus();
+	const isTerminalFocused = getTerminalFocused();
 	const [input, setInput] = useState('');
 	const [screen, setScreen] = useState<AppScreen>('prompt');
 	const [cursorSyncKey, setCursorSyncKey] = useState(0);
@@ -1660,11 +1659,9 @@ export default function QueryApp({
 		active: false,
 		statusText: null
 	});
-	const [messages, rawSetMessages] = useState<MessageType[]>([]);
-	const [nonFullscreenScrollbackHeader, setNonFullscreenScrollbackHeader] =
-		useState<string[]>([]);
-	const [nonFullscreenScrollbackMessages, setNonFullscreenScrollbackMessages] =
-		useState<ViewportMessage[]>([]);
+	const [messages, rawSetMessages] = useState<MessageType[]>(
+		() => initialMessages ?? []
+	);
 	const [completedTurnFooters, setCompletedTurnFooters] = useState<
 		CompletedTurnFooter[]
 	>([]);
@@ -1672,7 +1669,6 @@ export default function QueryApp({
 	const [filteredCommands, setFilteredCommands] = useState(commands);
 	  const [initialReadFileState] = useState(() => createFileStateCacheWithSizeLimit(READ_FILE_STATE_CACHE_SIZE));
 	const readFileState = useRef(initialReadFileState);
-	const nonFullscreenHeaderCapturedRef = useRef(false);
 	const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
 	const appState = React.useSyncExternalStore(
 		store.subscribe,
@@ -1720,6 +1716,12 @@ export default function QueryApp({
 	} | null>(null);
 	const loadingStartTimeRef = useRef<number | null>(null);
 	const [animationTick, setAnimationTick] = useState(0);
+
+	useLogMessages(
+		messages,
+		messages.length === initialMessages?.length
+	);
+
 	useEffect(() => {
 		if (!loading) {
 			setAnimationTick(0);
@@ -2104,23 +2106,6 @@ export default function QueryApp({
 				},
 				onMessage: newMessage => {
 					if (isCompactBoundaryMessage(newMessage)) {
-						if (!isFullscreenEnvEnabled() && screen !== 'transcript') {
-							if (
-								!nonFullscreenHeaderCapturedRef.current &&
-								transcriptHeaderLinesRef.current.length > 0
-							) {
-								setNonFullscreenScrollbackHeader(
-									transcriptHeaderLinesRef.current
-								);
-								nonFullscreenHeaderCapturedRef.current = true;
-							}
-							if (viewportMessagesRef.current.length > 0) {
-								setNonFullscreenScrollbackMessages(previous => [
-									...previous,
-									...viewportMessagesRef.current
-								]);
-							}
-						}
 						setCompletedTurnFooters([]);
 						setMessages(() => [newMessage]);
 					} else {
@@ -2554,6 +2539,7 @@ const getToolUseContext = useCallback(
 	const permissionModeColor = permissionModeConfig.color;
 
 	const isTranscriptMode = screen === 'transcript';
+	const activeToolUseConfirm = toolUseConfirmQueue[0];
 	const renderTools = activeTools;
 	const viewportMessages = buildViewportMessages(
 		messages,
@@ -2583,6 +2569,21 @@ const getToolUseContext = useCallback(
 		}
 	}
 
+	const nonFullscreenViewportMessages =
+		!isTranscriptMode &&
+		toolJSX &&
+		!(toolJSX.isLocalJSXCommand && toolJSX.isImmediate)
+			? [
+					...viewportMessages,
+					{
+						id: TURN_META_ID_BASE + viewportMessages.length + 2,
+						role: 'meta' as const,
+						text: '',
+						content: <Box flexDirection="column" width="100%">{toolJSX.jsx}</Box>
+					}
+				]
+			: viewportMessages;
+
 	const { model: modelLabel, effort: effortLabel } = useTranscriptHeaderInfo();
 
 	const transcriptHeaderLines = getTranscriptHeaderLines({
@@ -2592,27 +2593,6 @@ const getToolUseContext = useCallback(
 		width: messageWidth,
 		welcome: messages.length === 0 && !showSpinner
 	});
-	const viewportMessagesRef = useRef<ViewportMessage[]>([]);
-	const transcriptHeaderLinesRef = useRef<string[]>([]);
-	viewportMessagesRef.current = viewportMessages;
-	transcriptHeaderLinesRef.current = transcriptHeaderLines;
-
-	useEffect(() => {
-		if (isFullscreenEnvEnabled() || isTranscriptMode) {
-			return;
-		}
-
-		if (
-			!nonFullscreenHeaderCapturedRef.current &&
-			messages.length > 0 &&
-			transcriptHeaderLines.length > 0
-		) {
-			setNonFullscreenScrollbackHeader(transcriptHeaderLines);
-			nonFullscreenHeaderCapturedRef.current = true;
-		}
-	}, [isTranscriptMode, messages.length, transcriptHeaderLines]);
-
-	const activeToolUseConfirm = toolUseConfirmQueue[0];
 	const highlightInputChrome =
 		isTerminalFocused && loading && !activeToolUseConfirm;
 	const statusText = showSpinner
@@ -2637,6 +2617,7 @@ const getToolUseContext = useCallback(
 				? 'requesting'
 				: 'default'
 		: null;
+
 
 	const statusPrefix = statusText ? '•' : null;
 	const statusPrefixDim = breathingStrength < 0.35;
@@ -2739,7 +2720,7 @@ const getToolUseContext = useCallback(
 				/>
 			) : null}
 
-			{activeToolUseConfirm ? (
+			{activeToolUseConfirm && isFullscreenEnvEnabled() ? (
 				<PermissionRequest
 					key={activeToolUseConfirm.toolUseID}
 					onDone={shiftToolUseConfirmQueue}
@@ -2748,6 +2729,7 @@ const getToolUseContext = useCallback(
 					toolUseContext={activeToolUseConfirm.toolUseContext}
 					verbose={false}
 					workerBadge={undefined}
+					currentMessageCount={messages.length}
 				/>
 			) : null}
 
@@ -2911,17 +2893,9 @@ const getToolUseContext = useCallback(
 
 	const nonFullscreenScrollableContent = (
 		<Box flexDirection="column">
-			{nonFullscreenScrollbackHeader.length > 0 ||
-			nonFullscreenScrollbackMessages.length > 0 ? (
-				<MessagesScrollback
-					headerLines={nonFullscreenScrollbackHeader}
-					messages={nonFullscreenScrollbackMessages}
-					width={messageWidth}
-					alertMessage={null}
-					blinkOn={blinkVisible}
-				/>
-			) : null}
-			{messages.length === 0 ? (
+			{messages.length === 0 &&
+			nonFullscreenViewportMessages.length === 0 &&
+			!alertMessage ? (
 				<MessageViewport
 					headerLines={transcriptHeaderLines}
 					messages={[]}
@@ -2931,23 +2905,14 @@ const getToolUseContext = useCallback(
 					blinkOn={blinkVisible}
 				/>
 			) : null}
-			{messages.length > 0 || alertMessage ? (
+			{nonFullscreenViewportMessages.length > 0 || alertMessage ? (
 				<MessagesScrollback
-					headerLines={
-						nonFullscreenHeaderCapturedRef.current
-							? []
-							: transcriptHeaderLines
-					}
-					messages={viewportMessages}
+					headerLines={transcriptHeaderLines}
+					messages={nonFullscreenViewportMessages}
 					width={messageWidth}
 					alertMessage={alertMessage}
-					blinkOn={blinkVisible}
+					blinkOn={false}
 				/>
-			) : null}
-			{toolJSX && !(toolJSX.isLocalJSXCommand && toolJSX.isImmediate) ? (
-				<Box flexDirection="column" width="100%">
-					{toolJSX.jsx}
-				</Box>
 			) : null}
 		</Box>
 	);
@@ -3043,6 +3008,20 @@ const getToolUseContext = useCallback(
 		<Box flexDirection="column" paddingX={1} paddingY={0}>
 			{nonFullscreenScrollableContent}
 			{bottomContent}
+			{activeToolUseConfirm ? (
+				<Box position="absolute" bottom={0} left={0} right={0} opaque>
+					<PermissionRequest
+						key={activeToolUseConfirm.toolUseID}
+						onDone={shiftToolUseConfirmQueue}
+						onReject={handlePermissionReject}
+						toolUseConfirm={activeToolUseConfirm}
+						toolUseContext={activeToolUseConfirm.toolUseContext}
+						verbose={false}
+						workerBadge={undefined}
+						currentMessageCount={messages.length}
+					/>
+				</Box>
+			) : null}
 		</Box>
 	);
 }

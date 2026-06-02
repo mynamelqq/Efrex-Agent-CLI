@@ -3,6 +3,7 @@ import {Box, Text} from '../ink.js';
 import chalk from 'chalk';
 import {stringWidth} from '../ink/stringWidth.js';
 import MarkdownText from './MarkdownText.js';
+import { OffscreenFreeze } from './OffscreenFreeze.js';
 
 const USER_MESSAGE_BG = '#2e2f30';
 const USER_MESSAGE_FG = '#f0f0ea';
@@ -68,24 +69,25 @@ export default function MessageViewport({
   return (
     <Box flexDirection="column" flexShrink={0} width="100%">
       {headerLines?.map((line, index) => (
-        <Text key={`header-${index}`} wrap="truncate-end">
-          {line || ' '}
-        </Text>
+        <OffscreenFreeze key={`header-${index}`}>
+          <Text wrap="truncate-end">
+            {line || ' '}
+          </Text>
+        </OffscreenFreeze>
       ))}
       {alertMessage ? (
         <Text color="redBright">错误: {alertMessage}</Text>
       ) : null}
-      {messages.map((message, index) => (
-        <Box key={message.id} flexDirection="column" width="100%">
-          {shouldInsertViewportSpacer(messages[index - 1], message) ? (
-            <Text>{' '}</Text>
-          ) : null}
-          {renderMessageNode(message, width, blinkOn, variant)}
-          {message.role === 'meta' && index < messages.length - 1 ? (
-            <Text>{' '}</Text>
-          ) : null}
-        </Box>
-      ))}
+		{messages.map((message, index) => (
+			<OffscreenFreeze key={message.id}>
+				<Box flexDirection="column" width="100%">
+					{shouldInsertViewportSpacer(messages[index - 1], message) ? (
+						<Text>{' '}</Text>
+					) : null}
+					{renderMessageNode(message, width, blinkOn, variant)}
+				</Box>
+			</OffscreenFreeze>
+		))}
       {statusLine ? (
         <Text color="yellow">{statusLine}</Text>
       ) : null}
@@ -94,31 +96,27 @@ export default function MessageViewport({
 }
 
 function shouldInsertViewportSpacer(
-  previousMessage: ViewportMessage | undefined,
-  currentMessage: ViewportMessage,
+	previousMessage: ViewportMessage | undefined,
+	currentMessage: ViewportMessage,
 ): boolean {
-  if (!previousMessage) {
-    return false;
-  }
+	if (!previousMessage) {
+		return false;
+	}
 
-  // Keep tool results/progress visually attached to the tool call above them.
-  if (
-    currentMessage.role === 'tool' &&
-    currentMessage.toolDisplayStyle &&
-    currentMessage.toolDisplayStyle !== 'use'
-  ) {
-    return false;
-  }
+	// Keep tool results/progress visually attached to the tool call above them.
+	if (
+		currentMessage.role === 'tool' &&
+		currentMessage.toolDisplayStyle &&
+		currentMessage.toolDisplayStyle !== 'use'
+	) {
+		return false;
+	}
 
-  if (previousMessage.role === 'meta') {
-    return false;
-  }
+	if (previousMessage.role === 'meta') {
+		return false;
+	}
 
-  if (currentMessage.role === 'meta') {
-    return true;
-  }
-
-  return true;
+	return true;
 }
 
 function renderMessageNode(
@@ -128,6 +126,10 @@ function renderMessageNode(
   variant: 'default' | 'transcript',
 ): React.ReactNode {
   if (message.role === 'meta') {
+    if (message.content) {
+      return message.content;
+    }
+
     const content = message.text ? padMetaLine(message.text, width) : ' ';
     return (
       <Text key={message.id} color="gray" dimColor wrap="truncate-end">

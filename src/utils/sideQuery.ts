@@ -9,7 +9,7 @@ import { getLastApiCompletionTimestamp, setLastApiCompletionTimestamp } from '..
 import { getOpenAIClient } from '../services/api/openai/client.js';
 import { messagesToOpenAI } from '../services/api/openai/convertMessages.js';
 import { toolsToOpenAI } from '../services/api/openai/convertTools.js';
-import type { OpenAIToolSchema } from '../services/api/openai/types.js';
+import type { OpenAIToolSchema } from '../services/api/openai/convertTools.js';
 import type { AssistantMessage, UserMessage } from '../package/message.js';
 import { asSystemPrompt } from '../prompt.js';
 
@@ -84,7 +84,7 @@ function toInternalMessages(messages: MessageParam[]): (UserMessage | AssistantM
 
 function toOpenAITools(tools?: Tool[] | BetaToolUnion[]): ChatCompletionTool[] {
 	if (!tools?.length) return [];
-	return toolsToOpenAI(tools as OpenAIToolSchema[]);
+	return toolsToOpenAI(tools);
 }
 
 function toOpenAIResponseFormat(
@@ -147,7 +147,7 @@ export async function sideQuery(
 		stop_sequences,
 	} = opts;
 
-	const client = getOpenAIClient({
+	const client =await getOpenAIClient({
 		maxRetries,
 		source: 'side_query',
 	});

@@ -1,5 +1,9 @@
 import { getCwd } from './cwd.js'
-import type { BetaTool, BetaToolUnion } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs'
+import type Anthropic from '@anthropic-ai/sdk'
+import type {
+  BetaTool,
+  BetaToolUnion,
+} from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs'
 import { Tool, Tools, toolMatchesName } from 'src/Tool'
 import { ContentBlockParam } from 'src/package/message.js'
 import { SystemPrompt } from 'src/prompt.js'
@@ -37,11 +41,12 @@ import type {
   ToolUseSummaryMessage,
   UserMessage,
 } from 'src/package/message.js'
-import { createUserMessage } from './messages.js'
+import { createUserMessage, SYNTHETIC_MODEL } from './messages.js'
 import type { z } from 'zod/v4'
 import { toJSONSchema } from 'zod/v4'
 import { logForDebugging } from './debug.js'
 import { getToolSchemaCache } from './toolSchemaCache.js'
+import { last } from 'lodash'
 
 
 
@@ -65,13 +70,13 @@ export async function toolToAPISchema(
     ? `${tool.name}:${JSON.stringify(tool.inputJSONSchema)}`
     : tool.name
   const cache = getToolSchemaCache()
-  let base = cache.get(cacheKey) as BetaToolUnion | undefined
+  let base = cache.get(cacheKey) 
   if (!base) {
     const input_schema = (
       'inputJSONSchema' in tool && tool.inputJSONSchema
         ? tool.inputJSONSchema
         : toJSONSchema(tool.inputSchema)
-    ) as BetaTool['input_schema']
+    ) as Anthropic.Tool.InputSchema
     base = {
       name: tool.name,
       description: tool.searchHint || tool.name,
@@ -98,14 +103,31 @@ export function normalizeMessagesForAPI(
   let assistantMessageIndexesById = new Map<string, number>()
 
   for (const message of messages) {
-    if (message.type !== 'user' && message.type !== 'assistant') continue
+    if (message.type !== 'user' && message.type !== 'assistant'&&message.type !== 'system') continue
     if (message.isVirtual) continue
+    if (message.type === 'system')
+    {
+        // local_command system messages need to be included as user messages
+        // so the model can reference previous command output in later turns
+        const userMsg = createUserMessage({
+          content: message.content as string | ContentBlockParam[],
+          uuid: message.uuid,
+          timestamp: message.timestamp as string,
+        })
+        const lastMessage = last(result)
+        if (lastMessage?.type === 'user') {
+          result[result.length - 1] = mergeUserMessages(lastMessage, userMsg)
+        }
+        result.push(userMsg)
+    }
     if (message.type === 'user') {
       pushUserMessage(result, message as UserMessage)
       assistantMessageIndexesById = new Map()
       continue
     }
-
+    if (!isSyntheticApiErrorMessage(message)) {
+      continue
+    }
     pushAssistantMessage(
       result,
       normalizeAssistantMessageForAPI(message as AssistantMessage, tools),
@@ -334,7 +356,15 @@ function filterOrphanedThinkingOnlyMessages(
     return (content as unknown[]).some(isMeaningfulNonThinkingBlock)
   })
 }
-
+function isSyntheticApiErrorMessage(
+  message: Message,
+): message is AssistantMessage & { isApiErrorMessage: true } {
+  return (
+    message.type === 'assistant' &&
+    message.isApiErrorMessage === true &&
+    message.message?.model === SYNTHETIC_MODEL
+  )
+}
 function filterTrailingThinkingFromLastAssistant(
   messages: (UserMessage | AssistantMessage)[],
 ): (UserMessage | AssistantMessage)[] {

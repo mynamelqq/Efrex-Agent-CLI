@@ -325,13 +325,27 @@ export default class Ink {
   private handleResize = () => {
     const cols = this.options.stdout.columns || 80;
     const rows = this.options.stdout.rows || 24;
+    const prevCols = this.terminalColumns;
+    const prevRows = this.terminalRows;
     // Terminals often emit 2+ resize events for one user action (window
     // settling). Same-dimension events are no-ops; skip to avoid redundant
     // frame resets and renders.
-    if (cols === this.terminalColumns && rows === this.terminalRows) return;
+    if (cols === prevCols && rows === prevRows) return;
     this.terminalColumns = cols;
     this.terminalRows = rows;
     this.altScreenParkPatch = makeAltScreenParkPatch(this.terminalRows);
+
+    // Main screen, pure height growth: VS Code's integrated terminal can
+    // preserve the pre-resize buffer in scrollback and treat the repaint as
+    // a fresh page, duplicating the whole UI. We can safely skip the
+    // immediate repaint here because the terminal already added blank rows
+    // below the existing content. Update the cached viewport heights so the
+    // next real render doesn't treat this as a resize transition either.
+    if (!this.altScreenActive && cols === prevCols && rows > prevRows) {
+      this.frontFrame.viewport.height = rows;
+      this.backFrame.viewport.height = rows;
+      return;
+    }
 
     // Alt screen: reset frame buffers so the next render repaints from
     // scratch (prevFrameContaminated → every cell written, wrapped in
@@ -637,6 +651,27 @@ export default class Ink {
     const optimized = optimize(diff);
     const optimizeMs = performance.now() - tOptimize;
     const hasDiff = optimized.length > 0;
+    if (isDebugRepaintsEnabled() && !this.altScreenActive && hasDiff) {
+      const stdout = optimized
+        .filter(
+          (patch): patch is Extract<typeof patch, { type: 'stdout' }> =>
+            patch.type === 'stdout',
+        )
+        .map(patch => patch.content)
+        .join('');
+      logForDebugging('[REPAINT] main-screen frame', {
+        prevHeight: prevFrame.screen.height,
+        nextHeight: frame.screen.height,
+        viewportHeight: frame.viewport.height,
+        prevCursor: prevFrame.cursor,
+        nextCursor: frame.cursor,
+        clearTerminal: diff
+          .filter(patch => patch.type === 'clearTerminal')
+          .map(patch => patch.reason),
+        newlineCount: stdout.split('\n').length - 1,
+        patchCount: optimized.length,
+      });
+    }
     if (this.altScreenActive && hasDiff) {
       // Prepend CSI H to anchor the physical cursor to (0,0) so
       // log-update's relative moves compute from a known spot (self-healing

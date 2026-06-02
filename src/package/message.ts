@@ -33,8 +33,8 @@ export type BetaTool = {
 export type RenderableMessage =
   | AssistantMessage
   | UserMessage
-  | (import('@ant/model-provider').Message & { type: 'system' })
-  | (import('@ant/model-provider').Message & {
+  | (Message & { type: 'system' })
+  | (Message & {
       type: 'attachment'
       attachment: {
         type: string
@@ -42,8 +42,9 @@ export type RenderableMessage =
         [key: string]: unknown
       }
     })
-  | (import('@ant/model-provider').Message & { type: 'progress' })
-  | import('@ant/model-provider').GroupedToolUseMessage
+  | (Message & { type: 'progress' })
+
+
 export type BetaToolUnion = BetaTool
 export interface ToolResultBlockParam {
   tool_use_id: string;
@@ -81,13 +82,10 @@ export type Message = {
     structuredContent?: Record<string, unknown>
   }
   message?: {
-    role?: ChatCompletionMessageParam['role']
+    role?: string
+    id?: string
     content?: MessageContent
-    tool_calls?: ChatCompletionMessageToolCall[]
-    tool_call_id?: string
     usage?: BetaUsage | Record<string, unknown>
-    refusal?: string | null
-    finish_reason?: string | null
     [key: string]: unknown
   }
   attachment?: {
@@ -130,8 +128,17 @@ export type SystemAPIErrorMessage = SystemMessage
 export type SystemApiMetricsMessage = SystemMessage
 export type SystemAwaySummaryMessage = SystemMessage
 export type SystemBridgeStatusMessage = SystemMessage
-export type SystemCompactBoundaryMessage = SystemMessage & {
-  compactMetadata?: Record<string, unknown>
+export type SystemCompactBoundaryMessage = Message & {
+  type: 'system'
+  compactMetadata: {
+    preservedSegment?: {
+      headUuid: UUID
+      tailUuid: UUID
+      anchorUuid: UUID
+      [key: string]: unknown
+    }
+    [key: string]: unknown
+  }
 }
 export type SystemInformationalMessage = SystemMessage
 export type SystemMemorySavedMessage = SystemMessage
@@ -147,7 +154,7 @@ export type NormalizedUserMessage = UserMessage
 export type NormalizedAssistantMessage<T = unknown> = AssistantMessage & {
   normalized?: T
 }
-export type NormalizedMessage = UserMessage | AssistantMessage
+export type NormalizedMessage =Message
 export type PartialCompactDirection = string
 export type MessageOrigin = string
 
