@@ -332,3 +332,8 @@ customTitle、最新的branch、tag等，接着在logFullLog中加载全部文�
 
 注意到每次通过工具请求都会重新复制一遍界面，让codex给我一直整，参考原项目等等，一直调试最后把非全屏权限框改成绝对覆盖层，不再参与主消息流高度。- 主屏静态帧不再用换行恢复光标。
 - 新增长行先清空再重绘，避免旧内容残影。终于好了
+6.2，6.3
+复制界面的问题基本上处理完了，主要是codex看错参考项目的布局了，改了好久
+工具的调用和结构不对应的问题，原项目都是tool_use 和tool_result 都按content block 逐个渲染，不是按整条 message 渲染，我当前的项目getToolResultBlock() 只 find() 第一个 tool_result所以
+会有不匹配的问题，肯定要找对应的tool_use_id才行
+初步加上了/resume功能，还有好多恢复的功能比如metedata、fileHistory等我都暂时不考虑

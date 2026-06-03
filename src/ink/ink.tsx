@@ -198,6 +198,15 @@ export default class Ink {
     x: number;
     y: number;
   } | null = null;
+  private preservedMainScreenState: {
+    frontFrame: Frame;
+    backFrame: Frame;
+    displayCursor: {
+      x: number;
+      y: number;
+    } | null;
+    prevFrameContaminated: boolean;
+  } | null = null;
   constructor(private readonly options: Options) {
     autoBind(this);
     if (this.options.patchConsole) {
@@ -941,13 +950,54 @@ export default class Ink {
    * the first alt-screen frame (and first main-screen frame on exit) is
    * a full redraw with no stale diff state.
    */
-  setAltScreenActive(active: boolean, mouseTracking = false): void {
+  setAltScreenActive(active: boolean, mouseTracking = false, options?: {
+    preserveMainScreen?: boolean;
+    skipRepaint?: boolean;
+  }): void {
     if (this.altScreenActive === active) return;
+    if (active && options?.preserveMainScreen) {
+      this.preservedMainScreenState = {
+        frontFrame: this.frontFrame,
+        backFrame: this.backFrame,
+        displayCursor: this.displayCursor ? {
+          ...this.displayCursor
+        } : null,
+        prevFrameContaminated: this.prevFrameContaminated
+      };
+    }
     this.altScreenActive = active;
     this.altScreenMouseTracking = active && mouseTracking;
     if (active) {
       this.resetFramesForAltScreen();
+    } else if (options?.skipRepaint) {
+      if (this.preservedMainScreenState) {
+        this.frontFrame = this.preservedMainScreenState.frontFrame;
+        this.backFrame = this.preservedMainScreenState.backFrame;
+        this.displayCursor = this.preservedMainScreenState.displayCursor;
+        this.prevFrameContaminated =
+          this.preservedMainScreenState.prevFrameContaminated;
+      } else {
+        this.frontFrame = emptyFrame(
+          this.frontFrame.viewport.height,
+          this.frontFrame.viewport.width,
+          this.stylePool,
+          this.charPool,
+          this.hyperlinkPool
+        );
+        this.backFrame = emptyFrame(
+          this.backFrame.viewport.height,
+          this.backFrame.viewport.width,
+          this.stylePool,
+          this.charPool,
+          this.hyperlinkPool
+        );
+        this.log.reset();
+        this.displayCursor = null;
+        this.prevFrameContaminated = false;
+      }
+      this.preservedMainScreenState = null;
     } else {
+      this.preservedMainScreenState = null;
       this.repaint();
     }
   }

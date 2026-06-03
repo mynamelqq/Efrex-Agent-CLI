@@ -99,7 +99,25 @@ export const MAX_SANITIZED_LENGTH = 200
 function simpleHash(str: string): string {
   return Math.abs(djb2Hash(str)).toString(36)
 }
-
+export function getTranscriptPathForSession(sessionId: string): string {
+  // When asking for the CURRENT session's transcript, honor sessionProjectDir
+  // the same way getTranscriptPath() does. Without this, hooks get a
+  // transcript_path computed from originalCwd while the actual file was
+  // written to sessionProjectDir (set by switchActiveSession on resume/branch)
+  // — different directories, so the hook sees MISSING (gh-30217). CC-34
+  // made sessionId + sessionProjectDir atomic precisely to prevent this
+  // kind of drift; this function just wasn't updated to read both.
+  //
+  // For OTHER session IDs we can only guess via originalCwd — we don't
+  // track a sessionId→projectDir map. Callers wanting a specific other
+  // session's path should pass fullPath explicitly (most save* functions
+  // already accept this).
+  if (sessionId === getSessionId()) {
+    return getTranscriptPath()
+  }
+  const projectDir = getProjectDir(getOriginalCwd())
+  return join(projectDir, `${sessionId}.jsonl`)
+}
 export function djb2Hash(str: string): number {
   let hash = 0
   for (let i = 0; i < str.length; i++) {
@@ -2364,7 +2382,52 @@ export function restoreSessionMetadata(meta: {
 export async function resetSessionFilePointer() {
   getProject().resetSessionFile()
 }
+function convertToLogOption(//将消息转换为日志选项
+  transcript: TranscriptMessage[],
+  value: number = 0,
+  summary?: string,
+  customTitle?: string,
+  fileHistorySnapshots?: FileHistorySnapshot[],
+  tag?: string,
+  fullPath?: string,
+  attributionSnapshots?: AttributionSnapshotMessage[],
+  agentSetting?: string,
+  contentReplacements?: ContentReplacementRecord[],
+): LogOption {
+  const lastMessage = transcript.at(-1)!
+  const firstMessage = transcript[0]!
 
+  // Get the first user message for the prompt
+  const firstPrompt = extractFirstPrompt(transcript)
+
+  // Create timestamps from message timestamps
+  const created = new Date(firstMessage.timestamp)
+  const modified = new Date(lastMessage.timestamp)
+
+  return {
+    date: lastMessage.timestamp,
+    messages: removeExtraFields(transcript),
+    fullPath,
+    value,
+    created,
+    modified,
+    firstPrompt,
+    messageCount: countVisibleMessages(transcript),
+    isSidechain: firstMessage.isSidechain,
+    teamName: firstMessage.teamName,
+    agentName: firstMessage.agentName,
+    agentSetting,
+    leafUuid: lastMessage.uuid,
+    summary,
+    customTitle,
+    tag,
+    fileHistorySnapshots: fileHistorySnapshots,
+    attributionSnapshots: attributionSnapshots,
+    contentReplacements,
+    gitBranch: lastMessage.gitBranch,
+    projectPath: firstMessage.cwd,
+  }
+}
 /**
  * Clear all cached session metadata (title, tag, agent name/color).
  * Called when /clear creates a new session so stale metadata
@@ -2375,4 +2438,450 @@ export function clearSessionMetadata(): void {
   project.currentSessionTitle = undefined
   project.currentSessionTag = undefined
   project.currentSessionLastPrompt = undefined
+}
+export async function getLastSessionLog(
+  sessionId: UUID,
+): Promise<LogOption | null> {
+  // Single read: load all session data at once instead of reading the file twice
+  const {
+    messages,
+    summaries,
+    customTitles,
+    tags,
+    agentSettings,
+    fileHistorySnapshots,
+    attributionSnapshots,
+    contentReplacements,
+    contextCollapseCommits,
+    contextCollapseSnapshot,
+  } = await loadSessionFile(sessionId)
+  if (messages.size === 0) return null
+  // Prime getSessionMessages cache so recordTranscript (called after REPL
+  // mount on --resume) skips a second full file load. -170~227ms on large sessions.
+  // Guard: only prime if cache is empty. Mid-session callers (e.g. IssueFeedback)
+  // may call getLastSessionLog on the current session — overwriting a live cache
+  // with a stale disk snapshot would lose unflushed UUIDs and break dedup.
+  if (!getSessionMessages.cache.has(sessionId)) {
+    getSessionMessages.cache.set(
+      sessionId,
+      Promise.resolve(new Set(messages.keys())),
+    )
+  }
+
+  // Find the most recent non-sidechain message
+  const lastMessage = findLatestMessage(messages.values(), m => !m.isSidechain)
+  if (!lastMessage) return null
+
+  // Build the transcript chain from the last message
+  const transcript = buildConversationChain(messages, lastMessage)
+
+  const summary = summaries.get(lastMessage.uuid)
+  const customTitle = customTitles.get(lastMessage.sessionId as UUID)
+  const tag = tags.get(lastMessage.sessionId as UUID)
+  const agentSetting = agentSettings.get(sessionId)
+  return {
+    ...convertToLogOption(
+      transcript,
+      0,
+      summary,
+      customTitle,
+      buildFileHistorySnapshotChain(fileHistorySnapshots, transcript),
+      tag,
+      getTranscriptPathForSession(sessionId),
+      buildAttributionSnapshotChain(attributionSnapshots, transcript),
+      agentSetting,
+      contentReplacements.get(sessionId) ?? [],
+    ),
+    contextCollapseCommits: contextCollapseCommits.filter(
+      e => e.sessionId === sessionId,
+    ),
+    contextCollapseSnapshot:
+      contextCollapseSnapshot?.sessionId === sessionId
+        ? contextCollapseSnapshot
+        : undefined,
+  }
+}
+/**
+ * Number of sessions to enrich on the initial load of the resume picker.
+ * Each enrichment reads up to 128 KB per file (head + tail), so 50 sessions
+ * means ~6.4 MB of I/O — fast on any modern filesystem while giving users
+ * a much better initial view than the previous default of 10.
+ */
+const INITIAL_ENRICH_COUNT = 50
+/**
+ * Loads message logs from all project directories.
+ * @param limit Optional limit on number of session files to load per project (used when no index exists)
+ * @returns List of message logs sorted by date
+ */
+export async function loadAllProjectsMessageLogs(
+  limit?: number,
+  options?: { skipIndex?: boolean; initialEnrichCount?: number },
+): Promise<LogOption[]> {
+  if (options?.skipIndex) {
+    // Load all sessions with full message data (e.g. for /insights analysis)
+    return loadAllProjectsMessageLogsFull(limit)
+  }
+  const result = await loadAllProjectsMessageLogsProgressive(
+    limit,
+    options?.initialEnrichCount ?? INITIAL_ENRICH_COUNT,
+  )
+  return result.logs
+}
+async function loadAllProjectsMessageLogsFull(
+  limit?: number,
+): Promise<LogOption[]> {
+  const projectsDir = getProjectsDir()
+
+  let dirents: Dirent[]
+  try {
+    dirents = await readdir(projectsDir, { withFileTypes: true })
+  } catch {
+    return []
+  }
+
+  const projectDirs = dirents
+    .filter(dirent => dirent.isDirectory())
+    .map(dirent => join(projectsDir, dirent.name))
+
+  const logsPerProject = await Promise.all(
+    projectDirs.map(projectDir => getLogsWithoutIndex(projectDir, limit)),
+  )
+  const allLogs = logsPerProject.flat()
+
+  // Deduplicate — same session+leaf can appear in multiple project dirs.
+  // This path creates one LogOption per leaf, so use sessionId+leafUuid key.
+  const deduped = new Map<string, LogOption>()
+  for (const log of allLogs) {
+    const key = `${log.sessionId ?? ''}:${log.leafUuid ?? ''}`
+    const existing = deduped.get(key)
+    if (!existing || log.modified.getTime() > existing.modified.getTime()) {
+      deduped.set(key, log)
+    }
+  }
+
+  // deduped values are fresh from getLogsWithoutIndex — safe to mutate
+  const sorted = sortLogs([...deduped.values()])
+  sorted.forEach((log, i) => {
+    log.value = i
+  })
+  return sorted
+}
+/**
+ * Loads message logs from all worktrees of the same git repository.
+ * Falls back to loadMessageLogs if no worktrees provided.
+ *
+ * Uses pure filesystem metadata for fast loading.
+ *
+ * @param worktreePaths Array of worktree paths (from getWorktreePaths)
+ * @param limit Optional limit on number of session files to load per project
+ * @returns List of message logs sorted by date
+ */
+/**
+ * Result of loading session logs with progressive enrichment support.
+ */
+export type SessionLogResult = {
+  /** Enriched logs ready for display */
+  logs: LogOption[]
+  /** Full stat-only list for progressive loading (call enrichLogs to get more) */
+  allStatLogs: LogOption[]
+  /** Index into allStatLogs where progressive loading should continue from */
+  nextIndex: number
+}
+export async function loadAllProjectsMessageLogsProgressive(
+  limit?: number,
+  initialEnrichCount: number = INITIAL_ENRICH_COUNT,
+): Promise<SessionLogResult> {
+  const projectsDir = getProjectsDir()
+
+  let dirents: Dirent[]
+  try {
+    dirents = await readdir(projectsDir, { withFileTypes: true })
+  } catch {
+    return { logs: [], allStatLogs: [], nextIndex: 0 }
+  }
+
+  const projectDirs = dirents
+    .filter(dirent => dirent.isDirectory())
+    .map(dirent => join(projectsDir, dirent.name))
+
+  const rawLogs: LogOption[] = []
+  for (const projectDir of projectDirs) {
+    rawLogs.push(...(await getSessionFilesLite(projectDir, limit)))
+  }
+  // Deduplicate — same session can appear in multiple project dirs
+  const sorted = deduplicateLogsBySessionId(rawLogs)
+
+  const { logs, nextIndex } = await enrichLogs(sorted, 0, initialEnrichCount)
+
+  // enrichLogs returns fresh unshared objects — safe to mutate in place
+  logs.forEach((log, i) => {
+    log.value = i
+  })
+  return { logs, allStatLogs: sorted, nextIndex }
+}
+
+
+
+/**
+ * Gets logs by loading all session files fully, bypassing the session index.
+ * Use this when you need full message data (e.g., for /insights analysis).
+
+ */
+async function getLogsWithoutIndex(
+  projectDir: string,
+  limit?: number,
+): Promise<LogOption[]> {
+  const sessionFilesMap = await getSessionFilesWithMtime(projectDir)
+  if (sessionFilesMap.size === 0) return []
+
+  // If limit specified, only load N most recent files by mtime
+  let filesToProcess: Array<{ path: string; mtime: number }>
+  if (limit && sessionFilesMap.size > limit) {
+    filesToProcess = [...sessionFilesMap.values()]
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, limit)
+  } else {
+    filesToProcess = [...sessionFilesMap.values()]
+  }
+
+  const logs: LogOption[] = []
+  for (const fileInfo of filesToProcess) {
+    try {
+      const fileLogOptions = await loadAllLogsFromSessionFile(fileInfo.path)
+      logs.push(...fileLogOptions)
+    } catch {
+      logForDebugging(`Failed to load session file: ${fileInfo.path}`)
+    }
+  }
+
+  return logs
+}
+
+/**
+ * Loads all logs from a single session file with full message data.
+ * Builds a LogOption for each leaf message in the file.
+ */
+export async function loadAllLogsFromSessionFile(
+  sessionFile: string,
+  projectPathOverride?: string,
+): Promise<LogOption[]> {
+  const {
+    messages,
+    summaries,
+    customTitles,
+    tags,
+    agentNames,
+    agentColors,
+    agentSettings,
+    prNumbers,
+    prUrls,
+    prRepositories,
+    modes,
+    fileHistorySnapshots,
+    attributionSnapshots,
+    contentReplacements,
+    leafUuids,
+  } = await loadTranscriptFile(sessionFile, { keepAllLeaves: true })
+
+  if (messages.size === 0) return []
+
+  const leafMessages: TranscriptMessage[] = []
+  // Build parentUuid → children index once (O(n)), so trailing-message lookup is O(1) per leaf
+  const childrenByParent = new Map<UUID, TranscriptMessage[]>()
+  for (const msg of messages.values()) {
+    if (leafUuids.has(msg.uuid)) {
+      leafMessages.push(msg)
+    } else if (msg.parentUuid) {
+      const siblings = childrenByParent.get(msg.parentUuid)
+      if (siblings) {
+        siblings.push(msg)
+      } else {
+        childrenByParent.set(msg.parentUuid, [msg])
+      }
+    }
+  }
+
+  const logs: LogOption[] = []
+
+  for (const leafMessage of leafMessages) {
+    const chain = buildConversationChain(messages, leafMessage)
+    if (chain.length === 0) continue
+
+    // Append trailing messages that are children of the leaf
+    const trailingMessages = childrenByParent.get(leafMessage.uuid)
+    if (trailingMessages) {
+      // ISO-8601 UTC timestamps are lexically sortable
+      trailingMessages.sort((a, b) =>
+        a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0,
+      )
+      chain.push(...trailingMessages)
+    }
+
+    const firstMessage = chain[0]!
+    const sessionId = leafMessage.sessionId as UUID
+
+    logs.push({
+      date: leafMessage.timestamp,
+      messages: removeExtraFields(chain),
+      fullPath: sessionFile,
+      value: 0,
+      created: new Date(firstMessage.timestamp),
+      modified: new Date(leafMessage.timestamp),
+      firstPrompt: extractFirstPrompt(chain),
+      messageCount: countVisibleMessages(chain),
+      isSidechain: firstMessage.isSidechain ?? false,
+      sessionId,
+      leafUuid: leafMessage.uuid,
+      summary: summaries.get(leafMessage.uuid),
+      customTitle: customTitles.get(sessionId),
+      tag: tags.get(sessionId),
+      agentName: agentNames.get(sessionId),
+      agentColor: agentColors.get(sessionId),
+      agentSetting: agentSettings.get(sessionId),
+      mode: modes.get(sessionId) as LogOption['mode'],
+      prNumber: prNumbers.get(sessionId),
+      prUrl: prUrls.get(sessionId),
+      prRepository: prRepositories.get(sessionId),
+      gitBranch: leafMessage.gitBranch,
+      projectPath: projectPathOverride ?? firstMessage.cwd,
+      fileHistorySnapshots: buildFileHistorySnapshotChain(
+        fileHistorySnapshots,
+        chain,
+      ),
+      attributionSnapshots: buildAttributionSnapshotChain(
+        attributionSnapshots,
+        chain,
+      ),
+      contentReplacements: contentReplacements.get(sessionId) ?? [],
+    })
+  }
+
+  return logs
+}
+
+/**
+ * Deduplicates logs by sessionId, keeping the entry with the newest
+ * modified time. Returns sorted logs with sequential value indices.
+ */
+function deduplicateLogsBySessionId(logs: LogOption[]): LogOption[] {
+  const deduped = new Map<string, LogOption>()
+  for (const log of logs) {
+    if (!log.sessionId) continue
+    const existing = deduped.get(log.sessionId)
+    if (!existing || log.modified.getTime() > existing.modified.getTime()) {
+      deduped.set(log.sessionId, log)
+    }
+  }
+  return sortLogs([...deduped.values()]).map((log, i) => ({
+    ...log,
+    value: i,
+  }))
+}
+
+export async function loadSameRepoMessageLogs(
+  worktreePaths: string[],
+  limit?: number,
+  initialEnrichCount: number = INITIAL_ENRICH_COUNT,
+): Promise<LogOption[]> {
+  const result = await loadSameRepoMessageLogsProgressive(
+    worktreePaths,
+    limit,
+    initialEnrichCount,
+  )
+  return result.logs
+}
+export async function loadSameRepoMessageLogsProgressive(
+  worktreePaths: string[],
+  limit?: number,
+  initialEnrichCount: number = INITIAL_ENRICH_COUNT,
+): Promise<SessionLogResult> {
+  logForDebugging(
+    `/resume: loading sessions for cwd=${getOriginalCwd()}, worktrees=[${worktreePaths.join(', ')}]`,
+  )
+  const allStatLogs = await getStatOnlyLogsForWorktrees(worktreePaths, limit)
+  logForDebugging(`/resume: found ${allStatLogs.length} session files on disk`)
+
+  const { logs, nextIndex } = await enrichLogs(
+    allStatLogs,
+    0,
+    initialEnrichCount,
+  )
+
+  // enrichLogs returns fresh unshared objects — safe to mutate in place
+  logs.forEach((log, i) => {
+    log.value = i
+  })
+  return { logs, allStatLogs, nextIndex }
+}
+/**
+ * Gets stat-only logs for worktree paths (no file reads).
+ */
+async function getStatOnlyLogsForWorktrees(
+  worktreePaths: string[],
+  limit?: number,
+): Promise<LogOption[]> {
+  const projectsDir = getProjectsDir()
+
+  if (worktreePaths.length <= 1) {
+    const cwd = getOriginalCwd()
+    const projectDir = getProjectDir(cwd)
+    return getSessionFilesLite(projectDir, undefined, cwd)
+  }
+
+  // On Windows, drive letter case can differ between git worktree list
+  // output (e.g. C:/Users/...) and how paths were stored in project
+  // directories (e.g. c:/Users/...). Use case-insensitive comparison.
+  const caseInsensitive = process.platform === 'win32'
+
+  // Sort worktree paths by sanitized prefix length (longest first) so
+  // more specific matches take priority over shorter ones. Without this,
+  // a short prefix like -code-myrepo could match -code-myrepo-worktree1
+  // before the longer, more specific prefix gets a chance.
+  const indexed = worktreePaths.map(wt => {
+    const sanitized = sanitizePath(wt)
+    return {
+      path: wt,
+      prefix: caseInsensitive ? sanitized.toLowerCase() : sanitized,
+    }
+  })
+  indexed.sort((a, b) => b.prefix.length - a.prefix.length)
+
+  const allLogs: LogOption[] = []
+  const seenDirs = new Set<string>()
+
+  let allDirents: Dirent[]
+  try {
+    allDirents = await readdir(projectsDir, { withFileTypes: true })
+  } catch (e) {
+    // Fall back to current project
+    logForDebugging(
+      `Failed to read projects dir ${projectsDir}, falling back to current project: ${e}`,
+    )
+    const projectDir = getProjectDir(getOriginalCwd())
+    return getSessionFilesLite(projectDir, limit, getOriginalCwd())
+  }
+
+  for (const dirent of allDirents) {
+    if (!dirent.isDirectory()) continue
+    const dirName = caseInsensitive ? dirent.name.toLowerCase() : dirent.name
+    if (seenDirs.has(dirName)) continue
+
+    for (const { path: wtPath, prefix } of indexed) {
+      if (dirName === prefix || dirName.startsWith(prefix + '-')) {
+        seenDirs.add(dirName)
+        allLogs.push(
+          ...(await getSessionFilesLite(
+            join(projectsDir, dirent.name),
+            undefined,
+            wtPath,
+          )),
+        )
+        break
+      }
+    }
+  }
+
+  // Deduplicate by sessionId — the same session can appear in multiple
+  // worktree project dirs. Keep the entry with the newest modified time.
+  return deduplicateLogsBySessionId(allLogs)
 }

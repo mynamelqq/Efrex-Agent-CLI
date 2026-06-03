@@ -1,10 +1,13 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import chalk from 'chalk';
 // import { useMainLoopModel } from './hooks/useMainLoopModel.js';
-import { CommandResultDisplay } from './types/command.js';
-import { Command,getCommandName } from './types/command.js';
+import { Command, getCommandName } from './types/command.js';
+import { restoreSessionStateFromLog } from './utils/sessionRestore.js';
 import { useQueueProcessor } from './hooks/useQueueProcessor.js';
-import { randomUUID } from 'node:crypto';
+import { UUID } from 'node:crypto';
+import { LogOption } from './types/logs.js';
+import { dirname } from 'path';
+import { ResumeEntrypoint } from './types/command.js';
 import { FileHistoryState } from './utils/fileHistory.js';
 import { isCompactBoundaryMessage } from './utils/messages.js';
 import {
@@ -16,10 +19,10 @@ import {
 } from './ink.js';
 import { getTerminalFocused } from './ink/terminal-focus-state.js';
 import instances from './ink/instances.js';
+import { resetCostState, switchSession } from './bootstrap/state.js';
 import { stringWidth } from './ink/stringWidth.js';
-import { createAbortController } from './utils/abortController.js';
-import { createFileStateCacheWithSizeLimit,READ_FILE_STATE_CACHE_SIZE } from './utils/fileStateCache.js';
-import { useAppStateStore,useSetAppState } from './state/AppState.js';
+import { createFileStateCacheWithSizeLimit, READ_FILE_STATE_CACHE_SIZE } from './utils/fileStateCache.js';
+import { useAppStateStore } from './state/AppState.js';
 import { buildEffectiveSystemPrompt } from './utils/systemPrompt.js';
 import { addToHistory } from './history.js';
 import { useMemo } from 'react';
@@ -35,7 +38,6 @@ import MessagesScrollback from './components/MessagesScrollback.js';
 import FullscreenLayout from './components/FullscreenLayout.js';
 import { ScrollKeybindingHandler } from './components/ScrollKeybindingHandler.js';
 import { PastedContent } from './utils/config.js';
-import { parseReferences } from './history.js';
 import type {
 	ApiRetryStatusEvent,
 	Message as MessageType
@@ -45,8 +47,7 @@ import {
 	type CompactProgressEvent,
 	type SetToolJSXFn,
 	type Tool,
-	type ToolPermissionContext,
-	type ToolUseContext
+	type ToolPermissionContext
 } from './Tool.js';
 import { expandPastedTextRefs } from './history.js';
 import { getAllBaseTools } from './tools.js';
@@ -55,12 +56,11 @@ import { handlePromptSubmit } from './utils/handlePromptSubmit.js';
 import { getAnthropicModel } from './utils/anthropicConfig.js';
 import { FileStateCache } from './utils/fileStateCache.js';
 import { getSystemPrompt } from './constants/prompts.js';
-import { getUserContext,getSystemContext } from './context.js';
-import { createUserMessage } from './utils/messages.js';
+import { getUserContext, getSystemContext } from './context.js';
 import { extractTag, isSystemLocalCommandMessage } from './utils/messages.js';
-import { getDefaultAppState, type AppState} from './state/AppStateStore.js';
+import { type AppState } from './state/AppStateStore.js';
 import { useAppState } from './state/AppState.js';
-import { EffortLevel, ThinkingConfig } from './utils/effort.js';
+import { ThinkingConfig } from './utils/effort.js';
 import { handleMessageFromStream } from './utils/handleMessageFromStream.js';
 import useCanUseTool from './hooks/useCanUseTool.js';
 import { QueryGuard } from './utils/QueryGuard.js';
@@ -91,6 +91,9 @@ import {
 import StatusAnimationRow from './components/StatusAnimationRow.js';
 import { CLI_APP_VERSION } from 'utils/load.js';
 import { logForDebugging } from './utils/debug.js';
+import { deserializeMessages } from './utils/conservationRecovery.js';
+import { asSessionId } from './types/ids.js';
+import { clearSessionMetadata, resetSessionFilePointer, restoreSessionMetadata } from './utils/sessionStorage.js';
 type ViewportMessage = {
 	id: number;
 	role: 'user' | 'assistant' | 'tool' | 'meta';
@@ -948,29 +951,28 @@ function buildViewportMessages(
 		}
 
 		if (message.type === 'user' && isToolResultUserMessage(message)) {
-			const toolResultBlock = getToolResultBlock(message);
-			if (toolResultBlock) {
+			const toolResultBlocks = getToolResultBlocks(message);
+			for (const { block } of toolResultBlocks) {
 				const existingToolUseMessage = toolUseMessagesById.get(
-					toolResultBlock.toolUseId
+					block.tool_use_id
 				);
 				if (existingToolUseMessage) {
 					updateAssistantToolUseViewportMessage(
 						existingToolUseMessage,
-						toolResultBlock.isError ? 'error' : 'done'
+						Boolean(block.is_error) ? 'error' : 'done'
 					);
 				}
 			}
 
-			const viewportMessage = messageToViewport(
+			const viewportMessagesForToolResult = getToolResultViewportMessages(
 				message,
 				fallbackId,
 				messages,
 				tools,
 				verbose
 			);
-			if (viewportMessage) {
-				viewportMessage.toolDisplayStyle = 'result';
-				viewportMessages.push(viewportMessage);
+			if (viewportMessagesForToolResult.length > 0) {
+				viewportMessages.push(...viewportMessagesForToolResult);
 			}
 			appendCompletedTurnFooter(fallbackId);
 			return;
@@ -1107,6 +1109,105 @@ function getToolResultBlock(message: MessageType): {
 		isError: Boolean(block.is_error),
 		content: block.content
 	};
+}
+
+function getToolResultBlocks(message: MessageType): Array<{
+	block: { tool_use_id: string; is_error?: unknown; content?: unknown };
+	index: number;
+}> {
+	if (!Array.isArray(message.message?.content)) {
+		return [];
+	}
+
+	return message.message.content
+		.map((contentBlock, index) => {
+			if (!contentBlock || typeof contentBlock !== 'object') {
+				return null;
+			}
+
+			const typedBlock = contentBlock as {
+				type?: unknown;
+				tool_use_id?: unknown;
+				is_error?: unknown;
+				content?: unknown;
+			};
+			if (
+				typedBlock.type !== 'tool_result' ||
+				typeof typedBlock.tool_use_id !== 'string'
+			) {
+				return null;
+			}
+
+			return {
+				block: typedBlock as {
+					tool_use_id: string;
+					is_error?: unknown;
+					content?: unknown;
+				},
+				index
+			};
+		})
+		.filter(
+			(value): value is {
+				block: { tool_use_id: string; is_error?: unknown; content?: unknown };
+				index: number;
+			} => value !== null
+		);
+}
+
+function createSingleToolResultMessage(
+	message: MessageType,
+	block: {
+		tool_use_id: string;
+		is_error?: unknown;
+		content?: unknown;
+	}
+): MessageType {
+	if (!Array.isArray(message.message?.content)) {
+		return message;
+	}
+
+	return {
+		...message,
+		message: {
+			...message.message,
+			content: [
+				{
+					type: 'tool_result',
+					tool_use_id: block.tool_use_id,
+					is_error: block.is_error,
+					content: block.content
+				}
+			] as never
+		}
+	};
+}
+
+function getToolResultViewportMessages(
+	message: MessageType,
+	fallbackId: number,
+	messages: MessageType[],
+	tools: readonly Tool[],
+	verbose: boolean
+): ViewportMessage[] {
+	return getToolResultBlocks(message)
+		.map(({ block, index }) => {
+			const viewportMessage = messageToViewport(
+				createSingleToolResultMessage(message, block),
+				fallbackId * 100 + index + 1,
+				messages,
+				tools,
+				verbose
+			);
+			if (!viewportMessage) {
+				return null;
+			}
+
+			viewportMessage.toolDisplayStyle = 'result';
+			viewportMessage.toolUseId = block.tool_use_id;
+			return viewportMessage;
+		})
+		.filter((value): value is ViewportMessage => value !== null);
 }
 
 function findAssistantToolUse(
@@ -1738,6 +1839,136 @@ export default function QueryApp({
 		},
 		[setAppState]
 	);
+
+	function resetLoadingState() {
+		// Reset only the transient loading residue for the current turn.
+		loadingStartTimeRef.current = null;
+		setToolJSX(null);
+	}
+
+	const setToolJSX = useCallback<SetToolJSXFn>(args => {
+		if (args?.isLocalJSXCommand) {
+			const { clearLocalJSX: _clearLocalJSX, ...rest } = args;
+			localJSXCommandRef.current = {
+				...rest,
+				isLocalJSXCommand: true
+			};
+			setToolJSXInternal(rest);
+			return;
+		}
+
+		if (localJSXCommandRef.current) {
+			if (args?.clearLocalJSX) {
+				localJSXCommandRef.current = null;
+				setToolJSXInternal(null);
+			}
+			return;
+		}
+
+		if (args?.clearLocalJSX) {
+			setToolJSXInternal(null);
+			return;
+		}
+
+		setToolJSXInternal(args);
+	}, []);
+
+	const resume = useCallback(
+		async (sessionId: UUID, log: LogOption, entrypoint: ResumeEntrypoint) => {
+			const resumeStart = performance.now();
+			try {
+			// Deserialize messages to properly clean up the conversation
+			// This filters unresolved tool uses and adds a synthetic assistant message if needed
+			const messages = deserializeMessages(log.messages);
+			// For forks, generate a new plan slug and copy the plan content so the
+			// original and forked sessions don't clobber each other's plan files.
+			// For regular resumes, reuse the original session's plan slug.
+
+			// Restore file history and attribution state from the resumed conversation
+			restoreSessionStateFromLog(log, setAppState);
+			// if (log.fileHistorySnapshots) {
+			// 	void copyFileHistoryForResume(log);
+			// }
+			// Restore standalone agent context from the resumed conversation
+			// Always reset to the new session's values (or clear if none)
+
+			// void updateSessionName(log.agentName);
+
+			// Restore read file state from the message history
+			// restoreReadFileState(messages, log.projectPath ?? getOriginalCwd());
+
+			// Clear any active loading state (no queryId since we're not in a query)
+			resetLoadingState();
+			setAbortController(null);
+
+			// Get target session's costs BEFORE saving current session
+			// (saveCurrentSessionCosts overwrites the config, so we need to read first)
+			// const targetSessionCosts = getStoredSessionCosts(sessionId);
+
+			// Save current session's costs before switching to avoid losing accumulated costs
+			// saveCurrentSessionCosts();
+
+			// Reset cost state for clean slate before restoring target session
+			resetCostState();
+
+			// Switch session (id + project dir atomically). fullPath may point to
+			// a different project (cross-worktree, /branch); null derives from
+			// current originalCwd.
+			switchSession(asSessionId(sessionId), log.fullPath ? dirname(log.fullPath) : null);
+			// Rename asciicast recording to match the resumed session ID
+			// const { renameRecordingForSession } = await import('../utils/asciicast.js');
+			// await renameRecordingForSession();
+			await resetSessionFilePointer();
+
+			// Clear then restore session metadata so it's re-appended on exit via
+			// reAppendSessionMetadata. clearSessionMetadata must be called first:
+			// restoreSessionMetadata only sets-if-truthy, so without the clear,
+			// a session without an agent name would inherit the previous session's
+			// cached name and write it to the wrong transcript on first message.
+			clearSessionMetadata();
+			restoreSessionMetadata(log);
+	
+
+			// Restore target session's costs from the data we read earlier
+			// if (targetSessionCosts) {
+			// 	setCostStateForRestore(targetSessionCosts);
+			// }
+
+			// Reconstruct replacement state for the resumed session. Runs after
+			// setSessionId so any NEW replacements post-resume write to the
+			// resumed session's tool-results dir. Gated on ref.current: the
+			// initial mount already read the feature flag, so we don't re-read
+			// it here (mid-session flag flips stay unobservable in both
+			// directions).
+			//
+			// Skipped for in-session /branch: the existing ref is already correct
+			// (branch preserves tool_use_ids), so there's no need to reconstruct.
+			// createFork() does write content-replacement entries to the forked
+			// JSONL with the fork's sessionId, so `claude -r {forkId}` also works.
+			// if (contentReplacementStateRef.current && entrypoint !== 'fork') {
+			// contentReplacementStateRef.current = reconstructContentReplacementState(
+			// 	messages,
+			// 	log.contentReplacements ?? [],
+			// );
+			// }
+
+			// Reset messages to the provided initial messages
+			// Use a callback to ensure we're not dependent on stale state
+			setMessages(() => messages);
+
+			// Clear any active tool JSX
+			setToolJSX(null);
+
+			// Clear input to ensure no residual state
+			// setInputValue('');
+			setInput('');
+
+		} catch (error) {
+			throw error;
+		}
+		},
+		[resetLoadingState, setAppState, setMessages, setInput, setToolJSX],
+	);
 	const handleCyclePermissionMode = useCallback(() => {
 		const { nextMode, context: preparedContext } =
 			cyclePermissionMode(toolPermissionContext);
@@ -1799,33 +2030,6 @@ export default function QueryApp({
 		);
 	}, [filteredCommands]);
 
-	const setToolJSX = useCallback<SetToolJSXFn>(args => {
-		if (args?.isLocalJSXCommand) {
-			const { clearLocalJSX: _clearLocalJSX, ...rest } = args;
-			localJSXCommandRef.current = {
-				...rest,
-				isLocalJSXCommand: true
-			};
-			setToolJSXInternal(rest);
-			return;
-		}
-
-		if (localJSXCommandRef.current) {
-			if (args?.clearLocalJSX) {
-				localJSXCommandRef.current = null;
-				setToolJSXInternal(null);
-			}
-			return;
-		}
-
-		if (args?.clearLocalJSX) {
-			setToolJSXInternal(null);
-			return;
-		}
-
-		setToolJSXInternal(args);
-	}, []);
-
 
 	const handleCommandSelect = useCallback((command: Command) => {
 		const nextValue = `/${getCommandName(command)}${command.argumentHint ? ' ' : ''}`;
@@ -1847,6 +2051,7 @@ export default function QueryApp({
 
 		if (loading) {
 			queryGuard.forceEnd();
+			resetLoadingState();
 			abortControllerRef.current?.abort('user-cancel');
 			setAbortController(null);
 			return;
@@ -1864,7 +2069,7 @@ export default function QueryApp({
 			setExitHint(false);
 			exitTimerRef.current = null;
 		}, 800);
-	}, [exit, loading, queryGuard]);
+	}, [exit, loading, queryGuard, resetLoadingState]);
 
 	const repinScroll = useCallback(() => {
 		scrollRef.current?.scrollToBottom();
@@ -2157,6 +2362,7 @@ const getToolUseContext = useCallback(
 			appendSystemPrompt,
 			},
 			getAppState: () => store.getState(),
+			resume,
 			setAppState,
 			setResponseLength: updater => {
 				setCompactUiState(prev => {
@@ -2213,6 +2419,7 @@ const getToolUseContext = useCallback(
       setAppState,
       setMessages,
       disabled,
+	  resume,
       customSystemPrompt,
       appendSystemPrompt,
       activeTools,
@@ -2868,26 +3075,6 @@ const getToolUseContext = useCallback(
 		</Box>
 	);
 
-	const transcriptMessageLimit = 30;
-	const hiddenTranscriptMessageCount = Math.max(
-		0,
-		viewportMessages.length - transcriptMessageLimit
-	);
-	const transcriptViewportMessages = isFullscreenEnvEnabled()
-		? viewportMessages
-		: [
-				...(hiddenTranscriptMessageCount > 0
-					? [
-							{
-								id: TURN_META_ID_BASE - 1,
-								role: 'meta' as const,
-								text: `… ${hiddenTranscriptMessageCount} earlier messages hidden`
-							}
-						]
-					: []),
-				...viewportMessages.slice(-transcriptMessageLimit)
-			];
-
 	const transcriptScrollableContent = (
 		<Box flexDirection="column" width="100%" paddingTop={1}>
 			<Box paddingX={2} width="100%">
@@ -2907,7 +3094,7 @@ const getToolUseContext = useCallback(
 				<Box width={transcriptColumnWidth}>
 					<MessageViewport
 						headerLines={[]}
-						messages={transcriptViewportMessages}
+						messages={viewportMessages}
 						width={transcriptColumnWidth}
 						alertMessage={alertMessage}
 						statusLine={null}
@@ -2961,23 +3148,17 @@ const getToolUseContext = useCallback(
 						scrollRef={scrollRef}
 						isActive
 					/>
-				<FullscreenLayout
-					scrollRef={scrollRef}
-					scrollable={transcriptScrollableContent}
-					bottom={transcriptBottom}
-				/>
+					<FullscreenLayout
+						scrollRef={scrollRef}
+						scrollable={transcriptScrollableContent}
+						bottom={transcriptBottom}
+					/>
 				</AlternateScreen>
 			);
 		}
 
 		return (
-			<Box
-				flexDirection="column"
-				paddingX={1}
-				paddingY={0}
-				height={terminalRows}
-				overflow="hidden"
-			>
+			<AlternateScreen mouseTracking preserveMainScreenOnExit>
 				<ScrollKeybindingHandler
 					scrollRef={scrollRef}
 					isActive
@@ -2987,7 +3168,7 @@ const getToolUseContext = useCallback(
 					scrollable={nonFullscreenTranscriptScrollableContent}
 					bottom={transcriptBottom}
 				/>
-			</Box>
+			</AlternateScreen>
 		);
 	}
 
@@ -3011,8 +3192,8 @@ const getToolUseContext = useCallback(
 	return (
 		<Box flexDirection="column" paddingX={1} paddingY={0}>
 			{scrollableContent}
-			{bottomContent}
 			{toolPermissionOverlay}
+			{bottomContent}
 		</Box>
 	);
 }

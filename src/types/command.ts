@@ -5,7 +5,14 @@ import { SettingSource } from '../utils/settings/constants.js';
 import { EffortValue } from '../utils/effort.js';
 import { ContentBlockParam } from '@anthropic-ai/sdk/resources';
 import { ToolUseContext } from '../Tool.js';
-
+import { UUID } from 'crypto';
+import { LogOption } from './logs.js';
+export type ResumeEntrypoint =
+  | 'cli_flag'
+  | 'slash_command_picker'
+  | 'slash_command_session_id'
+  | 'slash_command_title'
+  | 'fork'
 
 
 export type LocalCommandResult =
@@ -49,6 +56,11 @@ export type LocalJSXCommandContext = ToolUseContext & {
   canUseTool?: CanUseToolFn
   setMessages: (updater: (prev: Message[]) => Message[]) => void
   onChangeAPIKey: () => void
+  resume?: (
+    sessionId: UUID,
+    log: LogOption,
+    entrypoint: ResumeEntrypoint,
+  ) => Promise<void>
 }
 /**
  * The call signature for a local command implementation.

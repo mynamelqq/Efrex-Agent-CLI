@@ -26,8 +26,6 @@ import {
 import { clearSessionCaches } from './cache'
 import instances from '../../ink/instances.js'
 
-
-
 export async function clearConversation({
   setMessages,
   readFileState,
@@ -66,7 +64,6 @@ export async function clearConversation({
   resetMainScroll?.()
   const ink = instances.get(process.stdout)
   ink?.invalidatePrevFrame()
-  ink?.scheduleScrollbackClear()
   // Force logo re-render by updating conversationId
   if (setConversationId) {
     setConversationId(randomUUID())

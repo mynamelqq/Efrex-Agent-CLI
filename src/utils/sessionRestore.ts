@@ -53,7 +53,7 @@ type CoordinatorModeApi = {
 /**
  * The loaded conversation data (return type of loadConversationForResume).
  */
-type ResumeLoadResult = {
+type ResumeLoadResult = {//加载会话数据的结果
   messages: Message[]
   fileHistorySnapshots?: FileHistorySnapshot[]
   attributionSnapshots?: AttributionSnapshotMessage[]
@@ -79,7 +79,7 @@ type ResumeLoadResult = {
  * mode persistence, and initial state computation. Called by both --continue
  * and --resume paths in main.tsx.
  */
-export async function processResumedConversation(
+export async function processResumedConversation(//处理恢复的会话数据
   result: ResumeLoadResult,
   opts: {
 
@@ -157,4 +157,20 @@ export async function processResumedConversation(
     //   ...(restoredAttribution && { attribution: restoredAttribution }),
     },
   }
+}
+/**
+ * Restore session state (file history, attribution, todos) from log on resume.
+ * Used by both SDK (print.ts) and interactive (REPL.tsx, main.tsx) resume paths.
+ */
+export function restoreSessionStateFromLog(
+  result: ResumeResult,
+  setAppState: (f: (prev: AppState) => AppState) => void,
+): void {
+  // Restore file history state
+  // if (result.fileHistorySnapshots && result.fileHistorySnapshots.length > 0) {
+  //   fileHistoryRestoreStateFromLog(result.fileHistorySnapshots, newState => {
+  //     setAppState(prev => ({ ...prev, fileHistory: newState }))
+  //   })
+  // }
+
 }

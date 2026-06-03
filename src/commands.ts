@@ -8,11 +8,12 @@ import { Command } from './types/command.js';
 import { isCommandEnabled } from './types/command.js';
 import { CommandResult } from './types/command.js';
 import { getCommandName } from './types/command.js';
+import resume from './commands/resume/index.js';
 import clear from './commands/clear/index.js';
 export const COMMANDS = memoize((): Command[] => [
   model,
   effort,
-  clear
+  clear,resume
 ].filter(Boolean))
 /**
  * Loads all command sources (skills, plugins, workflows). Memoized by cwd
