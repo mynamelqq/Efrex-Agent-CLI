@@ -1,6 +1,7 @@
 import figures from 'figures';
 import * as React from 'react';
 import { Box, Text, useInput, useWindowSize } from '../ink.js';
+import { stringWidth } from '../ink/stringWidth.js';
 import type { LogOption } from '../types/logs.js';
 import { formatLogMetadata } from '../utils/format.js';
 import { getLogDisplayTitle } from '../utils/logger.js';
@@ -32,9 +33,13 @@ export function LogSelector({
 		);
 	}, [logs]);
 
+	const reservedRows = logs.length > 0 ? 7 : 5;
 	const visibleCount = Math.max(
 		1,
-		Math.min(logs.length, Math.floor((maxHeight - 5) / 2) || logs.length)
+		Math.min(
+			logs.length,
+			Math.floor((maxHeight - reservedRows) / 2) || logs.length
+		)
 	);
 	const windowStart = Math.max(
 		0,
@@ -45,15 +50,23 @@ export function LogSelector({
 	);
 	const visibleLogs = logs.slice(windowStart, windowStart + visibleCount);
 	const selectedLog = logs[selectedIndex];
-	const titleWidth = Math.max(20, columns - 6);
+	const contentWidth = Math.max(32, columns - 4);
+	const rowWidth = Math.max(20, contentWidth - 1);
+	const dividerWidth = Math.max(1, Math.min(columns, 100));
 
 	useInput((input, key) => {
 		if (key.upArrow) {
+			if (logs.length === 0) {
+				return;
+			}
 			setSelectedIndex(index => (index <= 0 ? logs.length - 1 : index - 1));
 			return;
 		}
 
 		if (key.downArrow || key.tab) {
+			if (logs.length === 0) {
+				return;
+			}
 			setSelectedIndex(index => (index >= logs.length - 1 ? 0 : index + 1));
 			return;
 		}
@@ -74,46 +87,130 @@ export function LogSelector({
 	});
 
 	return (
-		<Box paddingX={1} flexDirection="column" marginTop={1}>
-			<Text bold color="cyanBright">
-				Resume Session
-				{logs.length > visibleCount ? (
-					<Text dimColor>
-						{' '}
-						({selectedIndex + 1}/{logs.length})
-					</Text>
-				) : null}
-			</Text>
-			<Text dimColor>
-				↑/↓ 选择，Enter 恢复，Esc 取消
-				{onToggleAllProjects
-					? `，Ctrl+A ${showAllProjects ? '仅当前项目' : '全部项目'}`
-					: ''}
-			</Text>
-			<Box flexDirection="column" marginTop={1}>
+		<Box flexDirection="column" height={maxHeight}>
+			<Box flexShrink={0}>
+				<Text color="ansi:blackBright">{'─'.repeat(dividerWidth)}</Text>
+			</Box>
+			<Box flexShrink={0}>
+				<Text> </Text>
+			</Box>
+
+			<Box flexShrink={0}>
+				<Text bold color="cyanBright">
+					Resume Session
+					{logs.length > visibleCount ? (
+						<Text color="ansi:blackBright">
+							{' '}
+							({selectedIndex + 1} of {logs.length})
+						</Text>
+					) : null}
+				</Text>
+			</Box>
+
+			<Box flexShrink={0} paddingLeft={2}>
+				<Text color="ansi:blackBright">scope </Text>
+				<Text color={showAllProjects ? 'yellowBright' : 'greenBright'}>
+					{showAllProjects ? 'all projects' : 'current project'}
+				</Text>
+				<Text color="ansi:blackBright"> · </Text>
+				<Text color="cyanBright">{logs.length}</Text>
+				<Text color="ansi:blackBright">
+					{' '}
+					resumable {logs.length === 1 ? 'session' : 'sessions'}
+				</Text>
+			</Box>
+
+			<Box flexShrink={0}>
+				<Text> </Text>
+			</Box>
+
+			<Box flexDirection="column" flexShrink={0}>
 				{visibleLogs.map((log, index) => {
 					const absoluteIndex = windowStart + index;
 					const isSelected = absoluteIndex === selectedIndex;
-					const title = truncateToWidth(
-						getLogDisplayTitle(log),
-						titleWidth
-					);
 
 					return (
-						<Box key={`${log.sessionId ?? log.fullPath ?? absoluteIndex}`} flexDirection="column">
-							<Box>
-								<Text color={isSelected ? 'cyanBright' : 'gray'}>
-									{isSelected ? `${figures.pointer} ` : '  '}
-								</Text>
-								<Text bold={isSelected} color={isSelected ? 'cyanBright' : undefined}>
-									{title}
-								</Text>
-							</Box>
-							<Text dimColor>{formatLogMetadata(log)}</Text>
-						</Box>
+						<SessionRow
+							key={`${log.sessionId ?? log.fullPath ?? absoluteIndex}`}
+							title={getLogDisplayTitle(log)}
+							metadata={formatLogMetadata(log)}
+							isSelected={isSelected}
+							index={absoluteIndex}
+							width={rowWidth}
+						/>
 					);
 				})}
 			</Box>
+
+			{logs.length > visibleCount ? (
+				<Box flexShrink={0} paddingLeft={2}>
+					<Text color="ansi:blackBright">
+						Showing {windowStart + 1}-{windowStart + visibleLogs.length}
+					</Text>
+				</Box>
+			) : null}
+
+			<Box paddingLeft={2} flexShrink={0}>
+				<Text color="ansi:blackBright">
+					<Text color="cyanBright">↑/↓</Text> navigate ·{' '}
+					<Text color="greenBright">Enter</Text> resume
+					{onToggleAllProjects
+						? ` · Ctrl+A show ${
+								showAllProjects ? 'current project' : 'all projects'
+							}`
+						: ''}
+					{' · Esc cancel'}
+				</Text>
+			</Box>
 		</Box>
 	);
+}
+
+function SessionRow({
+	title,
+	metadata,
+	isSelected,
+	index,
+	width,
+}: {
+	title: string;
+	metadata: string;
+	isSelected: boolean;
+	index: number;
+	width: number;
+}): React.ReactNode {
+	const marker = isSelected ? figures.pointer : ' ';
+	const number = String(index + 1);
+	const numberPrefix = `${number}. `;
+	const titleColor = isSelected ? 'cyanBright' : undefined;
+	const metadataColor = isSelected ? 'ansi:cyan' : 'ansi:blackBright';
+	const titlePrefixWidth = stringWidth(`${marker} ${numberPrefix}`);
+	const titleWidth = Math.max(1, width - titlePrefixWidth);
+	const metadataPrefixWidth = 4;
+	const metadataWidth = Math.max(1, width - metadataPrefixWidth);
+	const titleLine = padToWidth(
+		`${marker} ${numberPrefix}${truncateToWidth(title, titleWidth)}`,
+		width
+	);
+	const metadataLine = padToWidth(
+		`${' '.repeat(metadataPrefixWidth)}${truncateToWidth(
+			metadata,
+			metadataWidth
+		)}`,
+		width
+	);
+
+	return (
+		<Box flexDirection="column" paddingLeft={1} width={width + 1}>
+			<Text bold={isSelected} color={titleColor}>
+				{titleLine}
+			</Text>
+			<Text color={metadataColor}>{metadataLine}</Text>
+		</Box>
+	);
+}
+
+function padToWidth(text: string, width: number): string {
+	const padding = Math.max(0, width - stringWidth(text));
+	return padding === 0 ? text : `${text}${' '.repeat(padding)}`;
 }

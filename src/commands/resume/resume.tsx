@@ -99,7 +99,8 @@ function ResumePicker({
 				}
 				setLogs(nextLogs);
 			})
-			.catch(() => {
+			.catch(error => {
+				logError(error);
 				onDone('Failed to load conversations');
 			});
 	}, [onDone, reloadLogs, showAllProjects]);
@@ -112,8 +113,13 @@ function ResumePicker({
 				return;
 			}
 
-			const fullLog = isLiteLog(log) ? await loadFullLog(log) : log;
-			await onResume(sessionId, fullLog, 'slash_command_picker');
+			try {
+				const fullLog = isLiteLog(log) ? await loadFullLog(log) : log;
+				await onResume(sessionId, fullLog, 'slash_command_picker');
+			} catch (error) {
+				logError(error as Error);
+				onDone(`Failed to resume: ${(error as Error).message}`);
+			}
 		},
 		[onDone, onResume]
 	);
@@ -155,6 +161,10 @@ function findMatchingLogs(logs: LogOption[], arg: string): LogOption[] {
 	});
 }
 
+async function loadFullLogIfNeeded(log: LogOption): Promise<LogOption> {
+	return isLiteLog(log) ? await loadFullLog(log) : log;
+}
+
 export const call: LocalJSXCommandCall = async (onDone, context, args) => {
 	const onResume = async (
 		sessionId: UUID,
@@ -182,8 +192,15 @@ export const call: LocalJSXCommandCall = async (onDone, context, args) => {
 				onDone('No conversations found to resume');
 				return null;
 			}
-			return <ResumePicker initialLogs={logs} onDone={onDone} onResume={onResume} />;
-		} catch {
+			return (
+				<ResumePicker
+					initialLogs={logs}
+					onDone={onDone}
+					onResume={onResume}
+				/>
+			);
+		} catch (error) {
+			logError(error as Error);
 			onDone('Failed to load conversations');
 			return null;
 		}
@@ -200,11 +217,18 @@ export const call: LocalJSXCommandCall = async (onDone, context, args) => {
 
 	const maybeSessionId = validateUuid(arg);
 	if (maybeSessionId) {
-		const exactLog =
-			sameRepoLogs.find(log => getSessionIdFromLog(log) === maybeSessionId) ??
-			(await getLastSessionLog(maybeSessionId));
+		const exactLog = sameRepoLogs
+			.filter(log => getSessionIdFromLog(log) === maybeSessionId)
+			.sort((a, b) => b.modified.getTime() - a.modified.getTime())[0];
 		if (exactLog) {
-			const fullLog = isLiteLog(exactLog) ? await loadFullLog(exactLog) : exactLog;
+			const fullLog = await loadFullLogIfNeeded(exactLog);
+			void onResume(maybeSessionId, fullLog, 'slash_command_session_id');
+			return null;
+		}
+
+		const directLog = await getLastSessionLog(maybeSessionId);
+		if (directLog) {
+			const fullLog = await loadFullLogIfNeeded(directLog);
 			void onResume(maybeSessionId, fullLog, 'slash_command_session_id');
 			return null;
 		}
@@ -215,7 +239,7 @@ export const call: LocalJSXCommandCall = async (onDone, context, args) => {
 		const log = matches[0]!;
 		const sessionId = getSessionIdFromLog(log);
 		if (sessionId) {
-			const fullLog = isLiteLog(log) ? await loadFullLog(log) : log;
+			const fullLog = await loadFullLogIfNeeded(log);
 			void onResume(sessionId, fullLog, 'slash_command_title');
 			return null;
 		}

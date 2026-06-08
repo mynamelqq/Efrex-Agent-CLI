@@ -88,6 +88,16 @@ export function StatusAnimationRow({
 	const statusMessageWidth = stringWidth(statusText);
 	const glimmerSpeed = statusMode === 'requesting' ? 55 : 50;
 	const elapsedMs = startedAtMs === null ? 0 : Math.max(0, Date.now() - startedAtMs);
+	const longRunning = elapsedMs >= 60_000;
+	const veryLongRunning = elapsedMs >= 180_000;
+	const accentColor = veryLongRunning
+		? 'yellowBright'
+		: longRunning
+			? 'blueBright'
+			: statusMode === 'requesting'
+				? 'cyanBright'
+				: 'greenBright';
+	const textColor = statusMode === 'requesting' ? 'ansi:blueBright' : 'gray';
 	const glimmerCycleLength = statusMessageWidth + GLIMMER_PAD_COLUMNS * 2;
 	const cyclePosition =
 		glimmerCycleLength > 0 ? Math.floor(elapsedMs / glimmerSpeed) : 0;
@@ -114,21 +124,29 @@ export function StatusAnimationRow({
 			overflow="hidden"
 		>
 			<Box flexShrink={0} width={3}>
-				<Text color="yellowBright" dim={prefixDim} bold={prefixBold}>
+				<Text color={accentColor} dim={prefixDim} bold={prefixBold}>
 					{'• '}
 				</Text>
 			</Box>
 			<Box flexDirection="row" flexWrap="nowrap" flexGrow={1} flexShrink={0} overflow="hidden">
-				<Text color="gray">{segments.before}</Text>
+				<Text color={textColor}>{segments.before}</Text>
 				{segments.shimmer ? (
-					<Text color="cyanBright" bold>
+					<Text color={accentColor} bold>
 						{segments.shimmer}
 					</Text>
 				) : null}
-				<Text color="gray">{segments.after}</Text>
-				<Text dimColor>
-					{` (${elapsedText}${toolCountText ? ` · ${toolCountText}` : ''})`}
+				<Text color={textColor}>{segments.after}</Text>
+				<Text color="ansi:blackBright">{' ('}</Text>
+				<Text color={veryLongRunning ? 'yellowBright' : longRunning ? 'blueBright' : 'ansi:blackBright'}>
+					{elapsedText}
 				</Text>
+				{toolCountText ? (
+					<>
+						<Text color="ansi:blackBright"> · </Text>
+						<Text color="magentaBright">{toolCountText}</Text>
+					</>
+				) : null}
+				<Text color="ansi:blackBright">{')'}</Text>
 			</Box>
 		</Box>
 	);

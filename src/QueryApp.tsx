@@ -37,6 +37,7 @@ import MessageViewport from './components/MessageViewport.js';
 import MessagesScrollback from './components/MessagesScrollback.js';
 import FullscreenLayout from './components/FullscreenLayout.js';
 import { ScrollKeybindingHandler } from './components/ScrollKeybindingHandler.js';
+import WelcomeHeader from './components/WelcomeHeader.js';
 import { PastedContent } from './utils/config.js';
 import type {
 	ApiRetryStatusEvent,
@@ -719,8 +720,9 @@ function buildLocalCommandViewport(
 		return {
 			id: fallbackId,
 			role: 'tool',
-			text: stdout,
-			toolPhase: 'done'
+			text: ` ${stdout}`,
+			toolPhase: 'done',
+			toolDisplayStyle: 'result'
 		};
 	}
 
@@ -729,12 +731,30 @@ function buildLocalCommandViewport(
 		return {
 			id: fallbackId,
 			role: 'tool',
-			text: stderr,
-			toolPhase: 'error'
+			text: ` ${compressStderrLines(stderr, 2)}`,
+			toolPhase: 'error',
+			toolDisplayStyle: 'result'
 		};
 	}
 
 	return null;
+}
+
+function compressStderrLines(stderr: string, maxLines: number): string {
+	const lines = stderr.trimEnd().split('\n');
+	const safeMaxLines = Math.max(1, maxLines);
+	if (lines.length <= safeMaxLines) {
+		return stderr;
+	}
+
+	const headCount = Math.max(1, Math.ceil(safeMaxLines / 2));
+	const tailCount = Math.max(0, safeMaxLines - headCount);
+	const omitted = lines.length - headCount - tailCount;
+	return [
+		...lines.slice(0, headCount),
+		`… +${omitted} stderr lines`,
+		...(tailCount > 0 ? lines.slice(-tailCount) : [])
+	].join('\n');
 }
 
 function parseAssistantToolUse(
@@ -1898,7 +1918,12 @@ export default function QueryApp({
 			// restoreReadFileState(messages, log.projectPath ?? getOriginalCwd());
 
 			// Clear any active loading state (no queryId since we're not in a query)
-			resetLoadingState();
+			loadingStartTimeRef.current = null;
+			setToolJSX({
+				jsx: null,
+				shouldHidePromptInput: false,
+				clearLocalJSX: true
+			});
 			setAbortController(null);
 
 			// Get target session's costs BEFORE saving current session
@@ -1955,9 +1980,6 @@ export default function QueryApp({
 			// Reset messages to the provided initial messages
 			// Use a callback to ensure we're not dependent on stale state
 			setMessages(() => messages);
-
-			// Clear any active tool JSX
-			setToolJSX(null);
 
 			// Clear input to ensure no residual state
 			// setInputValue('');
@@ -2498,11 +2520,17 @@ const getToolUseContext = useCallback(
 			mainLoopModel: string,
 	
 		): Promise<void> => {
+			const startedAt = Date.now();
+			if (!queryGuard.getSnapshot()) {
+				loadingStartTimeRef.current = startedAt;
+			}
 			const thisGeneration = queryGuard.tryStart();
 			if (thisGeneration === null) {
 				return;
 			}
-			const startedAt = Date.now();
+			if (loadingStartTimeRef.current === null) {
+				loadingStartTimeRef.current = startedAt;
+			}
 			setMessages(oldMessages => [...oldMessages, ...newMessages]);
 			setInput('');
 			setStreamingAssistant({
@@ -2570,24 +2598,42 @@ const getToolUseContext = useCallback(
 	const onSubmit = useCallback(
 		async (value: string) => {
 			const text = value.trim();
+			const trimmedSlashInput = text.startsWith('/')
+				? expandPastedTextRefs(value, pastedContents).trim()
+				: '';
+			const slashSpaceIndex =
+				trimmedSlashInput.length > 0
+					? trimmedSlashInput.indexOf(' ')
+					: -1;
+			const slashCommandName =
+				slashSpaceIndex === -1
+					? trimmedSlashInput.slice(1)
+					: trimmedSlashInput.slice(1, slashSpaceIndex);
+			const matchingSlashCommand =
+				slashCommandName.length > 0
+					? commands.find(
+							cmd =>
+								isCommandEnabled(cmd) &&
+								(cmd.name === slashCommandName ||
+									cmd.aliases?.includes(slashCommandName) ||
+									getCommandName(cmd) === slashCommandName),
+					  )
+					: undefined;
+			const shouldSkipPromptHistory =
+				matchingSlashCommand?.type === 'local-jsx' &&
+				getCommandName(matchingSlashCommand) === 'resume';
 			repinScroll(); //滚回底部
 			if (text.startsWith('/')) {
 				//展开文本
-				const trimmedInput = expandPastedTextRefs(
-					value,
-					pastedContents
-				).trim();
-				const spaceIndex = trimmedInput.indexOf(' ');
-				const commandName = spaceIndex === -1 ? trimmedInput.slice(1) : trimmedInput.slice(1, spaceIndex);
-				const commandArgs = spaceIndex === -1 ? '' : trimmedInput.slice(spaceIndex + 1).trim();
+				const trimmedInput = trimmedSlashInput;
+				const spaceIndex = slashSpaceIndex;
+				const commandName = slashCommandName;
+				const commandArgs =
+					spaceIndex === -1 ? '' : trimmedInput.slice(spaceIndex + 1).trim();
 				// Find matching command - treat as immediate if:
 				// 1. Command has `immediate: true`, OR
 				// 2. Command was triggered via keybinding (fromKeybinding option)
-				const matchingCommand = commands.find(
-				cmd =>
-					isCommandEnabled(cmd) &&
-					(cmd.name === commandName || cmd.aliases?.includes(commandName) || getCommandName(cmd) === commandName),
-				);
+				const matchingCommand = matchingSlashCommand;
 				const shouldTreatAsImmediate =  (matchingCommand?.immediate);
 				// if (matchingCommand && shouldTreatAsImmediate && matchingCommand.type === 'local-jsx') {
 				// const pastedTextRefs = parseReferences(input).filter(r => pastedContents[r.id]?.type === 'text');
@@ -2639,10 +2685,12 @@ const getToolUseContext = useCallback(
 				// 	return; // Always return early - don't add to history or queue
 				// }
 			}
-			addToHistory({
-				display: value,
-				pastedContents: pastedContents,
-			});
+			if (!shouldSkipPromptHistory) {
+				addToHistory({
+					display: value,
+					pastedContents: pastedContents,
+				});
+			}
 			resetHistory();
 			setAlertMessage(null);
 
@@ -2780,7 +2828,6 @@ const getToolUseContext = useCallback(
 
 		return baseViewportMessages;
 	}, [baseViewportMessages, streamingPlaceholder]);
-
 	const hasInlineLoadingPlaceholder =
 		loading &&
 		streamingAssistant.placeholderId !== null &&
@@ -2798,6 +2845,19 @@ const getToolUseContext = useCallback(
 			width: messageWidth,
 			welcome: false
 		}),
+		[cwd, modelLabel, effortLabel, messageWidth]
+	);
+	const welcomeHeader = useMemo(
+		() => (
+			<WelcomeHeader
+				brand={APP_BRAND}
+				version={APP_VERSION}
+				cwd={cwd}
+				model={modelLabel}
+				effort={effortLabel}
+				width={messageWidth}
+			/>
+		),
 		[cwd, modelLabel, effortLabel, messageWidth]
 	);
 	const highlightInputChrome =
@@ -2923,10 +2983,17 @@ const getToolUseContext = useCallback(
 				</Box>
 			) : null}
 
+			{!isFullscreenEnvEnabled() && toolPermissionOverlay ? (
+				<Box flexDirection="column" width="100%" flexShrink={0}>
+					{toolPermissionOverlay}
+				</Box>
+			) : null}
+
 			<Box flexDirection="column" flexShrink={0}>
 				<PromptInputQueuedCommands width={terminalColumns} />
 				{!toolJSX?.shouldHidePromptInput ? (
 					<>
+						<Text> </Text>
 						<Text color={inputRuleColor}>{inputRule}</Text>
 						<Box
 							flexDirection="row"
@@ -3060,7 +3127,7 @@ const getToolUseContext = useCallback(
 	const scrollableContent = (
 		<Box flexDirection="column">
 			<MessageViewport
-				headerLines={transcriptHeaderLines}
+				header={welcomeHeader}
 				messages={viewportMessages}
 				width={messageWidth}
 				alertMessage={alertMessage}
@@ -3190,9 +3257,13 @@ const getToolUseContext = useCallback(
 	}
 
 	return (
-		<Box flexDirection="column" paddingX={1} paddingY={0}>
+		<Box
+			flexDirection="column"
+			minHeight={terminalRows + 1}
+			paddingX={1}
+			paddingY={0}
+		>
 			{scrollableContent}
-			{toolPermissionOverlay}
 			{bottomContent}
 		</Box>
 	);

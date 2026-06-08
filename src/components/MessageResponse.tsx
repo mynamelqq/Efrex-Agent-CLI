@@ -8,22 +8,22 @@ type Props = {
 };
 
 export function MessageResponse({ children, height }: Props): React.ReactNode {
-  const isMessageResponse = useContext(MessageResponseContext);
-  if (isMessageResponse) {
-    return children;
-  }
-  const content = (
-    <MessageResponseProvider>
-      <Box flexDirection="row" height={height} overflowY="hidden">
-        <NoSelect fromLeftEdge flexShrink={0}>
-          <Text dimColor>{'  '}⎿ &nbsp;</Text>
-        </NoSelect>
-        <Box flexShrink={1} flexGrow={1}>
-          {children}
-        </Box>
-      </Box>
-    </MessageResponseProvider>
-  );
+	const isMessageResponse = useContext(MessageResponseContext);
+	if (isMessageResponse) {
+		return children;
+	}
+	const content = (
+		<MessageResponseProvider>
+			<Box flexDirection="row" height={height} overflowY="hidden">
+				<NoSelect fromLeftEdge flexShrink={0}>
+					<Text dimColor>{'  '}⎿ &nbsp;</Text>
+				</NoSelect>
+				<Box flexShrink={1} flexGrow={1}>
+					{children}
+				</Box>
+			</Box>
+		</MessageResponseProvider>
+	);
   if (height !== undefined) {
     return content;
   }
@@ -36,5 +36,5 @@ export function MessageResponse({ children, height }: Props): React.ReactNode {
 const MessageResponseContext = React.createContext(false);
 
 function MessageResponseProvider({ children }: { children: React.ReactNode }): React.ReactNode {
-  return <MessageResponseContext.Provider value={true}>{children}</MessageResponseContext.Provider>;
+	return <MessageResponseContext.Provider value={true}>{children}</MessageResponseContext.Provider>;
 }

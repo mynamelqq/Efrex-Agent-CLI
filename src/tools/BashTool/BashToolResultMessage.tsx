@@ -93,7 +93,7 @@ export default function BashToolResultMessage({
   return (
     <Box flexDirection="column">
       {stdout !== '' ? <OutputLine content={stdout} verbose={verbose} /> : null}
-      {stderr.trim() !== '' ? <OutputLine content={stderr} verbose={verbose} isError /> : null}
+      {stderr.trim() !== '' ? <OutputLine content={stderr} verbose={verbose} isError maxLines={2} /> : null}
       {cwdResetWarning ? (
         <MessageResponse>
           <Text dimColor>{cwdResetWarning}</Text>

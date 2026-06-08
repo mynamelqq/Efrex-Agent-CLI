@@ -124,7 +124,7 @@ export function renderToolResultMessage(
   return (
     <Box flexDirection="column">
       {stdout !== '' ? <OutputLine content={stdout} verbose={verbose} /> : null}
-      {stderr.trim() !== '' ? <OutputLine content={stderr} verbose={verbose} isError /> : null}
+      {stderr.trim() !== '' ? <OutputLine content={stderr} verbose={verbose} isError maxLines={2} /> : null}
       {stdout === '' && stderr.trim() === '' ? (
         <MessageResponse height={1}>
           <Text dimColor>

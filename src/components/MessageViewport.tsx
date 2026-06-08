@@ -22,6 +22,7 @@ export type ViewportMessage = {
 };
 
 type Props = {
+  header?: React.ReactNode;
   headerLines?: string[];
   messages: ViewportMessage[];
   width: number;
@@ -59,6 +60,7 @@ export function getMessageViewportLines({
 }
 
 export default function MessageViewport({
+  header,
   headerLines,
   messages,
   width,
@@ -69,7 +71,7 @@ export default function MessageViewport({
 }: Props) {
   return (
     <Box flexDirection="column" flexShrink={0} width="100%">
-      <MessageHeader lines={headerLines} />
+      {header ?? <MessageHeader lines={headerLines} />}
       {alertMessage ? (
         <Text color="redBright">错误: {alertMessage}</Text>
       ) : null}
@@ -262,7 +264,10 @@ function renderMessage(
   }
 
   if (message.role === 'tool') {
-    const color = message.toolPhase === 'error' ? chalk.redBright : chalk.gray;
+    const color =
+      message.toolDisplayStyle === 'use' && message.toolPhase === 'error'
+        ? chalk.redBright
+        : chalk.gray;
     const { toolPrefix } = getToolPrefix(message, blinkOn, true, variant);
 
     return wrapPlain(message.text, Math.max(1, width - 3)).map((line, index) =>

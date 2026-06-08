@@ -13,11 +13,17 @@ export function ShellTimeDisplay({ elapsedTimeSeconds, timeoutMs }: Props): Reac
   }
   const timeout = timeoutMs ? formatDuration(timeoutMs, { hideTrailingZeros: true }) : undefined;
   if (elapsedTimeSeconds === undefined) {
-    return <Text dimColor>{`(timeout ${timeout})`}</Text>;
+    return <Text color="ansi:blackBright">{`(timeout ${timeout})`}</Text>;
   }
   const elapsed = formatDuration(elapsedTimeSeconds * 1000);
+  const color =
+    elapsedTimeSeconds >= 180
+      ? 'yellowBright'
+      : elapsedTimeSeconds >= 60
+        ? 'blueBright'
+        : 'ansi:blackBright';
   if (timeout) {
-    return <Text dimColor>{`(${elapsed} · timeout ${timeout})`}</Text>;
+    return <Text color={color}>{`(${elapsed} · timeout ${timeout})`}</Text>;
   }
-  return <Text dimColor>{`(${elapsed})`}</Text>;
+  return <Text color={color}>{`(${elapsed})`}</Text>;
 }

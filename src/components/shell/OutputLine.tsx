@@ -55,12 +55,14 @@ export function OutputLine({
   isError,
   isWarning,
   linkifyUrls,
+  maxLines,
 }: {
   content: string;
   verbose: boolean;
   isError?: boolean;
   isWarning?: boolean;
   linkifyUrls?: boolean;
+  maxLines?: number;
 }): React.ReactNode {
   const terminalSize = useContext(TerminalSizeContext);
   const columns = terminalSize?.columns ?? 80;
@@ -80,8 +82,11 @@ export function OutputLine({
     if (shouldShowFull) {
       return sanitized;
     }
+    if (maxLines !== undefined) {
+      return compressLines(sanitized, maxLines);
+    }
     return renderTruncatedContent(sanitized, columns, inVirtualList);
-  }, [content, shouldShowFull, columns, linkifyUrls, inVirtualList]);
+  }, [content, shouldShowFull, columns, linkifyUrls, inVirtualList, maxLines]);
 
   const color = isError ? 'error' : isWarning ? 'warning' : undefined;
 
@@ -92,6 +97,29 @@ export function OutputLine({
       </Text>
     </MessageResponse>
   );
+}
+
+function compressLines(content: string, maxLines: number): string {
+  const trimmed = content.trimEnd();
+  if (!trimmed) {
+    return '';
+  }
+
+  const lines = trimmed.split('\n');
+  const safeMaxLines = Math.max(1, maxLines);
+  if (lines.length <= safeMaxLines) {
+    return trimmed;
+  }
+
+  const headCount = Math.max(1, Math.ceil(safeMaxLines / 2));
+  const tailCount = Math.max(0, safeMaxLines - headCount);
+  const omitted = lines.length - headCount - tailCount;
+
+  return [
+    ...lines.slice(0, headCount),
+    `… +${omitted} stderr lines`,
+    ...(tailCount > 0 ? lines.slice(-tailCount) : []),
+  ].join('\n');
 }
 
 /**
