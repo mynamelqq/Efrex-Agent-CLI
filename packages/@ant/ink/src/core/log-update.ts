@@ -482,6 +482,7 @@ function fullResetSequence_CAUSES_FLICKER(
   reason: FlickerReason,
   stylePool: StylePool,
   debug?: { triggerY: number; prevLine: string; nextLine: string },
+  clearScrollback = false,
 ): Diff {
   // After clearTerminal, cursor is at (0, 0)
   const screen = new VirtualScreen({ x: 0, y: 0 }, frame.viewport.width)
@@ -490,7 +491,10 @@ function fullResetSequence_CAUSES_FLICKER(
   } else {
     renderVisibleFrameViewport(screen, frame, stylePool)
   }
-  return [{ type: 'clearTerminal', reason, debug }, ...screen.diff]
+  return [
+    { type: 'clearTerminal', reason, debug, clearScrollback },
+    ...screen.diff,
+  ]
 }
 
 function renderFrame(

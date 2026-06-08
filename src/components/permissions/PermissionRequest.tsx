@@ -245,7 +245,7 @@ function getToolPresentation(
 			primary: command || stringifyPermissionInput(input),
 			working,
 			risk: getNaturalRisk(toolName, description, record, working),
-			accent: dangerous ? 'ansi:redBright' : 'ansi:cyanBright',
+			accent: 'ansi:yellow',
 			isDangerous: dangerous
 		};
 	}
@@ -268,7 +268,7 @@ function getToolPresentation(
 			primary: displayPath,
 			working,
 			risk: getNaturalRisk(toolName, description, record, working),
-			accent: 'ansi:cyanBright',
+			accent: 'ansi:yellow',
 			isDangerous: false
 		};
 	}
@@ -282,7 +282,7 @@ function getToolPresentation(
 			primary: path || stringifyPermissionInput(input),
 			working,
 			risk: getNaturalRisk(toolName, description, record, working),
-			accent: 'ansi:cyanBright',
+			accent: 'ansi:yellow',
 			isDangerous: false
 		};
 	}
@@ -296,7 +296,7 @@ function getToolPresentation(
 			primary: path || stringifyPermissionInput(input),
 			working,
 			risk: getNaturalRisk(toolName, description, record, working),
-			accent: 'ansi:cyanBright',
+			accent: 'ansi:yellow',
 			isDangerous: false
 		};
 	}
@@ -310,7 +310,7 @@ function getToolPresentation(
 			primary: query || stringifyPermissionInput(input),
 			working,
 			risk: getNaturalRisk(toolName, description, record, working),
-			accent: 'ansi:cyanBright',
+			accent: 'ansi:yellow',
 			isDangerous: false
 		};
 	}
@@ -323,7 +323,7 @@ function getToolPresentation(
 		primary: stringifyPermissionInput(input),
 		working,
 		risk: getNaturalRisk(toolName, description, record, working),
-		accent: 'ansi:cyanBright',
+		accent: 'ansi:yellow',
 		isDangerous: false
 	};
 }
@@ -350,33 +350,6 @@ function InlineField({
 			<Text color={color ?? 'ansi:whiteBright'}>
 				{fitDisplay(value, Math.max(4, width - labelWidth))}
 			</Text>
-		</Box>
-	);
-}
-
-function BlockField({
-	label,
-	value,
-	width,
-	color = 'ansi:whiteBright'
-}: {
-	label: string;
-	value: string;
-	width: number;
-	color?: PermissionColor;
-}): React.ReactNode {
-	return (
-		<Box width={width} flexDirection="column">
-			<Text color="ansi:blackBright">{label}</Text>
-			<Box borderStyle="single" borderColor="ansi:blackBright" paddingX={1}>
-				<Box flexDirection="column" width={Math.max(1, width - 4)}>
-					{wrapDisplay(value, Math.max(1, width - 4)).map((line, index) => (
-						<Text key={`${label}-${index}`} color={color}>
-							{line.length > 0 ? line : ' '}
-						</Text>
-					))}
-				</Box>
-			</Box>
 		</Box>
 	);
 }
@@ -469,14 +442,14 @@ export function PermissionRequest({
 				key: 'a',
 				hotkey: 'A',
 				label: 'Allow once',
-				color: 'ansi:greenBright',
+				color: 'ansi:green',
 				action: () => allow()
 			},
 			{
 				key: 'd',
 				hotkey: 'D',
 				label: 'Deny this time',
-				color: 'ansi:blackBright',
+				color: 'ansi:redBright',
 				action: reject
 			},
 			...(bypassAvailable
@@ -486,7 +459,7 @@ export function PermissionRequest({
 						hotkey: 'B',
 						label: 'Trust this session',
 						help: 'Allows later commands in this session without prompting.',
-						color: 'ansi:yellowBright' as const,
+						color: 'ansi:yellow' as const,
 						action: allowAllCommands
 					}
 				]
@@ -539,18 +512,14 @@ export function PermissionRequest({
 		{ isActive: true }
 	);
 
-	const selectedOption = options[selectedIndex];
-	const optionGapWidth = 2;
-	const optionWidth = Math.max(
-		12,
-		Math.floor(
-			(contentWidth - optionGapWidth * Math.max(0, options.length - 1)) /
-				options.length
-		)
+	const optionColumnWidth = Math.min(
+		30,
+		Math.max(24, Math.floor(contentWidth * 0.24))
 	);
-	const headerTitleWidth = Math.max(26, Math.floor(contentWidth * 0.52));
-	const headerIntentWidth = Math.max(0, contentWidth - headerTitleWidth - 2);
+	const bodyWidth = Math.max(24, contentWidth - optionColumnWidth - 3);
 	const divider = '─'.repeat(contentWidth);
+	const verticalDivider = '│';
+	const shortcutHint = bypassAvailable ? 'A/D/B' : 'A/D';
 
 	const content = (
 		<Box
@@ -564,110 +533,70 @@ export function PermissionRequest({
 			marginTop={1}
 		>
 			<Box flexDirection="row">
-				<Text color={presentation.accent} bold>
-					?{' '}
-				</Text>
-				<Text color="ansi:whiteBright" bold>
-					{fitDisplay(
-						presentation.title,
-						headerTitleWidth
-					)}
-				</Text>
-				<Text color={presentation.accent}>
-					{fitDisplay(
-						`  efrex code · ${presentation.intent}`,
-						headerIntentWidth
-					)}
-				</Text>
-			</Box>
-			<Text color="ansi:blackBright">{divider}</Text>
-
-			{presentation.question ? (
-				<Box marginTop={1}>
-					<Text color="ansi:whiteBright" bold>
-						{presentation.question}
+				<Box width={bodyWidth} flexDirection="column" paddingRight={2}>
+					<Box flexDirection="row">
+						<Text color={presentation.accent} bold>
+							?{' '}
+						</Text>
+						<Text color="ansi:whiteBright">
+							{fitDisplay(
+								presentation.question ??
+									`efrex code wants to ${presentation.intent}:`,
+								bodyWidth - 2
+							)}
+						</Text>
+					</Box>
+					<Text color={presentation.isDangerous ? 'ansi:redBright' : 'ansi:cyan'}>
+						{fitDisplay(
+							presentation.primaryLabel === 'Command'
+								? `$ ${presentation.primary}`
+								: `${presentation.primaryLabel}: ${presentation.primary}`,
+							bodyWidth
+						)}
 					</Text>
-				</Box>
-			) : null}
-
-			<Box flexDirection="column" marginTop={1}>
-				<BlockField
-					label={presentation.primaryLabel}
-					value={
-						presentation.primaryLabel === 'Command'
-							? `$ ${presentation.primary}`
-							: presentation.primary
-					}
-					width={contentWidth}
-					color={presentation.accent}
-				/>
-				<Box>
+					{presentation.risk ? (
+						<Text color="ansi:white">
+							{fitDisplay(getRiskLabel(presentation), bodyWidth)}
+						</Text>
+					) : null}
 					<InlineField
 						label="Working directory"
 						value={presentation.working}
-						width={contentWidth}
+						width={bodyWidth}
 						color="ansi:white"
 						labelColor="ansi:blackBright"
 					/>
+					<FileToolPermissionPreview
+						toolName={toolUseConfirm.tool.name}
+						input={toolUseConfirm.input}
+						width={bodyWidth}
+					/>
 				</Box>
-				{presentation.risk ? (
-					<Box>
-						<InlineField
-							label="Risk"
-							value={getRiskLabel(presentation)}
-							width={contentWidth}
-							color={presentation.isDangerous ? 'ansi:redBright' : 'ansi:white'}
-							labelColor="ansi:blackBright"
-						/>
-					</Box>
-				) : null}
-			</Box>
+				<Text color="ansi:blackBright">{verticalDivider}</Text>
+				<Box width={optionColumnWidth} flexDirection="column" paddingLeft={2}>
+					{options.map((option, index) => {
+						const selected = selectedIndex === index;
 
-			<FileToolPermissionPreview
-				toolName={toolUseConfirm.tool.name}
-				input={toolUseConfirm.input}
-				width={contentWidth}
-			/>
-
-			<Box flexDirection="row" marginTop={1}>
-				{options.map((option, index) => {
-					const selected = selectedIndex === index;
-
-					return (
-						<Box
-							key={option.key}
-							width={optionWidth}
-							marginRight={index === options.length - 1 ? 0 : 2}
-						>
+						return (
 							<Text
-								color={selected ? 'ansi:yellowBright' : 'ansi:blueBright'}
+								key={option.key}
+								color={selected ? option.color : 'ansi:blackBright'}
 								bold={selected}
+								inverse={selected}
 							>
 								{fitDisplay(
-									`${selected ? '›' : ' '}[${option.hotkey}] ${
-										option.label
-									}`,
-									optionWidth
+									`${selected ? '›' : ' '}[${option.hotkey}] ${option.label}`,
+									optionColumnWidth - 2
 								)}
 							</Text>
-						</Box>
-					);
-				})}
+						);
+					})}
+				</Box>
 			</Box>
-
-			<Box marginTop={0}>
-				<Text
-					color={selectedOption ? 'ansi:yellowBright' : 'ansi:blackBright'}
-				>
-					{fitDisplay(
-						'Enter: confirm    Up/Down: select',
-						contentWidth
-					)}
-				</Text>
-			</Box>
+			<Text color={presentation.accent}>{divider}</Text>
 			<Box>
-				<Text color="ansi:blackBright">
-					{fitDisplay('Esc: cancel    A/D/B: quick select', contentWidth)}
+				<Text color="ansi:whiteBright">
+					{fitDisplay(`Select an option (${shortcutHint}):`, contentWidth)}
 				</Text>
 			</Box>
 		</Box>

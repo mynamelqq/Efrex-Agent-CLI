@@ -3105,7 +3105,7 @@ const getToolUseContext = useCallback(
 								<Box paddingLeft={2}>
 									<Text color={permissionModeColor}>
 										{permissionModeLabel}
-										<Text dimColor> · Shift+Tab</Text>
+										<Text color="ansi:blackBright"> · Shift+Tab</Text>
 									</Text>
 								</Box>
 							</>
@@ -3259,7 +3259,6 @@ const getToolUseContext = useCallback(
 	return (
 		<Box
 			flexDirection="column"
-			minHeight={terminalRows + 1}
 			paddingX={1}
 			paddingY={0}
 		>

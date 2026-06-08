@@ -88,7 +88,11 @@ export function OutputLine({
     return renderTruncatedContent(sanitized, columns, inVirtualList);
   }, [content, shouldShowFull, columns, linkifyUrls, inVirtualList, maxLines]);
 
-  const color = isError ? 'error' : isWarning ? 'warning' : undefined;
+  const color = isError
+    ? 'error'
+    : isWarning
+      ? 'warning'
+      : 'ansi:blackBright';
 
   return (
     <MessageResponse>

@@ -76,6 +76,7 @@ export type Patch =
   | {
       type: 'clearTerminal'
       reason: FlickerReason
+      clearScrollback?: boolean
       // Populated by log-update when a scrollback diff triggers the reset.
       // ink.tsx uses triggerY with findOwnerChainAtRow to attribute the
       // flicker to its source React component.

@@ -7,6 +7,7 @@ import {
   PERMISSION_MODES,
   type PermissionMode,
 } from '../../types/permissions.js'
+import type { Color } from '../theme.js'
 import { lazySchema } from '../lazySchema.js'
 
 // Re-export for backwards compatibility
@@ -22,17 +23,11 @@ export const externalPermissionModeSchema = lazySchema(() =>
   z.enum(EXTERNAL_PERMISSION_MODES),
 )
 
-type ModeColorKey =
-  | 'ansi:blue'
-  | 'ansi:magenta'
-  | 'ansi:cyan'
-  | 'ansi:yellow'
-
 type PermissionModeConfig = {
   title: string
   shortTitle: string
   symbol: string
-  color: ModeColorKey
+  color: Color
   external: ExternalPermissionMode
 }
 export const PAUSE_ICON = '\u23f8' // ⏸
@@ -43,7 +38,7 @@ const PERMISSION_MODE_CONFIG: Partial<
     title: 'Default',
     shortTitle: 'Default',
     symbol: '',
-    color: 'ansi:blue',
+    color: 'ansi:cyanBright',
     external: 'default',
   },
   acceptEdits: {
@@ -64,7 +59,7 @@ const PERMISSION_MODE_CONFIG: Partial<
     title: 'Bypass',
     shortTitle: 'Bypass',
     symbol: '⏵⏵',
-    color: 'ansi:cyan',
+    color: 'ansi:red',
     external: 'bypassPermissions',
   },
 
@@ -136,6 +131,6 @@ export function permissionModeSymbol(mode: PermissionMode): string {
   return getModeConfig(mode).symbol
 }
 
-export function getModeColor(mode: PermissionMode): ModeColorKey {
+export function getModeColor(mode: PermissionMode): Color {
   return getModeConfig(mode).color
 }
