@@ -83,6 +83,13 @@ export const SettingsSchema = lazySchema(() =>
         .describe(
           'Command to refresh GCP authentication (e.g., gcloud auth application-default login)',
         ),
+      defaultShell: z
+        .enum(['bash', 'powershell'])
+        .optional()
+        .describe(
+          'Default shell for input-box ! commands. ' +
+            "Defaults to 'bash' on all platforms (no Windows auto-flip).",
+        ),
       // Gated so the SDK generator (which runs without CLAUDE_CODE_ENABLE_XAA)
       // doesn't surface this in GlobalClaudeSettings. Read via getXaaIdpSettings().
       // .passthrough() on the outer object keeps an existing settings.json key

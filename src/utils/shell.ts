@@ -67,6 +67,7 @@ export async function exec(
 ): Promise<ShellCommand> {
   const {
     timeout,
+    onProgress,
     preventCwdChanges,
     onStdout,
   } = options ?? {}
@@ -206,6 +207,13 @@ export async function exec(
 }
 export type ExecOptions = {
   timeout?: number
+  onProgress?: (
+    lastLines: string,
+    allLines: string,
+    totalLines: number,
+    totalBytes: number,
+    isIncomplete: boolean,
+  ) => void
   preventCwdChanges?: boolean
   /** When provided, stdout is piped (not sent to file) and this callback fires on each data chunk. */
   onStdout?: (data: string) => void

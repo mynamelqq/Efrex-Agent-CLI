@@ -1,6 +1,7 @@
 import { feature } from 'bun:bundle';
 import type { ToolResultBlockParam } from '@anthropic-ai/sdk/resources/index.mjs';
 import { copyFile, stat as fsStat, truncate as fsTruncate, link } from 'fs/promises';
+import {ToolCallProgress} from 'src/Tool.js'
 import * as React from 'react';
 import { powershellToolHasPermission } from './PowerShellPermissions.js';
 import type { CanUseToolFn } from 'src/hooks/useCanUseTool.js';
@@ -294,7 +295,7 @@ export const PowerShellTool = buildTool({
   async description({ description }: Partial<PowerShellToolInput>): Promise<string> {
     return description || 'Run PowerShell command';
   },
-
+  renderToolUseProgressMessage: renderToolUseProgressMessage,
 
   isConcurrencySafe(input: PowerShellToolInput): boolean {
     return this.isReadOnly?.(input) ?? false;
@@ -441,7 +442,7 @@ export const PowerShellTool = buildTool({
     toolUseContext: Parameters<Tool['call']>[1],
     _canUseTool?: CanUseToolFn,
     _parentMessage?: AssistantMessage,
-
+    onProgress?: ToolCallProgress<PowerShellProgress>,
   ): Promise<{ data: Out }> {
     // Load-bearing guard: promptShellExecution.ts and processBashCommand.tsx
     // call PowerShellTool.call() directly, bypassing validateInput. This is
@@ -455,7 +456,7 @@ export const PowerShellTool = buildTool({
 
     const isMainThread =true;
 
-
+    let progressCounter = 0;
     try {
       const commandGenerator = runPowerShellCommand({
         input,
@@ -472,6 +473,22 @@ export const PowerShellTool = buildTool({
       let generatorResult;
       do {
         generatorResult = await commandGenerator.next();
+          if (!generatorResult.done && onProgress) {
+            const progress = generatorResult.value;
+            onProgress({
+              toolUseID: `ps-progress-${progressCounter++}`,
+              data: {
+                type: 'powershell_progress',
+                output: progress.output,
+                fullOutput: progress.fullOutput,
+                elapsedTimeSeconds: progress.elapsedTimeSeconds,
+                totalLines: progress.totalLines,
+                totalBytes: progress.totalBytes,
+                timeoutMs: progress.timeoutMs,
+                taskId: "",
+              },
+            });
+        }
       } while (!generatorResult.done);
 
       const result = generatorResult.value;
@@ -686,6 +703,12 @@ async function* runPowerShellCommand({
   try {
     shellCommand = await exec(command, abortController.signal, 'powershell', {
       timeout: timeoutMs,
+      onProgress(lastLines, allLines, totalLines, totalBytes, isIncomplete) {
+        lastProgressOutput = lastLines;
+        fullOutput = allLines;
+        lastTotalLines = totalLines;
+        lastTotalBytes = isIncomplete ? totalBytes : 0;
+      },
       preventCwdChanges,
     });
   } catch (e) {

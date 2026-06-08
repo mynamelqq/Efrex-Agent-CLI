@@ -123,7 +123,11 @@ function renderMessageRow(
 					flexShrink={1}
 					width={Math.max(1, width - 2)}
 				>
-					<MarkdownText text={message.text} width={Math.max(1, width - 2)} />
+					{message.content ? (
+						message.content
+					) : (
+						<MarkdownText text={message.text} width={Math.max(1, width - 2)} />
+					)}
 				</Box>
 			</Box>
 		);

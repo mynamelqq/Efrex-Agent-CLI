@@ -7,11 +7,13 @@ import type {
 import { storeImages } from '../imageStore.js'
 import { processTextPrompt } from './processTextPrompt.js'
 import { randomUUID } from 'crypto'
+
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
 import { createAttachmentMessage } from '../messages.js'
 import { createImageMetadataText,maybeResizeAndDownsampleImageBlock } from '../imageResizer.js'
 import { getContentText } from '../messages.js'
 import type { ToolUseContext } from '../../Tool.js'
+import type { SetToolJSXFn } from '../../Tool.js'
 import { LocalJSXCommandContext } from 'src/types/command.js'
 import type {
   AssistantMessage,
@@ -63,6 +65,7 @@ export async function processUserInput({
   input,
   preExpansionInput,
   mode,
+  setToolJSX,
   context,
   pastedContents,
   messages,
@@ -83,6 +86,7 @@ export async function processUserInput({
    */
   preExpansionInput?: string
   mode: PromptInputMode
+  setToolJSX: SetToolJSXFn
   context: ProcessUserInputContext
   pastedContents?: Record<number, PastedContent>
   messages?: Message[]
@@ -123,6 +127,7 @@ export async function processUserInput({
   const result = await processUserInputBase(
     input,
     mode,
+    setToolJSX,
     context,
     pastedContents,
     messages,
@@ -162,6 +167,7 @@ function applyTruncation(content: string): string {
 async function processUserInputBase(
   input: string | Array<ContentBlockParam>,
   mode: PromptInputMode,
+  setToolJSX: SetToolJSXFn,
   context: ProcessUserInputContext,
   pastedContents?: Record<number, PastedContent>,
   messages?: Message[],
@@ -290,17 +296,19 @@ async function processUserInputBase(
   // with a helpful message rather than letting the model see raw "/config".
   let effectiveSkipSlash = skipSlashCommands
   // Bash commands
-//   if (inputString !== null && mode === 'bash') {
-//     const { processBashCommand } = await import('./processBashCommand.js')
-//     return addImageMetadataMessage(
-//       await processBashCommand(
-//         inputString,
-//         precedingInputBlocks,
-//         context,
-//       ),
-//       imageMetadataTexts,
-//     )
-//   }
+  if (inputString !== null && mode === 'bash') {
+    const { processBashCommand } = await import('./processBashCommand.js')
+    return addImageMetadataMessage(
+      await processBashCommand(
+        inputString,
+        precedingInputBlocks,
+        [],
+        context,
+        setToolJSX,
+    ),
+      imageMetadataTexts,
+    )
+  }
 
   // Slash commands
   // Skip for remote bridge messages — input from CCR clients is plain text
@@ -313,6 +321,7 @@ async function processUserInputBase(
     const slashResult = await processSlashCommand(
       inputString,
       context,
+      setToolJSX,
       precedingInputBlocks,
       uuid,
       isAlreadyProcessing,

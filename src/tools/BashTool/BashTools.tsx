@@ -30,6 +30,7 @@ import { PermissionRequest } from 'src/components/permissions/PermissionRequest'
 export function getDefaultTimeoutMs(): number {
   return getDefaultBashTimeoutMs()
 }
+
 // 进度显示常量
 const PROGRESS_THRESHOLD_MS = 2000; // 2秒后显示进度
 
@@ -491,7 +492,7 @@ export const BashTool = buildTool({
         // stderr is merged into stdout (merged fd); outputWithSbFailures
         // already has the full output. Pass '' for stdout to avoid
         // duplication in getErrorParts() and processBashCommand.
-        throw new ShellError('',"" , result.code, result.interrupted);
+        throw new ShellError(result.stdout || '', '', result.code, result.interrupted);
       }
       wasInterrupted = result.interrupted;
     } finally {

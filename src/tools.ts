@@ -19,5 +19,5 @@ export function getAllBaseTools():Tools{
         // GlobTool,GrepTool,FileEditTool,FileReadTool,FileWriteTool
     ]//GlobTool,GrepTool,FileReadTool,FileEditTool,BashTool,,WebSearchTool,FileWriteTool
 }
-
+export type ShellProgress = any
 export type BashProgress = any

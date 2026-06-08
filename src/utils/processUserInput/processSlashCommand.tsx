@@ -49,6 +49,7 @@ import { hasPermissionsToUseTool } from '../permissions/permissions.js';
 
 import { parseSlashCommand } from '../slashCommandParsing.js';
 import type { ProcessUserInputBaseResult, ProcessUserInputContext } from './processUserInput.js';
+import type { SetToolJSXFn } from 'src/Tool.js';
 export const NO_CONTENT_MESSAGE = '(no content)'
 
 
@@ -71,6 +72,7 @@ export function looksLikeCommand(commandName: string): boolean {
 export async function processSlashCommand(
   inputString: string,
   context: ProcessUserInputContext,
+  setToolJSX: SetToolJSXFn,
   precedingInputBlocks: ContentBlockParam[],
   uuid?: string,
   isAlreadyProcessing?: boolean,
@@ -245,7 +247,7 @@ async function getMessagesForSlashCommand(
             },
           ) => {
             doneWasCalled = true;
-            context.setToolJSX?.({
+            setToolJSX({
               jsx: null,
               shouldHidePromptInput: false,
               clearLocalJSX: true,
@@ -334,7 +336,7 @@ async function getMessagesForSlashCommand(
               // Setting isLocalJSXCommand after clear leaves it stuck true,
               // blocking useQueueProcessor and TextInput focus.
               if (doneWasCalled) return;
-              context.setToolJSX?.({
+              setToolJSX({
                 jsx,
                 shouldHidePromptInput: true,
                 showSpinner: false,
@@ -350,7 +352,7 @@ async function getMessagesForSlashCommand(
               logError(e);
               if (doneWasCalled) return;
               doneWasCalled = true;
-              context.setToolJSX?.({
+              setToolJSX({
                 jsx: null,
                 shouldHidePromptInput: false,
                 clearLocalJSX: true,

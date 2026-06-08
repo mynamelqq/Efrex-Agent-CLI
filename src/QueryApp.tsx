@@ -41,13 +41,15 @@ import WelcomeHeader from './components/WelcomeHeader.js';
 import { PastedContent } from './utils/config.js';
 import type {
 	ApiRetryStatusEvent,
-	Message as MessageType
+	Message as MessageType,
+	ProgressMessage
 } from './package/message.js';
 import {
 	findToolByName,
 	type CompactProgressEvent,
 	type SetToolJSXFn,
 	type Tool,
+	type ToolProgressData,
 	type ToolPermissionContext
 } from './Tool.js';
 import { expandPastedTextRefs } from './history.js';
@@ -78,14 +80,21 @@ import {
 	type ToolUseConfirm
 } from './components/permissions/PermissionRequest.js';
 import {
+	BASH_INPUT_TAG,
+	BASH_STDERR_TAG,
+	BASH_STDOUT_TAG,
 	COMMAND_ARGS_TAG,
 	COMMAND_NAME_TAG,
 	LOCAL_COMMAND_CAVEAT_TAG,
 	LOCAL_COMMAND_STDERR_TAG,
 	LOCAL_COMMAND_STDOUT_TAG
 } from './constants/xml.js';
+import { PromptInputMode } from './types/textInputTypes.js';
+import { UserBashOutputMessage } from './components/messages/UserBashOutputMessage.js';
+import { UserBashInputMessage } from './components/messages/UserBashInputMessage.js';
 import {
 	renderToolErrorContent,
+	renderToolProgressContent,
 	renderToolResultContent,
 	renderToolUseContent
 } from './components/messages/renderToolContent.js';
@@ -100,6 +109,7 @@ type ViewportMessage = {
 	role: 'user' | 'assistant' | 'tool' | 'meta';
 	text: string;
 	content?: React.ReactNode;
+	baseContent?: React.ReactNode;
 	toolPhase?: 'call' | 'done' | 'error';
 	toolDisplayStyle?: 'use' | 'result' | 'progress';
 	toolUseId?: string;
@@ -705,6 +715,34 @@ function buildLocalCommandViewport(
 		return 'hidden';
 	}
 
+	const bashInput = extractTag(content, BASH_INPUT_TAG);
+	if (bashInput) {
+		return {
+			id: fallbackId,
+			role: 'user',
+			text: bashInput,
+			content: (
+				<UserBashInputMessage
+					addMargin={false}
+					param={{ text: content, type: 'text' }}
+				/>
+			)
+		};
+	}
+
+	const bashStdout = extractTag(content, BASH_STDOUT_TAG) ?? '';
+	const bashStderr = extractTag(content, BASH_STDERR_TAG) ?? '';
+	if (bashStdout || bashStderr) {
+		return {
+			id: fallbackId,
+			role: 'tool',
+			text: [bashStdout, bashStderr].filter(Boolean).join('\n'),
+			content: <UserBashOutputMessage content={content} verbose={false} />,
+			toolPhase: bashStderr ? 'error' : 'done',
+			toolDisplayStyle: 'result'
+		};
+	}
+
 	const commandName = extractTag(content, COMMAND_NAME_TAG);
 	if (commandName) {
 		const args = extractTag(content, COMMAND_ARGS_TAG)?.trim() ?? '';
@@ -863,6 +901,7 @@ function getAssistantToolUseViewportMessages(
 				role: 'tool',
 				text: item.text,
 				content: item.content,
+				baseContent: item.content,
 				toolPhase: 'call',
 				toolDisplayStyle: 'use',
 				toolUseId,
@@ -878,6 +917,30 @@ function updateAssistantToolUseViewportMessage(
 ): void {
 	message.toolPhase = phase;
 	message.animatePrefix = undefined;
+	if (message.baseContent) {
+		message.content = message.baseContent;
+		message.text = renderNodeToPlainText(message.content).trim();
+	}
+}
+
+function getProgressMessageToolUseId(message: MessageType): string | null {
+	const toolUseId = (message as MessageType & { toolUseID?: unknown }).toolUseID;
+	return typeof toolUseId === 'string' ? toolUseId : null;
+}
+
+function updateAssistantToolUseProgressViewportMessage(
+	message: ViewportMessage,
+	progressContent: React.ReactNode
+): void {
+	const baseContent = message.baseContent ?? message.content;
+	message.baseContent = baseContent;
+	message.content = (
+		<Box flexDirection="column">
+			{baseContent}
+			{progressContent}
+		</Box>
+	);
+	message.text = renderNodeToPlainText(message.content).trim();
 }
 
 function buildViewportMessages(
@@ -889,6 +952,10 @@ function buildViewportMessages(
 ): ViewportMessage[] {
 	const viewportMessages: ViewportMessage[] = [];
 	const toolUseMessagesById = new Map<string, ViewportMessage>();
+	const progressMessagesByToolUseId = new Map<
+		string,
+		ProgressMessage<ToolProgressData>[]
+	>();
 	const pendingFooters = [...completedTurnFooters];
 	const appendCompletedTurnFooter = (messageCount: number) => {
 		while (
@@ -999,6 +1066,44 @@ function buildViewportMessages(
 		}
 
 		if (message.type === 'progress') {
+			const toolUseId = getProgressMessageToolUseId(message);
+			const existingToolUseMessage = toolUseId
+				? toolUseMessagesById.get(toolUseId)
+				: undefined;
+			const assistantToolUse = toolUseId
+				? findAssistantToolUse(messages, message, toolUseId)
+				: null;
+			const tool = assistantToolUse
+				? findToolByName(tools, assistantToolUse.name)
+				: undefined;
+
+			if (toolUseId && existingToolUseMessage && tool) {
+				const progressMessagesForToolUse = [
+					...(progressMessagesByToolUseId.get(toolUseId) ?? []),
+					message as ProgressMessage<ToolProgressData>
+				];
+				progressMessagesByToolUseId.set(
+					toolUseId,
+					progressMessagesForToolUse
+				);
+
+				const renderedProgressContent = renderToolProgressContent(
+					tool,
+					progressMessagesForToolUse,
+					tools,
+					verbose
+				);
+
+				if (renderedProgressContent) {
+					updateAssistantToolUseProgressViewportMessage(
+						existingToolUseMessage,
+						renderedProgressContent
+					);
+					appendCompletedTurnFooter(fallbackId);
+					return;
+				}
+			}
+
 			const viewportMessage = messageToViewport(
 				message,
 				fallbackId,
@@ -1792,6 +1897,7 @@ export default function QueryApp({
 	
 	const messagesRef = useRef(messages);
 	const appStateRef = useRef(appState);
+	const [inputMode, setInputMode] = useState<PromptInputMode>('prompt');
 	const [abortController, setAbortController] =
 		useState<AbortController | null>(null);
 	// 始终指向当前中止控制器的 Ref，用于在异步回调中读取最新 controller。
@@ -2687,9 +2793,15 @@ const getToolUseContext = useCallback(
 			}
 			if (!shouldSkipPromptHistory) {
 				addToHistory({
-					display: value,
+					display: inputMode === 'bash' ? `!${value}` : value,
 					pastedContents: pastedContents,
 				});
+				// Add the just-submitted command to the front of the ghost-text
+				// cache so it's suggested immediately (not after the 60s TTL).
+				if (inputMode === 'bash') {
+					// prependToShellHistoryCache(input.trim());
+				}
+
 			}
 			resetHistory();
 			setAlertMessage(null);
@@ -2697,7 +2809,9 @@ const getToolUseContext = useCallback(
 			
 			await handlePromptSubmit({
 				input: value,
+				inputMode,
 				onInputChange: handleInputChange,
+				setToolJSX,
 				helpers: {
 					setCursorOffset: () => {
 						setCursorSyncKey(prev => prev + 1);
@@ -2718,11 +2832,15 @@ const getToolUseContext = useCallback(
 				setAppState,
 				queryGuard,
 			});
+			if (inputMode === 'bash') {
+				setInputMode('prompt');
+			}
 		},
 		[
 			commands,
 			getToolUseContext,
 			handleInputChange,
+			inputMode,
 			mainLoopModel,
 			messages,
 			onQuery,
@@ -2730,7 +2848,8 @@ const getToolUseContext = useCallback(
 			queryGuard,
 			repinScroll,
 			resetHistory,
-			setAppState
+			setAppState,
+			setInputMode
 		]
 	);
 	
@@ -2901,14 +3020,19 @@ const getToolUseContext = useCallback(
 		20,
 		commandSelectorWidth - commandNameWidth - 4
 	);
-	const inputRuleColor = 'gray';
-	const inputPromptColor = !isTerminalFocused
-		? 'gray'
-		: activeToolUseConfirm
+	const bashInputAccentColor = 'ansi:magentaBright';
+	const inputRuleColor =
+		inputMode === 'bash' ? bashInputAccentColor : 'gray';
+	const inputPromptColor = inputMode === 'bash'
+		? bashInputAccentColor
+		: !isTerminalFocused
 			? 'gray'
-			: loading
-				? 'ansi:blueBright'
-				: 'ansi:greenBright';
+			: activeToolUseConfirm
+				? 'gray'
+				: loading
+					? 'ansi:blueBright'
+					: 'ansi:greenBright';
+	const inputPromptPrefix = inputMode === 'bash' ? '! ' : '› ';
   // Process queued commands when query completes and queue has items
 
 	const executeQueuedInput = useCallback(
@@ -2919,6 +3043,7 @@ const getToolUseContext = useCallback(
 			clearBuffer: () => {},
 			resetHistory: () => {},
 			},
+			setToolJSX,
 			queryGuard,
 			commands,
 			onInputChange: () => {},
@@ -3002,7 +3127,7 @@ const getToolUseContext = useCallback(
 						>
 							<Box flexShrink={0} width={2}>
 								<Text color={inputPromptColor}>
-									›{' '}
+									{inputPromptPrefix}
 								</Text>
 							</Box>
 							<PromptInput
@@ -3024,9 +3149,14 @@ const getToolUseContext = useCallback(
 								placeholder={showSpinner ? '等待 query.ts 响应中...' : 'Ask efrex anything...'}
 								pastedContents={pastedContents}
 								setPastedContents={setPastedContents}
+								mode={inputMode}
+								onModeChange={setInputMode}
 							/>
 						</Box>
 						<Text color={inputRuleColor}>{inputRule}</Text>
+						{inputMode === 'bash' ? (
+							<Text color={bashInputAccentColor}>! for bash mode</Text>
+						) : null}
 						{showCommandSelector ? (
 							<Box
 								paddingX={1}

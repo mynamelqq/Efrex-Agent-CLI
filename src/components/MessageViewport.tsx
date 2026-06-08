@@ -151,7 +151,11 @@ function renderMessageNode(
             <Text color="#8b949e">you  </Text>
           </Box>
           <Box flexDirection="column" flexGrow={1} flexShrink={1} width={Math.max(1, width - 5)}>
-            <MarkdownText text={message.text} width={Math.max(1, width - 5)} />
+            {message.content ? (
+              message.content
+            ) : (
+              <MarkdownText text={message.text} width={Math.max(1, width - 5)} />
+            )}
           </Box>
         </Box>
       );
@@ -163,7 +167,11 @@ function renderMessageNode(
           <Text color={USER_MESSAGE_FG}>{'> '}</Text>
         </Box>
         <Box backgroundColor={USER_MESSAGE_BG} flexDirection="column" flexGrow={1} flexShrink={1} width={Math.max(1, width - 2)}>
-          <MarkdownText text={message.text} width={Math.max(1, width - 2)} />
+          {message.content ? (
+            message.content
+          ) : (
+            <MarkdownText text={message.text} width={Math.max(1, width - 2)} />
+          )}
         </Box>
       </Box>
     );

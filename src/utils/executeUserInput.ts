@@ -3,7 +3,7 @@ import type { Message } from '../package/message.js'
 import { logForDebugging } from './debug.js'
 import { createUserMessage } from './messages.js'
 import { selectableUserMessagesFilter } from 'src/components/MessageSelector.js'
-import { ToolUseContext } from 'src/Tool.js'
+import type { ToolUseContext } from 'src/Tool.js'
 import { enqueue } from './messageQueueManager.js'
 import { createAbortController } from './abortController.js'
 import { fileHistoryEnabled, FileHistoryState, fileHistoryMakeSnapshot } from './fileHistory.js'
@@ -63,6 +63,7 @@ export async function executeUserInput(params: ExecuteUserInputParams): Promise<
         input: cmd.value,
         preExpansionInput: cmd.preExpansionValue,
         mode: cmd.mode,
+        setToolJSX: params.setToolJSX,
         context: makeContext(),
         pastedContents: isFirst ? cmd.pastedContents : undefined,
         messages,

@@ -10,7 +10,9 @@ import type { ProcessUserInputContext } from './executeUserInput.js'
 import { AppState } from 'src/state/AppStateStore.js'
 import { QueuedCommand } from 'src/types/textInputTypes.js'
 import { isValidImagePaste } from 'src/types/textInputTypes.js'
+import type { PromptInputMode } from 'src/types/textInputTypes.js'
 import { parseReferences, expandPastedTextRefs } from 'src/history.js'
+import type { SetToolJSXFn } from 'src/Tool.js'
 type BaseExecutionParams = {
   queuedCommands?: QueuedCommand[]
   messages: Message[]//
@@ -41,6 +43,7 @@ type BaseExecutionParams = {
 export type ExecuteUserInputParams = BaseExecutionParams & {
   resetHistory: () => void
   onInputChange: (value: string) => void
+  setToolJSX: SetToolJSXFn
 }
 export type PromptInputHelpers = {
   setCursorOffset: (offset: number) => void
@@ -50,9 +53,11 @@ export type PromptInputHelpers = {
 export type HandlePromptSubmitParams = BaseExecutionParams & {
   // Direct user input path (set when called from onSubmit, absent for queue processor)
   input?: string
+  inputMode?: PromptInputMode
   pastedContents?: Record<number, PastedContent>
   helpers?: PromptInputHelpers
   onInputChange: (value: string) => void
+  setToolJSX: SetToolJSXFn
   setPastedContents: React.Dispatch<
     React.SetStateAction<Record<number, PastedContent>>
   >
@@ -80,6 +85,7 @@ export async function handlePromptSubmit(
 : Promise<void> {
   const {
     input,
+    inputMode = 'prompt',
     queryGuard,
     commands,
     setPastedContents,
@@ -116,7 +122,8 @@ export async function handlePromptSubmit(
       setAppState,
       onBeforeQuery,
       onInputChange ,
-      resetHistory
+      resetHistory,
+      setToolJSX: params.setToolJSX,
     })
     return
   }
@@ -155,7 +162,7 @@ export async function handlePromptSubmit(
     enqueue({
       value: finalInput.trim(),
       preExpansionValue: text.trim(),
-      mode:"prompt",
+      mode: inputMode,
       pastedContents: hasImages ? pastedContents : undefined,
       skipSlashCommands,
       bridgeOrigin,
@@ -176,7 +183,7 @@ export async function handlePromptSubmit(
   const cmd: QueuedCommand = {
     value: finalInput,
     preExpansionValue: input,
-    mode:'prompt',
+    mode: inputMode,
     pastedContents: hasImages ? pastedContents : undefined,
     skipSlashCommands,
     bridgeOrigin,
@@ -204,6 +211,7 @@ export async function handlePromptSubmit(
     setAbortController,
     onQuery,
     setAppState,
+    setToolJSX: params.setToolJSX,
     resetHistory,
     onBeforeQuery,
   })

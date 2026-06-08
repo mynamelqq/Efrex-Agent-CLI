@@ -15,6 +15,8 @@ import {
 import { PASTE_THRESHOLD } from 'src/utils/paste.js';
 import type { PastedContent } from 'src/utils/config.js';
 import type { ImageDimensions } from 'src/utils/imageResizer.js';
+import { PromptInputMode } from 'src/types/textInputTypes.js';
+import type { InputEvent, Key } from '@anthropic/ink';
 
 const FOCUSED_INPUT_CURSOR_BG = '#f7f7f3';
 const FOCUSED_INPUT_CURSOR_FG = '#141414';
@@ -25,11 +27,26 @@ const PASTE_TOKEN_PATTERN =
 const PASTE_TOKEN_COLOR = '#f79aff';
 const PASTE_TOKEN_BG = '#16324a';
 
+function normalizeBangModeInput(
+	nextValue: string,
+	mode: PromptInputMode,
+	onModeChange: (mode: PromptInputMode) => void
+): string {
+	if (mode !== 'bash' && nextValue.startsWith('!')) {
+		onModeChange('bash');
+		return nextValue.slice(1);
+	}
+
+	return nextValue;
+}
+
 type Props = {
 	messages: Message[];
 	value: string;
 	height: number;
 	width: number;
+	mode: PromptInputMode;
+  	onModeChange: (mode: PromptInputMode) => void;
 	maxVisibleLines?: number;
 	cursorSyncKey?: number;
 	isActive?: boolean;
@@ -53,6 +70,8 @@ export default function PromptInput({
 	value,
 	height,
 	width,
+	mode,
+  	onModeChange,
 	maxVisibleLines,
 	cursorSyncKey = 0,
 	isActive = true,
@@ -66,7 +85,8 @@ export default function PromptInput({
 	onCtrlC,
 	onCyclePermissionMode,
 	pastedContents: _pastedContents,
-	setPastedContents
+	setPastedContents,
+
 }: Props) {
 	const [cursorOffset, setCursorOffset] = React.useState(value.length);
 	const lastInternalValueRef = React.useRef(value);
@@ -80,6 +100,16 @@ export default function PromptInput({
 	}
 
 	React.useEffect(() => {
+		if (mode !== 'bash' && value.startsWith('!')) {
+			const normalizedValue = value.slice(1);
+			lastInternalValueRef.current = normalizedValue;
+			cursorOffsetRef.current = Math.min(cursorOffsetRef.current, normalizedValue.length);
+			pendingCursorOffsetRef.current = cursorOffsetRef.current;
+			onModeChange('bash');
+			onChange(normalizedValue);
+			return;
+		}
+
 		if (pendingCursorOffsetRef.current !== null) {
 			const nextOffset = Math.min(pendingCursorOffsetRef.current, value.length);
 			cursorOffsetRef.current = nextOffset;
@@ -92,14 +122,19 @@ export default function PromptInput({
 			lastInternalValueRef.current = value;
 			setCursorOffset(value.length);
 		}
-	}, [value]);
+	}, [mode, onChange, onModeChange, value]);
 
 	const handleChange = React.useCallback(
 		(nextValue: string) => {
-			lastInternalValueRef.current = nextValue;
-			onChange(nextValue);
+			const normalizedValue = normalizeBangModeInput(
+				nextValue,
+				mode,
+				onModeChange
+			);
+			lastInternalValueRef.current = normalizedValue;
+			onChange(normalizedValue);
 		},
-		[onChange]
+		[mode, onChange, onModeChange]
 	);
 
 	const insertTextAtCursor = React.useCallback(
@@ -134,15 +169,31 @@ export default function PromptInput({
 				return;
 			}
 
-			const numLines = getPastedTextRefNumLines(text);
+			const currentValue = lastInternalValueRef.current;
+			const safeOffset = Math.min(cursorOffsetRef.current, currentValue.length);
+			const shouldEnterBashMode =
+				mode !== 'bash' &&
+				safeOffset === 0 &&
+				currentValue.length === 0 &&
+				text.startsWith('!');
+			const normalizedText = shouldEnterBashMode ? text.slice(1) : text;
+
+			if (shouldEnterBashMode) {
+				onModeChange('bash');
+			}
+
+			const numLines = getPastedTextRefNumLines(normalizedText);
 			const maxLines = Math.max(1, Math.min(height - 10, 2));
 
-			if (text.length > PASTE_THRESHOLD || numLines > maxLines) {
+			if (
+				normalizedText.length > PASTE_THRESHOLD ||
+				numLines > maxLines
+			) {
 				const pasteId = nextPasteIdRef.current++;
 				const newContent: PastedContent = {
 					id: pasteId,
 					type: 'text',
-					content: text
+					content: normalizedText
 				};
 
 				setPastedContents(prev => ({ ...prev, [pasteId]: newContent }));
@@ -150,9 +201,9 @@ export default function PromptInput({
 				return;
 			}
 
-			insertTextAtCursor(text);
+			insertTextAtCursor(normalizedText);
 		},
-		[height, insertTextAtCursor, setPastedContents]
+		[height, insertTextAtCursor, mode, onModeChange, setPastedContents]
 	);
 
 	const onImagePaste = React.useCallback(
@@ -219,7 +270,24 @@ export default function PromptInput({
 		onImagePaste
 	});
 
-	useInput(wrappedOnInput, { isActive });
+	const handlePromptInput = React.useCallback(
+		(input: string, key: Key, event: InputEvent) => {
+			if (
+				mode === 'bash' &&
+				cursorOffsetRef.current === 0 &&
+				(key.backspace || key.escape)
+			) {
+				event.stopImmediatePropagation();
+				onModeChange('prompt');
+				return;
+			}
+
+			wrappedOnInput(input, key, event);
+		},
+		[mode, onModeChange, wrappedOnInput]
+	);
+
+	useInput(handlePromptInput, { isActive });
 
 	React.useEffect(() => {
 		if (cursorOffset > value.length) {

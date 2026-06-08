@@ -172,8 +172,9 @@ export type Tool<
 	call(
 		args: z.infer<Input>,
 		context: ToolUseContext,
-		canUseTool:CanUseToolFn,
-		parentMessage: AssistantMessage
+		canUseTool?: CanUseToolFn,
+		parentMessage?: AssistantMessage,
+		onProgress?: ToolCallProgress<P>
 	): Promise<ToolResult<Output>>;
 	getToolUseSummary?(
 		input: Partial<z.infer<Input>> | undefined
@@ -198,7 +199,19 @@ export type Tool<
 			isTranscriptMode?: boolean;
 		}
 	): React.ReactNode;
-
+	/**
+	 * Optional. When omitted, no progress UI is shown while the tool runs.
+	 */
+	renderToolUseProgressMessage?(
+		progressMessagesForMessage: ProgressMessage<P>[],
+		options: {
+			tools: Tools;
+			verbose: boolean;
+			terminalSize?: { columns: number; rows: number };
+			inProgressToolCallCount?: number;
+			isTranscriptMode?: boolean;
+		}
+	): React.ReactNode;
 	renderToolResultMessage?(
 		content: Output,
 		progressMessagesForMessage: Message[],
@@ -260,7 +273,13 @@ export function buildTool<Input extends AnyObject, Output = unknown>(
 		...def
 	} as Tool<Input, Output>;
 }
-
+export type ToolProgress<P extends ToolProgressData> = {
+  toolUseID: string
+  data: P
+}
+export type ToolCallProgress<P extends ToolProgressData = ToolProgressData> = (
+  progress: ToolProgress<P>,
+) => void
 /**
  * Checks if a tool matches the given name (primary name or alias).检查工具是否匹配给定的名称（主名称或别名）
  */
