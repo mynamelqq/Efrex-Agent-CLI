@@ -13,6 +13,7 @@ import { stringWidth } from '../../ink/stringWidth.js';
 import { getCwd } from 'src/utils/cwd.js';
 import { FileToolPermissionPreview } from './FileToolPermissionPreview.js';
 import { getDisplayPath } from 'src/utils/file.js';
+import { BashPermissionRequest } from './BashPermissionRequest.js';
 import { PowerShellPermissionRequest } from './PowerShellPermissionRequest.js';
 
 export type PermissionRequestProps<Input extends AnyObject = AnyObject> = {
@@ -93,6 +94,10 @@ type PermissionOption = {
 	action: () => void;
 	help?: string;
 };
+
+function isFileMutationToolName(toolName: string): boolean {
+	return toolName === 'Edit' || toolName === 'Write';
+}
 
 function stringifyPermissionInput(input: unknown): string {
 	if (typeof input === 'string') {
@@ -221,6 +226,28 @@ function getRiskLabel(presentation: ToolPresentation): string {
 	return `Low — ${presentation.risk ?? 'allows this tool call to continue.'}`;
 }
 
+type PermissionInputKey = {
+	wheelUp?: boolean;
+	wheelDown?: boolean;
+	pageUp?: boolean;
+	pageDown?: boolean;
+	home?: boolean;
+	end?: boolean;
+	ctrl?: boolean;
+};
+
+function isScrollNavigationKey(input: string, key: PermissionInputKey): boolean {
+	return (
+		key.wheelUp ||
+		key.wheelDown ||
+		key.pageUp ||
+		key.pageDown ||
+		key.home ||
+		key.end ||
+		(key.ctrl && ['b', 'f', 'u', 'd'].includes(input))
+	);
+}
+
 function getToolPresentation(
 	toolName: string,
 	input: unknown,
@@ -276,8 +303,8 @@ function getToolPresentation(
 	if (toolName === 'Read' || toolName === 'glob' || toolName === 'Grep') {
 		return {
 			toolLabel: toolName === 'glob' ? 'Glob' : toolName,
-			title: 'Permission required: inspect files',
-			intent: 'efrex code wants to inspect files',
+			title: 'Inspect files',
+			intent: 'Inspect files',
 			primaryLabel: toolName === 'Grep' ? 'Pattern' : 'Path',
 			primary: path || stringifyPermissionInput(input),
 			working,
@@ -290,8 +317,8 @@ function getToolPresentation(
 	if (toolName === 'WebFetch') {
 		return {
 			toolLabel: 'WebFetch',
-			title: 'Permission required: fetch URL',
-			intent: 'efrex code wants to fetch a URL',
+			title: 'Fetch URL',
+			intent: 'Fetch URL',
 			primaryLabel: 'URL',
 			primary: path || stringifyPermissionInput(input),
 			working,
@@ -304,8 +331,8 @@ function getToolPresentation(
 	if (toolName === 'WebSearch') {
 		return {
 			toolLabel: 'WebSearch',
-			title: 'Permission required: search the web',
-			intent: 'efrex code wants to search the web',
+			title: 'Search the web',
+			intent: 'Search the web',
 			primaryLabel: 'Query',
 			primary: query || stringifyPermissionInput(input),
 			working,
@@ -317,8 +344,8 @@ function getToolPresentation(
 
 	return {
 		toolLabel: toolName,
-		title: `Permission required: use ${toolName}`,
-		intent: `efrex code wants to use ${toolName}`,
+		title: `Use ${toolName}`,
+		intent: `Use ${toolName}`,
 		primaryLabel: 'Input',
 		primary: stringifyPermissionInput(input),
 		working,
@@ -354,6 +381,103 @@ function InlineField({
 	);
 }
 
+type FileMutationPermissionPanelProps = {
+	toolUseConfirm: ToolUseConfirm;
+	selectedIndex?: number;
+	options?: PermissionOption[];
+	shortcutHint?: string;
+	statusText?: string;
+	maxPreviewLines?: number | null;
+};
+
+export function FileMutationPermissionPanel({
+	toolUseConfirm,
+	selectedIndex,
+	options,
+	shortcutHint,
+	statusText,
+	maxPreviewLines = null
+}: FileMutationPermissionPanelProps): React.ReactNode {
+	const { columns } = useWindowSize();
+	const presentation = getToolPresentation(
+		toolUseConfirm.tool.name,
+		toolUseConfirm.input,
+		toolUseConfirm.description
+	);
+	const panelWidth = Math.min(120, Math.max(60, columns - 4));
+	const contentWidth = Math.max(32, panelWidth - 6);
+	const divider = '─'.repeat(contentWidth);
+	const fileName = basename(presentation.primary) || presentation.primary;
+	const action = toolUseConfirm.tool.name === 'Write' ? 'Write' : 'Edit';
+	const titleText = `${action} ${fileName}`;
+	const pathText = getDisplayPath(presentation.primary);
+
+	return (
+		<Box
+			flexDirection="column"
+			alignSelf="flex-start"
+			width={panelWidth}
+			marginTop={1}
+		>
+			<Text color={presentation.accent}>{divider}</Text>
+			<Box flexDirection="row">
+				<Text color={presentation.accent} bold>
+					?{' '}
+				</Text>
+				<Text color="ansi:whiteBright">
+					{fitDisplay(titleText, contentWidth - 2)}
+				</Text>
+			</Box>
+			{pathText !== fileName ? (
+				<Text color="ansi:blackBright">
+					{fitDisplay(pathText, contentWidth)}
+				</Text>
+			) : null}
+			<FileToolPermissionPreview
+				toolName={toolUseConfirm.tool.name}
+				input={toolUseConfirm.input}
+				width={contentWidth}
+				maxLines={maxPreviewLines}
+				showOmitted
+				compact
+			/>
+			<Box flexDirection="column" marginTop={1}>
+				{statusText ? (
+					<Text color="ansi:blackBright">
+						{fitDisplay(statusText, contentWidth)}
+					</Text>
+				) : (
+					options?.map((option, index) => {
+						const selected = selectedIndex === index;
+
+						return (
+							<Text
+								key={option.key}
+								color={selected ? option.color : 'ansi:blackBright'}
+								bold={selected}
+								inverse={selected}
+							>
+								{fitDisplay(
+									`${selected ? '›' : ' '}[${option.hotkey}] ${option.label}`,
+									contentWidth
+								)}
+							</Text>
+						);
+					})
+				)}
+				{statusText ? null : (
+					<Text color="ansi:blackBright">
+						{fitDisplay(
+							`Enter confirm · Esc cancel · ${shortcutHint ?? 'A/D'}`,
+							contentWidth
+						)}
+					</Text>
+				)}
+			</Box>
+		</Box>
+	);
+}
+
 export function PermissionRequest({
 	toolUseConfirm,
 	toolUseContext,
@@ -361,7 +485,23 @@ export function PermissionRequest({
 	onReject,
 	currentMessageCount
 }: PermissionRequestProps): React.ReactNode {
-	if (toolUseConfirm.tool.name === 'PowerShell') {
+	if (toolUseConfirm.tool.name === 'Bash') {
+		return (
+			<BashPermissionRequest
+				toolUseConfirm={toolUseConfirm}
+				toolUseContext={toolUseContext}
+				onDone={onDone}
+				onReject={onReject}
+				verbose={false}
+				currentMessageCount={currentMessageCount}
+			/>
+		);
+	}
+
+	if (
+		toolUseConfirm.tool.name === 'PowerShell' ||
+		toolUseConfirm.tool.name === 'powershell'
+	) {
 		return (
 			<PowerShellPermissionRequest
 				toolUseConfirm={toolUseConfirm}
@@ -374,7 +514,7 @@ export function PermissionRequest({
 		);
 	}
 
-	const { columns } = useWindowSize();
+	const { columns, rows } = useWindowSize();
 	const presentation = getToolPresentation(
 		toolUseConfirm.tool.name,
 		toolUseConfirm.input,
@@ -388,17 +528,14 @@ export function PermissionRequest({
 	const didResolveRef = React.useRef(false);
 
 	const startResolution = React.useCallback(
-		async (action: () => void | Promise<void>) => {
+		(action: () => void | Promise<void>) => {
 			if (didResolveRef.current) {
 				return;
 			}
 
 			didResolveRef.current = true;
-			try {
-				await action();
-			} finally {
-				onDone();
-			}
+			onDone();
+			void Promise.resolve().then(action);
 		},
 		[onDone]
 	);
@@ -474,6 +611,10 @@ export function PermissionRequest({
 
 	useInput(
 		(input, key, event) => {
+			if (isScrollNavigationKey(input, key)) {
+				return;
+			}
+
 			if (didResolveRef.current) {
 				event.stopImmediatePropagation();
 				return;
@@ -520,6 +661,18 @@ export function PermissionRequest({
 	const divider = '─'.repeat(contentWidth);
 	const verticalDivider = '│';
 	const shortcutHint = bypassAvailable ? 'A/D/B' : 'A/D';
+	const isFileMutationTool = isFileMutationToolName(toolUseConfirm.tool.name);
+
+	if (isFileMutationTool) {
+		return (
+			<FileMutationPermissionPanel
+				toolUseConfirm={toolUseConfirm}
+				selectedIndex={selectedIndex}
+				options={options}
+				shortcutHint={shortcutHint}
+			/>
+		);
+	}
 
 	const content = (
 		<Box
@@ -539,11 +692,7 @@ export function PermissionRequest({
 							?{' '}
 						</Text>
 						<Text color="ansi:whiteBright">
-							{fitDisplay(
-								presentation.question ??
-									`efrex code wants to ${presentation.intent}:`,
-								bodyWidth - 2
-							)}
+							{fitDisplay(presentation.question ?? presentation.intent, bodyWidth - 2)}
 						</Text>
 					</Box>
 					<Text color={presentation.isDangerous ? 'ansi:redBright' : 'ansi:cyan'}>
@@ -560,7 +709,7 @@ export function PermissionRequest({
 						</Text>
 					) : null}
 					<InlineField
-						label="Working directory"
+						label="Cwd"
 						value={presentation.working}
 						width={bodyWidth}
 						color="ansi:white"

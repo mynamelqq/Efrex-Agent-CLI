@@ -1,10 +1,9 @@
 import React from 'react';
-import { KeyboardShortcutHint } from '@anthropic/ink';
 import { MessageResponse } from 'src/components/MessageResponse.js';
 import { OutputLine } from 'src/components/shell/OutputLine.js';
 import { ShellTimeDisplay } from 'src/components/shell/ShellTimeDisplay.js';
 import { Box, Text } from 'src/ink';
-import type { Out as BashOut } from './BashTools.js';
+import type { Out as BashOut } from './BashTool.js';
 
 type Props = {
   content: Omit<BashOut, 'interrupted'>;

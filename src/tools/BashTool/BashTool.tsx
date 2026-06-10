@@ -1,10 +1,11 @@
 import { z } from 'zod/v4';
 import { lazySchema } from '../../utils/lazySchema';
 import { semanticNumber } from '../../utils/semanticNumber';
-import { buildTool } from '../../Tool';
+import { buildTool, ToolCallProgress } from '../../Tool';
 import { AssistantMessage, ToolResultBlockParam } from 'src/package/message';
 import { BASH_TOOL_NAME } from './toolName';
 import { detectFileEncoding } from '../../utils/file';
+import { bashToolHasPermission } from './BashPermissions';
 import { TOOL_SUMMARY_MAX_LENGTH } from '../../constants/toolLimits';
 import { copyFile, stat as fsStat, truncate as fsTruncate, link } from 'fs/promises';
 import { ToolDef } from '../../Tool';
@@ -16,8 +17,9 @@ import {readFile}from "fs/promises"
 import { ToolUseContext } from '../../Tool';
 import { isEnvTruthy } from 'src/utils/envUtils';
 import { truncate } from '../../utils/format.js';
-import { renderToolUseErrorMessage,renderToolResultMessage,renderToolUseMessage } from './UI';
+import { renderToolUseErrorMessage,renderToolResultMessage,renderToolUseMessage,renderToolUseProgressMessage } from './UI';
 import { expandPath } from '../../utils/path.js';
+import {splitCommandWithOperators} from '../../utils/bash/command'
 import { DESCRIPTION } from '../GlobTool/prompt';
 import { exec } from 'src/utils/shell';
 import {interpretCommandResult}from "./commandSemantics"
@@ -27,12 +29,14 @@ import { PermissionResult } from 'src/types/permissions';
 import { ensureToolResultsDir,getToolResultPath } from 'src/utils/toolResultStorage';
 import { stripEmptyLines } from './utils';
 import { PermissionRequest } from 'src/components/permissions/PermissionRequest';
+import { BashProgress } from 'src/tools';
 export function getDefaultTimeoutMs(): number {
   return getDefaultBashTimeoutMs()
 }
 
 // 进度显示常量
 const PROGRESS_THRESHOLD_MS = 2000; // 2秒后显示进度
+const PROGRESS_INTERVAL_MS = 1000;
 
 // 用于可折叠显示的搜索命令（grep、find 等）
 const BASH_SEARCH_COMMANDS = new Set(['find', 'grep', 'rg', 'ag', 'ack', 'locate', 'which', 'whereis']);
@@ -110,76 +114,76 @@ export type BashToolInput = z.infer<ReturnType<typeof fullInputSchema>>;
  * position, as they're pure output/status commands that don't affect the read/search
  * nature of the pipeline (e.g. `ls dir && echo "---" && ls dir2` is still a read).
  */
-// export function isSearchOrReadBashCommand(command: string): {
-//   isSearch: boolean;
-//   isRead: boolean;
-//   isList: boolean;
-// } {
-//   let partsWithOperators: string[];
-//   try {
-//     partsWithOperators = splitCommandWithOperators(command);
-//   } catch {
-//     // If we can't parse the command due to malformed syntax,
-//     // it's not a search/read command
-//     return { isSearch: false, isRead: false, isList: false };
-//   }
+export function isSearchOrReadBashCommand(command: string): {
+  isSearch: boolean;
+  isRead: boolean;
+  isList: boolean;
+} {
+  let partsWithOperators: string[];
+  try {
+    partsWithOperators = splitCommandWithOperators(command);
+  } catch {
+    // If we can't parse the command due to malformed syntax,
+    // it's not a search/read command
+    return { isSearch: false, isRead: false, isList: false };
+  }
 
-//   if (partsWithOperators.length === 0) {
-//     return { isSearch: false, isRead: false, isList: false };
-//   }
+  if (partsWithOperators.length === 0) {
+    return { isSearch: false, isRead: false, isList: false };
+  }
 
-//   let hasSearch = false;
-//   let hasRead = false;
-//   let hasList = false;
-//   let hasNonNeutralCommand = false;
-//   let skipNextAsRedirectTarget = false;
+  let hasSearch = false;
+  let hasRead = false;
+  let hasList = false;
+  let hasNonNeutralCommand = false;
+  let skipNextAsRedirectTarget = false;
 
-//   for (const part of partsWithOperators) {
-//     if (skipNextAsRedirectTarget) {
-//       skipNextAsRedirectTarget = false;
-//       continue;
-//     }
+  for (const part of partsWithOperators) {
+    if (skipNextAsRedirectTarget) {
+      skipNextAsRedirectTarget = false;
+      continue;
+    }
 
-//     if (part === '>' || part === '>>' || part === '>&') {
-//       skipNextAsRedirectTarget = true;
-//       continue;
-//     }
+    if (part === '>' || part === '>>' || part === '>&') {
+      skipNextAsRedirectTarget = true;
+      continue;
+    }
 
-//     if (part === '||' || part === '&&' || part === '|' || part === ';') {
-//       continue;
-//     }
+    if (part === '||' || part === '&&' || part === '|' || part === ';') {
+      continue;
+    }
 
-//     const baseCommand = part.trim().split(/\s+/)[0];
-//     if (!baseCommand) {
-//       continue;
-//     }
+    const baseCommand = part.trim().split(/\s+/)[0];
+    if (!baseCommand) {
+      continue;
+    }
 
-//     if (BASH_SEMANTIC_NEUTRAL_COMMANDS.has(baseCommand)) {
-//       continue;
-//     }
+    if (BASH_SEMANTIC_NEUTRAL_COMMANDS.has(baseCommand)) {
+      continue;
+    }
 
-//     hasNonNeutralCommand = true;
+    hasNonNeutralCommand = true;
 
-//     const isPartSearch = BASH_SEARCH_COMMANDS.has(baseCommand);
-//     const isPartRead = BASH_READ_COMMANDS.has(baseCommand);
-//     const isPartList = BASH_LIST_COMMANDS.has(baseCommand);
+    const isPartSearch = BASH_SEARCH_COMMANDS.has(baseCommand);
+    const isPartRead = BASH_READ_COMMANDS.has(baseCommand);
+    const isPartList = BASH_LIST_COMMANDS.has(baseCommand);
 
-//     if (!isPartSearch && !isPartRead && !isPartList) {
-//       return { isSearch: false, isRead: false, isList: false };
-//     }
+    if (!isPartSearch && !isPartRead && !isPartList) {
+      return { isSearch: false, isRead: false, isList: false };
+    }
 
-//     if (isPartSearch) hasSearch = true;
-//     if (isPartRead) hasRead = true;
-//     if (isPartList) hasList = true;
-//   }
+    if (isPartSearch) hasSearch = true;
+    if (isPartRead) hasRead = true;
+    if (isPartList) hasList = true;
+  }
 
-//   // Only neutral commands (e.g., just "echo foo") -- not collapsible
-//   if (!hasNonNeutralCommand) {
-//     return { isSearch: false, isRead: false, isList: false };
-//   }
+  // Only neutral commands (e.g., just "echo foo") -- not collapsible
+  if (!hasNonNeutralCommand) {
+    return { isSearch: false, isRead: false, isList: false };
+  }
 
-//   return { isSearch: hasSearch, isRead: hasRead, isList: hasList };
-// }
+  return { isSearch: hasSearch, isRead: hasRead, isList: hasList };
+}
 /**
  * 检查 bash 命令是否为搜索或读取操作。
  * 用于确定该命令是否应在 UI 中折叠显示。
@@ -415,8 +419,7 @@ export const BashTool = buildTool({
   async validateInput(input: BashToolInput): Promise<ValidationResult> {
     return { result: true };
   },
-  async call(input: BashToolInput, toolUseContext: ToolUseContext,_canUseTool?,
-    assistantMessage?) {
+  async call(input: BashToolInput, toolUseContext: ToolUseContext,_canUseTool?, parentMessage?: AssistantMessage, onProgress?: ToolCallProgress<BashProgress>) {
     // 处理模拟的 sed 编辑——直接应用而不是运行 sed
     // 这确保用户预览的内容就是实际写入的内容
     const {
@@ -443,22 +446,22 @@ export const BashTool = buildTool({
       let generatorResult;
       do {
         generatorResult = await commandGenerator.next();//等待下一次结果
-        // if (!generatorResult.done && onProgress) {
-        //   const progress = generatorResult.value;
-        //   onProgress({
-        //     toolUseID: `bash-progress-${progressCounter++}`,
-        //     data: {
-        //       type: 'bash_progress',
-        //       output: progress.output,
-        //       fullOutput: progress.fullOutput,
-        //       elapsedTimeSeconds: progress.elapsedTimeSeconds,
-        //       totalLines: progress.totalLines,
-        //       totalBytes: progress.totalBytes,
-        //       taskId: progress.taskId,
-        //       timeoutMs: progress.timeoutMs
-        //     }
-        //   });
-        // }
+        if (!generatorResult.done && onProgress) {
+          const progress = generatorResult.value;
+          onProgress({
+            toolUseID: `bash-progress-${progressCounter++}`,
+            data: {
+              type: 'bash_progress',
+              output: progress.output,
+              fullOutput: progress.fullOutput,
+              elapsedTimeSeconds: progress.elapsedTimeSeconds,
+              totalLines: progress.totalLines,
+              totalBytes: progress.totalBytes,
+              taskId: progress.taskId,
+              timeoutMs: progress.timeoutMs
+            }
+          });
+        }
       } while (!generatorResult.done);
 
       // 从生成器的返回值获取最终结果
@@ -639,6 +642,7 @@ export const BashTool = buildTool({
     if (!parsed.success) return { isSearch: false, isRead: false, isList: false };
     return isSearchOrReadBashCommand(parsed.data.command);
   },
+  renderToolUseProgressMessage:renderToolUseProgressMessage,
 } satisfies ToolDef<InputSchema, Out>);
 
 
@@ -663,23 +667,98 @@ async function* runShellCommand({
   taskId?: string;
   timeoutMs?: number;
 }, ExecResult, void> {
-  const { command, timeout } = input;
+  const {
+    command,
+    timeout,
+  } = input;
+  let fullOutput = '';
+  let lastProgressOutput = '';
+  let lastTotalLines = 0;
+  let lastTotalBytes = 0;
+  let progressVersion = 0;
+  let yieldedProgressVersion = 0;
   const timeoutMs = timeout || getDefaultTimeoutMs();
+  // Progress signal: resolved by onProgress callback from the shared poller,
+  // waking the generator to yield a progress update.
+  let resolveProgress: (() => void) | null = null;
+  function createProgressSignal(): Promise<null> {
+    return new Promise<null>(resolve => {
+      resolveProgress = () => resolve(null);
+    });
+  }
   const shellCommand = await exec(command, abortController.signal, 'bash', {
       timeout: timeoutMs,
+      onProgress(lastLines, allLines, totalLines, totalBytes, isIncomplete) {
+        lastProgressOutput = lastLines;
+        fullOutput = allLines;
+        lastTotalLines = totalLines;
+        lastTotalBytes = isIncomplete ? totalBytes : 0;
+        progressVersion += 1;
+        // Wake the generator so it yields the new progress data
+        const resolve = resolveProgress;
+        if (resolve) {
+          resolveProgress = null;
+          resolve();
+        }
+      },
       preventCwdChanges,
       // 去掉: shouldUseSandbox, shouldAutoBackground
     });
-  const result = await shellCommand.result;
-  shellCommand.cleanup();
-/*   具体删除 runShellCommand 内的：
-  - spawnBackgroundTask() 函数
-  - startBackgrounding() 函数
-  - shellCommand.onTimeout 处理
-  - run_in_background === true 分支
-  - TaskOutput.startPolling() / stopPolling()
-  - foregroundTaskId 注册/注销
-  - BackgroundHint JSX 设置
-  - backgroundShellId 跟踪 */
-  return result;
+  const resultPromise = shellCommand.result;
+  const startTime = Date.now();
+  let nextProgressTime = startTime + PROGRESS_THRESHOLD_MS;
+
+  try {
+    while (true) {
+      if (progressVersion > yieldedProgressVersion) {
+        yieldedProgressVersion = progressVersion;
+        const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+
+        yield {
+          type: 'progress',
+          fullOutput,
+          output: lastProgressOutput,
+          elapsedTimeSeconds: elapsedSeconds,
+          totalLines: lastTotalLines,
+          totalBytes: lastTotalBytes,
+          ...(timeout ? { timeoutMs } : undefined),
+        };
+
+        nextProgressTime = Date.now() + PROGRESS_INTERVAL_MS;
+        continue;
+      }
+
+      const now = Date.now();
+      const timeUntilNextProgress = Math.max(0, nextProgressTime - now);
+
+      const progressSignal = createProgressSignal();
+      const result = await Promise.race([
+        resultPromise,
+        new Promise<null>(resolve =>
+          setTimeout(() => resolve(null), timeUntilNextProgress).unref()
+        ),
+        progressSignal,
+      ]);
+
+      if (result !== null) {
+        return result;
+      }
+
+      const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+
+      yield {
+        type: 'progress',
+        fullOutput,
+        output: lastProgressOutput,
+        elapsedTimeSeconds: elapsedSeconds,
+        totalLines: lastTotalLines,
+        totalBytes: lastTotalBytes,
+        ...(timeout ? { timeoutMs } : undefined),
+      };
+
+      nextProgressTime = Date.now() + PROGRESS_INTERVAL_MS;
+    }
+  } finally {
+    shellCommand.cleanup();
+  }
 }

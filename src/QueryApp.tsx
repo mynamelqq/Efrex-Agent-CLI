@@ -3,6 +3,7 @@ import chalk from 'chalk';
 // import { useMainLoopModel } from './hooks/useMainLoopModel.js';
 import { Command, getCommandName } from './types/command.js';
 import { restoreSessionStateFromLog } from './utils/sessionRestore.js';
+import {cwd}from "process"
 import { useQueueProcessor } from './hooks/useQueueProcessor.js';
 import { UUID } from 'node:crypto';
 import { LogOption } from './types/logs.js';
@@ -18,7 +19,6 @@ import {
 	useWindowSize
 } from './ink.js';
 import { getTerminalFocused } from './ink/terminal-focus-state.js';
-import instances from './ink/instances.js';
 import { resetCostState, switchSession } from './bootstrap/state.js';
 import { stringWidth } from './ink/stringWidth.js';
 import { createFileStateCacheWithSizeLimit, READ_FILE_STATE_CACHE_SIZE } from './utils/fileStateCache.js';
@@ -34,10 +34,8 @@ import { AlternateScreen } from './ink/components/AlternateScreen.js';
 import PromptInput from './components/PromptInput.js';
 import { isCommandEnabled } from './types/command.js';
 import MessageViewport from './components/MessageViewport.js';
-import MessagesScrollback from './components/MessagesScrollback.js';
 import FullscreenLayout from './components/FullscreenLayout.js';
 import { ScrollKeybindingHandler } from './components/ScrollKeybindingHandler.js';
-import WelcomeHeader from './components/WelcomeHeader.js';
 import { PastedContent } from './utils/config.js';
 import type {
 	ApiRetryStatusEvent,
@@ -115,6 +113,56 @@ type ViewportMessage = {
 	toolUseId?: string;
 	animatePrefix?: 'blink';
 };
+
+type ViewportSliceAnchor = { key: string; idx: number } | null;
+
+
+const MAX_VIEWPORT_MESSAGES_WITHOUT_VIRTUALIZATION = 200;
+const VIEWPORT_MESSAGE_CAP_STEP = 50;
+
+function getViewportSliceKey(message: ViewportMessage): string {
+	return [
+		message.id,
+		message.role,
+		message.toolUseId ?? '',
+		message.toolDisplayStyle ?? '',
+		message.toolPhase ?? ''
+	].join(':');
+}
+
+function computeViewportSliceStart(
+	messages: readonly ViewportMessage[],
+	anchorRef: { current: ViewportSliceAnchor },
+	cap = MAX_VIEWPORT_MESSAGES_WITHOUT_VIRTUALIZATION,
+	step = VIEWPORT_MESSAGE_CAP_STEP
+): number {
+	const anchor = anchorRef.current;
+	const anchorIdx = anchor
+		? messages.findIndex(message => getViewportSliceKey(message) === anchor.key)
+		: -1;
+	let start = anchorIdx >= 0
+		? anchorIdx
+		: anchor
+			? Math.min(anchor.idx, Math.max(0, messages.length - cap))
+			: 0;
+
+	if (messages.length - start > cap + step) {
+		start = messages.length - cap;
+	}
+
+	const messageAtStart = messages[start];
+	if (messageAtStart) {
+		const key = getViewportSliceKey(messageAtStart);
+		if (anchor?.key !== key || anchor.idx !== start) {
+			anchorRef.current = { key, idx: start };
+		}
+	} else if (anchor) {
+		anchorRef.current = null;
+	}
+
+	return start;
+}
+
 
 type ToolUseRenderItem = {
 	text: string;
@@ -416,147 +464,6 @@ function buildTurnDurationLine(durationMs: number, width: number): string {
 	return fitDisplay(label, Math.max(1, width));
 }
 
-function getTranscriptHeaderLines({
-	cwd,
-	model,
-	effort,
-	width,
-	welcome
-}: {
-	cwd: string;
-	model: string |null;
-	effort: string;
-	width: number;
-	welcome: boolean;
-}): string[] {
-	const boxWidth = Math.max(12, width);
-	const innerWidth = Math.max(1, boxWidth - 2);
-	const meta = fitDisplay(
-		`${cwd}  ·  model: ${model}  ·  effort: ${effort}`,
-		innerWidth
-	);
-	model = truncateDisplay(model as string, 21);
-	const primary = chalk.hex('#23d3b6');
-	const brandColor = chalk.hex('#4da3ff');
-	const muted = chalk.gray;
-	const brand = `${primary.bold('»')} ${brandColor.bold(APP_BRAND)} ${muted(APP_VERSION)}`;
-	const brandPlain = `» ${APP_BRAND} ${APP_VERSION}`;
-	const rule = muted(
-		` ${'─'.repeat(Math.max(0, boxWidth - stringWidth(brandPlain) - 2))}`
-	);
-
-	const leftWidth = Math.max(28, Math.min(52, Math.floor(innerWidth * 0.42)));
-	const rightWidth = Math.max(20, innerWidth - leftWidth - 1);
-	const border = chalk.hex('#2f6f89');
-	const divider = chalk.hex('#2b9c8c');
-	const top = `${border(`╭${'─'.repeat(leftWidth)}`)}${divider(`┬${'─'.repeat(rightWidth)}╮`)}`;
-	const bottom = `${border(`╰${'─'.repeat(leftWidth)}`)}${divider(`┴${'─'.repeat(rightWidth)}╯`)}`;
-	const row = (
-		leftPlain: string,
-		leftStyled: string,
-		rightPlain: string,
-		rightStyled: string
-	) =>
-		`${border('│')}${leftStyled}${' '.repeat(Math.max(0, leftWidth - stringWidth(leftPlain)))}${divider('│')}${rightStyled}${' '.repeat(Math.max(0, rightWidth - stringWidth(rightPlain)))}${divider('│')}`;
-	const left = (
-		text: string,
-		style: (value: string) => string = value => value
-	) => {
-		const plain = centerDisplay(fitDisplay(text, leftWidth), leftWidth);
-		return { plain, styled: style(plain) };
-	};
-	const right = (
-		text: string,
-		style: (value: string) => string = value => value
-	) => {
-		const plain = padDisplay(fitDisplay(text, rightWidth), rightWidth);
-		return { plain, styled: style(plain) };
-	};
-	const makeRow = (
-		leftText: string,
-		rightText: string,
-		leftStyle: (value: string) => string = value => value,
-		rightStyle: (value: string) => string = value => value
-	) => {
-		const leftCell = left(leftText, leftStyle);
-		const rightCell = right(rightText, rightStyle);
-		return row(
-			leftCell.plain,
-			leftCell.styled,
-			rightCell.plain,
-			rightCell.styled
-		);
-	};
-	const makeLeftInfoRow = (leftText: string, rightText: string) => {
-		const leftPlain = padDisplay(
-			`  ${fitDisplay(leftText, Math.max(1, leftWidth - 4))}`,
-			leftWidth
-		);
-		const rightCell = right(rightText, value => muted(value));
-		return row(
-			leftPlain,
-			muted(leftPlain),
-			rightCell.plain,
-			rightCell.styled
-		);
-	};
-	const action = (value: string) =>
-		muted(value.replace('→', primary.bold('→')));
-
-	return [
-		`${brand}${rule}`,
-		top,
-		makeRow(
-			'efrex code',
-			'✦  Getting Started',
-			value => brandColor.bold(value),
-			value => primary.bold(value)
-		),
-		makeRow(
-			'AI Coding Assistant',
-			'Ask anything, edit code, run commands.',
-			value => muted(value),
-			value => muted(value)
-		),
-		makeRow(
-			'Power your ideas with code.',
-			'Let efrex code handle the rest.',
-			value => muted(value),
-			value => muted(value)
-		),
-		makeRow(
-			'╭ ────── ╮',
-			'✦  Tips',
-			value => brandColor(value),
-			value => primary.bold(value)
-		),
-		// makeRow('╰─┬──┬─╯', '→  Ask questions about your codebase', value => chalk.blueBright(value), value => chalk.gray(value.replace('→', chalk.yellowBright('→')))),
-		// makeRow('      ', '', value => chalk.blueBright(value)),
-		makeRow(
-			'│  •  •  │',
-			'→  Ask questions about your codebase',
-			value => brandColor(value),
-			action
-		),
-		makeRow(
-			'╰─┬──┬─╯',
-			'→  Generate or refactor code',
-			value => brandColor(value),
-			action
-		),
-		makeRow(
-			`model: ${model} | effort: ${effort} `,
-			'→  Run shell commands and analyze results',
-			value => muted(value),
-			action
-		),
-		makeRow(`${cwd}`, '', value => brandColor.bold(value), value => value),
-		// makeRow('Type /help to see available commands', '→  Use natural language to automate tasks', value => chalk.gray(value.replace('/help', chalk.cyanBright('/help'))), value => chalk.gray(value.replace('→', chalk.yellowBright('→')))),
-		bottom,
-		''
-	];
-}
-
 function extractTextContent(
 	content: unknown,
 	{ includeThinking = false }: { includeThinking?: boolean } = {}
@@ -849,20 +756,19 @@ function buildAssistantToolUseRenderItem(
 		};
 	}
 
-	const renderedToolUseText = renderNodeToPlainText(
-		renderedToolUseMessage
-	).trim();
+	const content = (
+		<Box flexDirection="row" flexWrap="wrap">
+			<Text bold>{parsedToolUse.userFacingToolName}</Text>
+			<Text>{' '}</Text>
+			{renderedToolUseMessage}
+		</Box>
+	);
+	const renderedToolUseText = renderNodeToPlainText(content).trim();
 	return {
 		text: renderedToolUseText
 			? `${parsedToolUse.userFacingToolName} ${renderedToolUseText}`
 			: fallbackLabel,
-		content: (
-			<Box flexDirection="row" flexWrap="wrap">
-				<Text bold>{parsedToolUse.userFacingToolName}</Text>
-				<Text>{' '}</Text>
-				{renderedToolUseMessage}
-			</Box>
-		)
+		content
 	};
 }
 
@@ -911,6 +817,111 @@ function getAssistantToolUseViewportMessages(
 		.filter((value): value is ViewportMessage => value !== null);
 }
 
+function getAssistantViewportMessagesInContentOrder(
+	message: MessageType,
+	fallbackId: number,
+	tools: readonly Tool[],
+	verbose: boolean
+): ViewportMessage[] {
+	const content = message.message?.content;
+	if (typeof content === 'string') {
+		return content
+			? [
+					{
+						id: fallbackId,
+						role: 'assistant',
+						text: content
+					}
+				]
+			: [];
+	}
+
+	if (!Array.isArray(content)) {
+		return [];
+	}
+
+	return content
+		.map((block, index): ViewportMessage | null => {
+			if (!block || typeof block !== 'object') {
+				return null;
+			}
+
+			const typedBlock = block as unknown as Record<string, unknown>;
+			const id = fallbackId * 100 + index + 1;
+
+			if (typedBlock.type === 'text' && typeof typedBlock.text === 'string') {
+				return typedBlock.text
+					? {
+							id,
+							role: 'assistant',
+							text: typedBlock.text
+						}
+					: null;
+			}
+
+			if (
+				verbose &&
+				typedBlock.type === 'thinking' &&
+				typeof typedBlock.thinking === 'string'
+			) {
+				return {
+					id,
+					role: 'assistant',
+					text: typedBlock.thinking,
+					content: buildAssistantContentNode([
+						{ text: typedBlock.thinking, dimColor: true }
+					])
+				};
+			}
+
+			if (
+				verbose &&
+				typedBlock.type === 'redacted_thinking' &&
+				typeof (typedBlock.thinking ?? typedBlock.data) === 'string'
+			) {
+				const text = String(typedBlock.thinking ?? typedBlock.data);
+				return {
+					id,
+					role: 'assistant',
+					text,
+					content: buildAssistantContentNode([
+						{ text, dimColor: true }
+					])
+				};
+			}
+
+			if (typedBlock.type !== 'tool_use') {
+				return null;
+			}
+
+			const toolName =
+				typeof typedBlock.name === 'string'
+					? typedBlock.name
+					: 'unknown_tool';
+			const tool = findToolByName(tools, toolName);
+			const toolUseId =
+				typeof typedBlock.id === 'string' ? typedBlock.id : undefined;
+			const item = buildAssistantToolUseRenderItem(
+				tool,
+				typedBlock,
+				verbose
+			);
+
+			return {
+				id,
+				role: 'tool',
+				text: item.text,
+				content: item.content,
+				baseContent: item.content,
+				toolPhase: 'call',
+				toolDisplayStyle: 'use',
+				toolUseId,
+				animatePrefix: 'blink'
+			};
+		})
+		.filter((value): value is ViewportMessage => value !== null);
+}
+
 function updateAssistantToolUseViewportMessage(
 	message: ViewportMessage,
 	phase: 'done' | 'error'
@@ -941,6 +952,97 @@ function updateAssistantToolUseProgressViewportMessage(
 		</Box>
 	);
 	message.text = renderNodeToPlainText(message.content).trim();
+}
+
+function attachAssistantToolUseResultViewportMessage(
+	message: ViewportMessage,
+	resultContent: React.ReactNode,
+	phase: 'done' | 'error'
+): void {
+	message.toolPhase = phase;
+	message.animatePrefix = undefined;
+	const baseContent = message.baseContent ?? message.content;
+	message.baseContent = baseContent;
+	message.content = (
+		<Box flexDirection="column">
+			{baseContent}
+			{resultContent}
+		</Box>
+	);
+	message.text = renderNodeToPlainText(message.content).trim();
+}
+
+function registerAssistantToolUseViewportMessages(
+	viewportMessages: ViewportMessage[],
+	toolUseMessagesById: Map<string, ViewportMessage>,
+	assistantViewportMessages: readonly ViewportMessage[]
+): void {
+	for (const viewportMessage of assistantViewportMessages) {
+		viewportMessages.push(viewportMessage);
+		if (viewportMessage.toolUseId) {
+			toolUseMessagesById.set(viewportMessage.toolUseId, viewportMessage);
+		}
+	}
+}
+
+function reconcileToolResultViewportMessages(
+	viewportMessages: ViewportMessage[],
+	toolUseMessagesById: Map<string, ViewportMessage>,
+	toolResultBlocks: Array<{
+		block: { tool_use_id: string; is_error?: unknown; content?: unknown };
+		index: number;
+	}>,
+	viewportMessagesForToolResult: readonly ViewportMessage[]
+): void {
+	const shouldAttachResultsToToolUses = toolResultBlocks.length > 1;
+
+	for (const { block } of toolResultBlocks) {
+		const existingToolUseMessage = toolUseMessagesById.get(block.tool_use_id);
+		if (existingToolUseMessage && !shouldAttachResultsToToolUses) {
+			updateAssistantToolUseViewportMessage(
+				existingToolUseMessage,
+				Boolean(block.is_error) ? 'error' : 'done'
+			);
+		}
+	}
+
+	if (!shouldAttachResultsToToolUses) {
+		viewportMessages.push(...viewportMessagesForToolResult);
+		return;
+	}
+
+	const attachedToolUseIds = new Set<string>();
+
+	for (const viewportMessage of viewportMessagesForToolResult) {
+		const toolUseId = viewportMessage.toolUseId;
+		const existingToolUseMessage = toolUseId
+			? toolUseMessagesById.get(toolUseId)
+			: undefined;
+		if (existingToolUseMessage && viewportMessage.content && toolUseId) {
+			attachAssistantToolUseResultViewportMessage(
+				existingToolUseMessage,
+				viewportMessage.content,
+				viewportMessage.toolPhase === 'error' ? 'error' : 'done'
+			);
+			attachedToolUseIds.add(toolUseId);
+			continue;
+		}
+
+		viewportMessages.push(viewportMessage);
+	}
+
+	for (const { block } of toolResultBlocks) {
+		if (attachedToolUseIds.has(block.tool_use_id)) {
+			continue;
+		}
+		const existingToolUseMessage = toolUseMessagesById.get(block.tool_use_id);
+		if (existingToolUseMessage) {
+			updateAssistantToolUseViewportMessage(
+				existingToolUseMessage,
+				Boolean(block.is_error) ? 'error' : 'done'
+			);
+		}
+	}
 }
 
 function buildViewportMessages(
@@ -984,54 +1086,22 @@ function buildViewportMessages(
 		}
 
 		if (message.type === 'assistant') {
-			let hasAssistantContent = false;
-			if (verbose) {
-				const assistantViewport = messageToViewport(
+			const assistantViewportMessages =
+				getAssistantViewportMessagesInContentOrder(
 					message,
 					fallbackId,
-					messages,
 					tools,
 					verbose
 				);
-				if (assistantViewport?.role === 'assistant') {
-					viewportMessages.push(assistantViewport);
-					hasAssistantContent = true;
-				}
+			if (assistantViewportMessages.length > 0) {
+				registerAssistantToolUseViewportMessages(
+					viewportMessages,
+					toolUseMessagesById,
+					assistantViewportMessages
+				);
 			}
 
-			if (!hasAssistantContent) {
-				const text = extractTextContent(message.message?.content, {
-					includeThinking: verbose
-				});
-				if (text) {
-					viewportMessages.push({
-						id: fallbackId,
-						role: 'assistant',
-						text
-					});
-					hasAssistantContent = true;
-				}
-			}
-
-			const toolUseMessages = getAssistantToolUseViewportMessages(
-				message,
-				fallbackId,
-				tools,
-				verbose
-			);
-			if (toolUseMessages.length > 0) {
-				toolUseMessages.forEach(viewportMessage => {
-					viewportMessages.push(viewportMessage);
-					if (viewportMessage.toolUseId) {
-						toolUseMessagesById.set(
-							viewportMessage.toolUseId,
-							viewportMessage
-						);
-					}
-				});
-			}
-
-			if (hasAssistantContent || toolUseMessages.length > 0) {
+			if (assistantViewportMessages.length > 0) {
 				appendCompletedTurnFooter(fallbackId);
 				return;
 			}
@@ -1039,18 +1109,6 @@ function buildViewportMessages(
 
 		if (message.type === 'user' && isToolResultUserMessage(message)) {
 			const toolResultBlocks = getToolResultBlocks(message);
-			for (const { block } of toolResultBlocks) {
-				const existingToolUseMessage = toolUseMessagesById.get(
-					block.tool_use_id
-				);
-				if (existingToolUseMessage) {
-					updateAssistantToolUseViewportMessage(
-						existingToolUseMessage,
-						Boolean(block.is_error) ? 'error' : 'done'
-					);
-				}
-			}
-
 			const viewportMessagesForToolResult = getToolResultViewportMessages(
 				message,
 				fallbackId,
@@ -1059,7 +1117,12 @@ function buildViewportMessages(
 				verbose
 			);
 			if (viewportMessagesForToolResult.length > 0) {
-				viewportMessages.push(...viewportMessagesForToolResult);
+				reconcileToolResultViewportMessages(
+					viewportMessages,
+					toolUseMessagesById,
+					toolResultBlocks,
+					viewportMessagesForToolResult
+				);
 			}
 			appendCompletedTurnFooter(fallbackId);
 			return;
@@ -1280,20 +1343,45 @@ function getToolResultBlocks(message: MessageType): Array<{
 		);
 }
 
+function hasToolResultForConfirmation(
+	messages: readonly MessageType[],
+	toolUseConfirm: ToolUseConfirm
+): boolean {
+	return messages.some(message => {
+		if (
+			typeof message.sourceToolAssistantUUID === 'string' &&
+			message.sourceToolAssistantUUID !== String(toolUseConfirm.assistantMessage.uuid)
+		) {
+			return false;
+		}
+
+		return getToolResultBlocks(message).some(
+			({ block }) => block.tool_use_id === toolUseConfirm.toolUseID
+		);
+	});
+}
+
 function createSingleToolResultMessage(
 	message: MessageType,
 	block: {
 		tool_use_id: string;
 		is_error?: unknown;
 		content?: unknown;
-	}
+	},
+	blockCount = 1
 ): MessageType {
 	if (!Array.isArray(message.message?.content)) {
 		return message;
 	}
 
+	const toolUseResult =
+		blockCount === 1 && message.toolUseResult !== undefined
+			? message.toolUseResult
+			: block.content;
+
 	return {
 		...message,
+		toolUseResult,
 		message: {
 			...message.message,
 			content: [
@@ -1315,10 +1403,16 @@ function getToolResultViewportMessages(
 	tools: readonly Tool[],
 	verbose: boolean
 ): ViewportMessage[] {
-	return getToolResultBlocks(message)
+	const toolResultBlocks = getToolResultBlocks(message);
+
+	return toolResultBlocks
 		.map(({ block, index }) => {
 			const viewportMessage = messageToViewport(
-				createSingleToolResultMessage(message, block),
+				createSingleToolResultMessage(
+					message,
+					block,
+					toolResultBlocks.length
+				),
 				fallbackId * 100 + index + 1,
 				messages,
 				tools,
@@ -2117,6 +2211,7 @@ export default function QueryApp({
 			mode: nextMode
 		});
 	}, [setAppState, setToolPermissionContext, toolPermissionContext]);
+	const activeToolUseConfirm = toolUseConfirmQueue[0];
 	const shiftToolUseConfirmQueue = useCallback(() => {
 		setToolUseConfirmQueue(([, ...tail]) => tail);
 	}, []);
@@ -2805,8 +2900,9 @@ const getToolUseContext = useCallback(
 			}
 			resetHistory();
 			setAlertMessage(null);
-
-			
+			if (inputMode === 'bash') {
+				setInputMode('prompt');
+			}
 			await handlePromptSubmit({
 				input: value,
 				inputMode,
@@ -2832,9 +2928,7 @@ const getToolUseContext = useCallback(
 				setAppState,
 				queryGuard,
 			});
-			if (inputMode === 'bash') {
-				setInputMode('prompt');
-			}
+			
 		},
 		[
 			commands,
@@ -2872,32 +2966,17 @@ const getToolUseContext = useCallback(
 	const permissionModeColor = permissionModeConfig.color;
 
 	const isTranscriptMode = screen === 'transcript';
-	const activeToolUseConfirm = toolUseConfirmQueue[0];
-	const previousTranscriptModeRef = useRef(isTranscriptMode);
-	useLayoutEffect(() => {
-		const wasTranscriptMode = previousTranscriptModeRef.current;
-		previousTranscriptModeRef.current = isTranscriptMode;
-
-		if (
-			wasTranscriptMode &&
-			!isTranscriptMode &&
-			!isFullscreenEnvEnabled()
-		) {
-			instances.get(process.stdout)?.invalidatePrevFrame();
-		}
-	}, [isTranscriptMode]);
+	const viewportSliceAnchorRef = useRef<ViewportSliceAnchor>(null);
 	const previousActiveToolUseConfirmRef = useRef(activeToolUseConfirm);
 	useLayoutEffect(() => {
 		const previousActiveToolUseConfirm =
 			previousActiveToolUseConfirmRef.current;
+		const permissionStateChanged =
+			Boolean(previousActiveToolUseConfirm) !== Boolean(activeToolUseConfirm);
 		previousActiveToolUseConfirmRef.current = activeToolUseConfirm;
 
-		if (
-			previousActiveToolUseConfirm &&
-			!activeToolUseConfirm &&
-			!isFullscreenEnvEnabled()
-		) {
-			instances.get(process.stdout)?.invalidatePrevFrame();
+		if (permissionStateChanged) {
+			scrollRef.current?.scrollToBottom();
 		}
 	}, [activeToolUseConfirm]);
 	const renderTools = activeTools;
@@ -2909,7 +2988,12 @@ const getToolUseContext = useCallback(
 			isTranscriptMode,
 			Date.now()
 		),
-		[messages, renderTools, completedTurnFooters, isTranscriptMode]
+		[
+			messages,
+			renderTools,
+			completedTurnFooters,
+			isTranscriptMode
+		]
 	);
 
 	const streamingPlaceholder = useMemo(() => {
@@ -2936,17 +3020,22 @@ const getToolUseContext = useCallback(
 	}, [loading, streamingAssistant.placeholderId, streamingAssistant.text, streamingAssistant.pendingToolCalls]);
 
 	const viewportMessages = useMemo(() => {
-		if (
-			shouldAppendStreamingPlaceholder(
-				baseViewportMessages,
-				streamingPlaceholder
-			)
-		) {
-			return [...baseViewportMessages, streamingPlaceholder!];
+		const nextMessages = shouldAppendStreamingPlaceholder(
+			baseViewportMessages,
+			streamingPlaceholder
+		)
+			? [...baseViewportMessages, streamingPlaceholder!]
+			: baseViewportMessages;
+		if (isTranscriptMode || isFullscreenEnvEnabled()) {
+			return nextMessages;
 		}
 
-		return baseViewportMessages;
-	}, [baseViewportMessages, streamingPlaceholder]);
+		const sliceStart = computeViewportSliceStart(
+			nextMessages,
+			viewportSliceAnchorRef
+		);
+		return sliceStart > 0 ? nextMessages.slice(sliceStart) : nextMessages;
+	}, [baseViewportMessages, streamingPlaceholder, isTranscriptMode]);
 	const hasInlineLoadingPlaceholder =
 		loading &&
 		streamingAssistant.placeholderId !== null &&
@@ -2954,30 +3043,16 @@ const getToolUseContext = useCallback(
 			streamingAssistant.pendingToolCalls.length > 0);
 
 	const { model: modelLabel, effort: effortLabel } = useTranscriptHeaderInfo();
-
-	const cwd = process.cwd();
-	const transcriptHeaderLines = useMemo(
-		() => getTranscriptHeaderLines({
-			cwd,
+	const welcomeHeader = useMemo(
+		() => ({
+			brand: APP_BRAND,
+			version: APP_VERSION,
+			cwd:cwd(),
 			model: modelLabel,
 			effort: effortLabel,
-			width: messageWidth,
-			welcome: false
+			width: messageWidth
 		}),
-		[cwd, modelLabel, effortLabel, messageWidth]
-	);
-	const welcomeHeader = useMemo(
-		() => (
-			<WelcomeHeader
-				brand={APP_BRAND}
-				version={APP_VERSION}
-				cwd={cwd}
-				model={modelLabel}
-				effort={effortLabel}
-				width={messageWidth}
-			/>
-		),
-		[cwd, modelLabel, effortLabel, messageWidth]
+		[cwd(), modelLabel, effortLabel, messageWidth]
 	);
 	const highlightInputChrome =
 		isTerminalFocused && loading && !activeToolUseConfirm;
@@ -3108,15 +3183,9 @@ const getToolUseContext = useCallback(
 				</Box>
 			) : null}
 
-			{!isFullscreenEnvEnabled() && toolPermissionOverlay ? (
-				<Box flexDirection="column" width="100%" flexShrink={0}>
-					{toolPermissionOverlay}
-				</Box>
-			) : null}
-
 			<Box flexDirection="column" flexShrink={0}>
 				<PromptInputQueuedCommands width={terminalColumns} />
-				{!toolJSX?.shouldHidePromptInput ? (
+				{!toolJSX?.shouldHidePromptInput && !activeToolUseConfirm ? (
 					<>
 						<Text> </Text>
 						<Text color={inputRuleColor}>{inputRule}</Text>
@@ -3146,7 +3215,13 @@ const getToolUseContext = useCallback(
 								onHistoryNext={onHistoryDown}
 								onCtrlC={handleCtrlC}
 								onCyclePermissionMode={handleCyclePermissionMode}
-								placeholder={showSpinner ? '等待 query.ts 响应中...' : 'Ask efrex anything...'}
+								placeholder={
+									activeToolUseConfirm
+										? ''
+										: showSpinner
+											? '等待 query.ts 响应中...'
+											: 'Ask efrex anything...'
+								}
 								pastedContents={pastedContents}
 								setPastedContents={setPastedContents}
 								mode={inputMode}
@@ -3257,7 +3332,7 @@ const getToolUseContext = useCallback(
 	const scrollableContent = (
 		<Box flexDirection="column">
 			<MessageViewport
-				header={welcomeHeader}
+				welcomeHeader={welcomeHeader}
 				messages={viewportMessages}
 				width={messageWidth}
 				alertMessage={alertMessage}
@@ -3318,52 +3393,21 @@ const getToolUseContext = useCallback(
 		</Box>
 	);
 
-	const nonFullscreenTranscriptScrollableContent = (
-		<Box flexDirection="column">
-			<MessagesScrollback
-				headerLines={transcriptHeaderLines}
-				messages={viewportMessages}
-				width={messageWidth}
-				alertMessage={alertMessage}
-				blinkOn={false}
-				virtualScroll
-				scrollRef={scrollRef}
-			/>
-			{toolJSX && !(toolJSX.isLocalJSXCommand && toolJSX.isImmediate) ? (
-				<Box flexDirection="column" width="100%">
-					{toolJSX.jsx}
-				</Box>
-			) : null}
-		</Box>
-	);
-
 	if (isTranscriptMode) {
-		if (isFullscreenEnvEnabled()) {
-			return (
-				<AlternateScreen mouseTracking>
-					<ScrollKeybindingHandler
-						scrollRef={scrollRef}
-						isActive
-					/>
-					<FullscreenLayout
-						scrollRef={scrollRef}
-						scrollable={transcriptScrollableContent}
-						bottom={transcriptBottom}
-					/>
-				</AlternateScreen>
-			);
-		}
-
 		return (
-			<AlternateScreen mouseTracking preserveMainScreenOnExit>
+			<AlternateScreen
+				mouseTracking
+				preserveMainScreenOnExit
+			>
 				<ScrollKeybindingHandler
 					scrollRef={scrollRef}
 					isActive
 				/>
 				<FullscreenLayout
 					scrollRef={scrollRef}
-					scrollable={nonFullscreenTranscriptScrollableContent}
+					scrollable={transcriptScrollableContent}
 					bottom={transcriptBottom}
+					forceViewportLayout
 				/>
 			</AlternateScreen>
 		);
@@ -3387,13 +3431,11 @@ const getToolUseContext = useCallback(
 	}
 
 	return (
-		<Box
-			flexDirection="column"
-			paddingX={1}
-			paddingY={0}
-		>
-			{scrollableContent}
-			{bottomContent}
-		</Box>
+		<FullscreenLayout
+			scrollRef={scrollRef}
+			scrollable={scrollableContent}
+			overlay={toolPermissionOverlay}
+			bottom={bottomContent}
+		/>
 	);
 }

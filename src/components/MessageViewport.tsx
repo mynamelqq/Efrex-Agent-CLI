@@ -5,6 +5,7 @@ import {stringWidth} from '../ink/stringWidth.js';
 import MarkdownText from './MarkdownText.js';
 import { OffscreenFreeze } from './OffscreenFreeze.js';
 import MessageHeader from './MessageHeader.js';
+import WelcomeHeader, { type WelcomeHeaderProps } from './WelcomeHeader.js';
 
 const USER_MESSAGE_BG = '#2e2f30';
 const USER_MESSAGE_FG = '#f0f0ea';
@@ -23,6 +24,7 @@ export type ViewportMessage = {
 
 type Props = {
   header?: React.ReactNode;
+  welcomeHeader?: WelcomeHeaderProps;
   headerLines?: string[];
   messages: ViewportMessage[];
   width: number;
@@ -59,8 +61,15 @@ export function getMessageViewportLines({
   ];
 }
 
-export default function MessageViewport({
+const ViewportWelcomeHeader = React.memo(function ViewportWelcomeHeader(
+	props: WelcomeHeaderProps
+): React.ReactNode {
+	return <WelcomeHeader {...props} />;
+});
+
+function MessageViewport({
   header,
+  welcomeHeader,
   headerLines,
   messages,
   width,
@@ -71,25 +80,89 @@ export default function MessageViewport({
 }: Props) {
   return (
     <Box flexDirection="column" flexShrink={0} width="100%">
-      {header ?? <MessageHeader lines={headerLines} />}
+      {header ?? (welcomeHeader ? <ViewportWelcomeHeader {...welcomeHeader} /> : <MessageHeader lines={headerLines} />)}
       {alertMessage ? (
         <Text color="redBright">错误: {alertMessage}</Text>
       ) : null}
 		{messages.map((message, index) => (
-			<OffscreenFreeze key={message.id}>
-				<Box flexDirection="column" width="100%">
-					{shouldInsertViewportSpacer(messages[index - 1], message) ? (
-						<Text>{' '}</Text>
-					) : null}
-					{renderMessageNode(message, width, blinkOn, variant)}
-				</Box>
-			</OffscreenFreeze>
+			<ViewportMessageRow
+				key={getViewportMessageKey(message)}
+				message={message}
+				previousMessage={messages[index - 1]}
+				width={width}
+				blinkOn={blinkOn}
+				variant={variant}
+			/>
 		))}
       {statusLine ? (
         <Text color="yellow">{statusLine}</Text>
       ) : null}
     </Box>
   );
+}
+
+export default React.memo(MessageViewport, (previous, next) =>
+	previous.header === next.header &&
+	previous.welcomeHeader === next.welcomeHeader &&
+	previous.headerLines === next.headerLines &&
+	previous.messages === next.messages &&
+	previous.width === next.width &&
+	previous.alertMessage === next.alertMessage &&
+	previous.statusLine === next.statusLine &&
+	previous.variant === next.variant
+);
+
+type ViewportMessageRowProps = {
+	message: ViewportMessage;
+	previousMessage: ViewportMessage | undefined;
+	width: number;
+	blinkOn: boolean;
+	variant: 'default' | 'transcript';
+};
+
+const ViewportMessageRow = React.memo(function ViewportMessageRow({
+	message,
+	previousMessage,
+	width,
+	blinkOn,
+	variant
+}: ViewportMessageRowProps): React.ReactNode {
+	return (
+		<OffscreenFreeze>
+			<Box flexDirection="column" width="100%">
+				{shouldInsertViewportSpacer(previousMessage, message) ? (
+					<Text>{' '}</Text>
+				) : null}
+				{renderMessageNode(message, width, blinkOn, variant)}
+			</Box>
+		</OffscreenFreeze>
+	);
+}, (previous, next) =>
+	previous.width === next.width &&
+	(previous.message.animatePrefix !== 'blink' ||
+		previous.blinkOn === next.blinkOn) &&
+	previous.variant === next.variant &&
+	previous.message.id === next.message.id &&
+	previous.message.role === next.message.role &&
+	previous.message.text === next.message.text &&
+	previous.message.content === next.message.content &&
+	previous.message.toolPhase === next.message.toolPhase &&
+	previous.message.toolDisplayStyle === next.message.toolDisplayStyle &&
+	previous.message.toolUseId === next.message.toolUseId &&
+	previous.message.animatePrefix === next.message.animatePrefix &&
+	previous.previousMessage?.id === next.previousMessage?.id &&
+	previous.previousMessage?.role === next.previousMessage?.role &&
+	previous.previousMessage?.toolDisplayStyle === next.previousMessage?.toolDisplayStyle
+);
+
+function getViewportMessageKey(message: ViewportMessage): string {
+	return [
+		message.id,
+		message.role,
+		message.toolUseId ?? '',
+		message.toolDisplayStyle ?? '',
+		message.toolPhase ?? ''
+	].join(':');
 }
 
 function shouldInsertViewportSpacer(

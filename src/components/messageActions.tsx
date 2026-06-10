@@ -1,7 +1,7 @@
 import figures from 'figures';
 import type { RefObject } from 'react';
 import React, { useCallback, useMemo, useRef } from 'react';
-import { Box, Text } from '@anthropic/ink';
+import { Box, Text } from "src/ink.js";
 // import { useKeybindings } from '../keybindings/useKeybinding.js';
 import type { NormalizedUserMessage, RenderableMessage } from 'src/package/message.js';
 import { isEmptyMessageText, SYNTHETIC_MESSAGES } from '../utils/messages.js';
@@ -72,7 +72,7 @@ export function isNavigableMessage(msg: NavigableMessage): boolean {
           return false;
       }
       return true;
-    case 'grouped_tool_use':
+    // case 'grouped_tool_use':
     case 'attachment':
       switch (msg.attachment.type) {
         case 'queued_command':
@@ -115,10 +115,10 @@ export function toolCallOf(msg: NavigableMessage): { name: string; input: Record
     const b = firstBlock(msg.message.content);
     if (b?.type === 'tool_use') return { name: b.name!, input: b.input as Record<string, unknown> };
   }
-  if (msg.type === 'grouped_tool_use') {
-    const b = firstBlock(msg.messages[0]?.message.content);
-    if (b?.type === 'tool_use') return { name: msg.toolName, input: b.input as Record<string, unknown> };
-  }
+  // if (msg.type === 'grouped_tool_use') {
+  //   const b = firstBlock(msg.messages[0]?.message.content);
+  //   if (b?.type === 'tool_use') return { name: msg.toolName, input: b.input as Record<string, unknown> };
+  // }
   return undefined;
 }
 
@@ -331,8 +331,8 @@ export function copyTextOf(msg: NavigableMessage): string {
       const tc = toolCallOf(msg);
       return tc ? (PRIMARY_INPUT[tc.name]?.extract(tc.input) ?? '') : '';
     }
-    case 'grouped_tool_use':
-      return msg.results.map(toolResultText).filter(Boolean).join('\n\n');
+    // case 'grouped_tool_use':
+    //   return msg.results.map(toolResultText).filter(Boolean).join('\n\n');
     case 'system':
       if ('content' in msg) return String(msg.content);
       if ('error' in msg) return String(msg.error);

@@ -1,17 +1,13 @@
 import type { ToolResultBlockParam } from '@anthropic-ai/sdk/resources/index.mjs';
 import * as React from 'react';
-import { KeyboardShortcutHint } from '@anthropic/ink';
 import { FallbackToolUseErrorMessage } from 'src/components/FallbackToolUseErrorMessage.js';
 import { MessageResponse } from 'src/components/MessageResponse.js';
-import { Box, Text } from '@anthropic/ink';
+import { Text } from 'src/ink.js';
 import type { Tool } from 'src/Tool.js';
 import type { ProgressMessage } from 'src/package/message.js';
-import { env } from 'src/utils/env.js';
-import { isEnvTruthy } from 'src/utils/envUtils.js';
-import { getDisplayPath } from 'src/utils/file.js';
 import { isFullscreenEnvEnabled } from 'src/utils/fullscreen.js';
-import type { Theme,ThemeName} from 'src/utils/theme.js';
-import type { BashToolInput, Out } from './BashTools.tsx';
+import type { Theme, ThemeName } from 'src/utils/theme.js';
+import type { BashToolInput, Out } from './BashTool.js';
 import { BashProgress } from 'src/tools.js';
 import { ShellProgressMessage } from 'src/components/shell/ShellProgressMessage.js';
 import BashToolResultMessage from './BashToolResultMessage';
@@ -98,4 +94,43 @@ export function extractBashCommentLabel(command: string): string | undefined {
   const firstLine = (nl === -1 ? command : command.slice(0, nl)).trim()
   if (!firstLine.startsWith('#') || firstLine.startsWith('#!')) return undefined
   return firstLine.replace(/^#+\s*/, '') || undefined
+}
+export function renderToolUseProgressMessage(
+  progressMessagesForMessage: ProgressMessage<BashProgress>[],
+  {
+    verbose,
+    tools: _tools,
+    terminalSize: _terminalSize,
+    inProgressToolCallCount: _inProgressToolCallCount,
+  }: {
+    tools: Tool[];
+    verbose: boolean;
+    terminalSize?: { columns: number; rows: number };
+    inProgressToolCallCount?: number;
+  },
+): React.ReactNode {
+  const lastProgress = progressMessagesForMessage.at(-1);
+
+  if (!lastProgress || !lastProgress.data) {
+    return (
+      <MessageResponse height={1}>
+        <Text dimColor>Running…</Text>
+      </MessageResponse>
+    );
+  }
+
+  const data = lastProgress.data;
+
+  return (
+    <ShellProgressMessage
+      fullOutput={data.fullOutput}
+      output={data.output}
+      elapsedTimeSeconds={data.elapsedTimeSeconds}
+      totalLines={data.totalLines}
+      totalBytes={data.totalBytes}
+      timeoutMs={data.timeoutMs}
+      taskId={data.taskId}
+      verbose={verbose}
+    />
+  );
 }

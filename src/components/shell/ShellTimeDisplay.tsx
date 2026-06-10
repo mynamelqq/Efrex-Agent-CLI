@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text } from '@anthropic/ink';
+import { Text } from "src/ink.js"
 import { formatDuration } from '../../utils/format.js';
 
 type Props = {

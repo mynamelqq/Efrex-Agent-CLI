@@ -595,16 +595,12 @@ export default class Ink {
       }
     }
 
-    // Full-damage backstop: layout-shift recovery is only safe in alt-screen.
-    // On the main screen, a full-frame diff during ordinary layout churn
-    // (permission prompt, tool panel, status row changes) can be treated by
-    // the terminal as a fresh page rewrite, duplicating the whole interface in
-    // scrollback. Keep full-damage on the main screen only for explicitly
-    // contaminated previous frames (/clear, forceRedraw, overlay cleanup).
-    const needsFullDamage =
-      this.prevFrameContaminated ||
-      (this.altScreenActive && (didLayoutShift() || selActive || hlActive));
-    if (needsFullDamage) {
+    // Full-damage backstop: applies on BOTH alt-screen and main-screen.
+    // Layout shifts (spinner appears, status line resizes) can leave stale
+    // cells at sibling boundaries that per-node damage tracking misses.
+    // Selection/highlight overlays write via setCellStyleId which doesn't
+    // track damage. prevFrameContaminated covers the cleanup frame.
+    if (didLayoutShift() || selActive || hlActive || this.prevFrameContaminated) {
       frame.screen.damage = {
         x: 0,
         y: 0,

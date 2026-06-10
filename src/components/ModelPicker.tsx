@@ -1,7 +1,7 @@
 import capitalize from 'lodash/capitalize.js';
 import * as React from 'react';
 import { useCallback, useMemo, useState } from 'react';
-import { Box, Text } from '@anthropic/ink';
+import { Box, Text } from 'src/ink.js';
 import { useAppState, useSetAppState } from '../state/AppState.js';
 import {
   convertEffortValueToLevel,

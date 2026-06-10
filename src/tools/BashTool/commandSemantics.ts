@@ -14,7 +14,7 @@ function splitCommandWithOperators(command: string): string[] {
     .filter(Boolean)
 }
 
-function splitCommand_DEPRECATED(command: string): string[] {
+export function splitCommand_DEPRECATED(command: string): string[] {
   return splitCommandWithOperators(command).filter(
     part => !COMMAND_OPERATORS.has(part),
   )

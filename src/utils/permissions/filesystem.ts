@@ -241,8 +241,7 @@ export function checkWritePermissionForTool<Input extends AnyObject>(
   const path = tool.getPath(input)
 
   // 1. Check for deny rules - check both the original path and resolved symlink path
-  const pathsToCheck =
-    precomputedPathsToCheck ?? getPathsForPermissionCheck(path)
+  const pathsToCheck =precomputedPathsToCheck ?? getPathsForPermissionCheck(path)
   for (const pathToCheck of pathsToCheck) {
     const denyRule = matchingRuleForInput(
       pathToCheck,
@@ -349,7 +348,7 @@ export function checkWritePermissionForTool<Input extends AnyObject>(
     if (askRule) {
       return {
         behavior: 'ask',
-        message: `Claude requested permissions to write to ${path}, but you haven't granted it yet.`,
+        message: `Efrex requested permissions to write to ${path}, but you haven't granted it yet.`,
         decisionReason: {
           type: 'rule',
           rule: askRule,
@@ -396,7 +395,7 @@ export function checkWritePermissionForTool<Input extends AnyObject>(
   // 5. Default to asking for permission
   return {
     behavior: 'ask',
-    message: `Claude requested permissions to write to ${path}, but you haven't granted it yet.`,
+    message: `Efrex requested permissions to write to ${path}, but you haven't granted it yet.`,
     suggestions: generateSuggestions(
       path,
       'write',

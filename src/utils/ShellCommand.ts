@@ -23,6 +23,14 @@ export type ShellCommand = {
 	cleanup: () => void
 }
 
+type ProgressCallback = (
+	lastLines: string,
+	allLines: string,
+	totalLines: number,
+	totalBytes: number,
+	isIncomplete: boolean,
+) => void
+
 const SIGKILL = 137
 const SIGTERM = 143
 
@@ -42,15 +50,36 @@ class ShellCommandImpl implements ShellCommand {
 	#combinedOutput = ''
 	#settled = false
 	#forcedExitCode: number | null = null
+	#onProgress?: ProgressCallback
+	#emitProgress(text: string): void {
+		if (!this.#onProgress) {
+			return
+		}
+
+		const normalized = this.#combinedOutput.replace(/\r\n/g, '\n')
+		const totalLines =
+			normalized.length === 0 ? 0 : normalized.split('\n').length
+		const totalBytes = Buffer.byteLength(this.#combinedOutput)
+
+		this.#onProgress(
+			text,
+			this.#combinedOutput,
+			totalLines,
+			totalBytes,
+			true
+		)
+	}
 	#stdoutHandler = (chunk: Buffer | string): void => {
 		const text = typeof chunk === 'string' ? chunk : chunk.toString()
 		this.#stdout += text
 		this.#combinedOutput += text
+		this.#emitProgress(text)
 	}
 	#stderrHandler = (chunk: Buffer | string): void => {
 		const text = typeof chunk === 'string' ? chunk : chunk.toString()
 		this.#stderr += text
 		this.#combinedOutput += text
+		this.#emitProgress(text)
 	}
 
 	readonly result: Promise<ExecResult>
@@ -59,10 +88,12 @@ class ShellCommandImpl implements ShellCommand {
 		childProcess: ChildProcess,
 		abortSignal: AbortSignal,
 		timeout: number,
+		onProgress?: ProgressCallback,
 	) {
 		this.#childProcess = childProcess
 		this.#abortSignal = abortSignal
 		this.#timeout = timeout
+		this.#onProgress = onProgress
 
 		childProcess.stdout?.setEncoding('utf8')
 		childProcess.stderr?.setEncoding('utf8')
@@ -184,6 +215,7 @@ class ShellCommandImpl implements ShellCommand {
 		this.#stdout = ''
 		this.#stderr = ''
 		this.#combinedOutput = ''
+		this.#onProgress = undefined
 	}
 }
 
@@ -191,8 +223,9 @@ export function wrapSpawn(
 	childProcess: ChildProcess,
 	abortSignal: AbortSignal,
 	timeout: number,
+	onProgress?: ProgressCallback,
 ): ShellCommand {
-	return new ShellCommandImpl(childProcess, abortSignal, timeout)
+	return new ShellCommandImpl(childProcess, abortSignal, timeout, onProgress)
 }
 
 class StaticShellCommand implements ShellCommand {

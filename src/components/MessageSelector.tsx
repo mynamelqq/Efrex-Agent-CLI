@@ -9,7 +9,7 @@ import {
   fileHistoryEnabled,
 } from 'src/utils/fileHistory.js';
 import { logError } from 'src/utils/log.js';
-import { Box, Text, Divider } from '@anthropic/ink';
+import { Box, Text } from "src/ink.js";
 import {
   createUserMessage,
   extractTag,

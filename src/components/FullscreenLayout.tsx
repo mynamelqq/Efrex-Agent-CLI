@@ -1,11 +1,11 @@
 import React, {
 	type ReactNode,
-	type RefObject,
-	useCallback
+	type RefObject
 } from 'react';
 import { Box } from '../ink.js';
 import type { ScrollBoxHandle } from '../ink/components/ScrollBox.js';
 import ScrollBox from '../ink/components/ScrollBox.js';
+import { isFullscreenEnvEnabled } from '../utils/fullscreen.js';
 
 type Props = {
 	top?: ReactNode;
@@ -13,6 +13,7 @@ type Props = {
 	bottom: ReactNode;
 	overlay?: ReactNode;
 	scrollRef?: RefObject<ScrollBoxHandle | null>;
+	forceViewportLayout?: boolean;
 };
 
 export function FullscreenLayout({
@@ -20,8 +21,20 @@ export function FullscreenLayout({
 	scrollable,
 	bottom,
 	overlay,
-	scrollRef
+	scrollRef,
+	forceViewportLayout = false
 }: Props): React.ReactNode {
+	if (!forceViewportLayout && !isFullscreenEnvEnabled()) {
+		return (
+			<>
+				{top}
+				{scrollable}
+				{bottom}
+				{overlay}
+			</>
+		);
+	}
+
 	return (
 		<Box flexDirection="column" height="100%" width="100%" overflow="hidden">
 			{top ? (

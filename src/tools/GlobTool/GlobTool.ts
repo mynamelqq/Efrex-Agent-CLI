@@ -44,7 +44,7 @@ type OutputSchema = ReturnType<typeof outputSchema>
 
 export type Output = z.infer<OutputSchema>
 export const GlobTool = buildTool({
-    name: 'glob',
+    name: 'Glob',
     searchHint: 'find files by name pattern or wildcard',
     maxResultSizeChars:100_000,
     async description() {

@@ -1,7 +1,7 @@
 import { APIUserAbortError } from '@anthropic-ai/sdk';
 import * as React from 'react';
 import { useCallback } from 'react';
-import { Text } from '@anthropic/ink';
+import { Text } from 'src/ink';
 import type { Tool as ToolType, ToolUseContext } from '../Tool.js';
 import { BASH_TOOL_NAME } from 'src/tools/BashTool/toolName.js';
 import type { AssistantMessage } from 'src/package/message.js';

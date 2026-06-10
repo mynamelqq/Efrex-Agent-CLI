@@ -125,7 +125,10 @@ export function normalizeMessagesForAPI(
       assistantMessageIndexesById = new Map()
       continue
     }
-    if (!isSyntheticApiErrorMessage(message)) {
+    // Keep normal assistant turns in API context. Only synthetic API error
+    // placeholders should be stripped, otherwise tool_use blocks disappear
+    // and their following tool_result blocks become orphaned on the next turn.
+    if (isSyntheticApiErrorMessage(message)) {
       continue
     }
     pushAssistantMessage(

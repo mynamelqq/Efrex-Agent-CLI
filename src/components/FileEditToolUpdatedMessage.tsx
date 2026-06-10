@@ -1,7 +1,6 @@
 import * as React from 'react';
 import type { StructuredPatchHunk } from 'diff';
-import { Box, Text } from '@anthropic/ink';
-import { MessageResponse } from './MessageResponse.js';
+import { Box, Text } from '../ink.js';
 import { StructuredDiffList } from './StructuredDiffList.js';
 import { firstLineOf } from '../utils/stringUtils.js';
 import { useWindowSize } from '../ink.js';
@@ -20,6 +19,8 @@ type Props = {
   originalFile?: string;
 };
 
+const MAX_COLLAPSED_DIFF_LINES = 8;
+
 export function FileEditToolUpdatedMessage({
   filePath,
   structuredPatch,
@@ -36,6 +37,9 @@ export function FileEditToolUpdatedMessage({
   // those containers and smear border glyphs across nearby UI.
   const diffWidth = Math.max(20, columns - 8);
   const firstLine = originalFile ? firstLineOf(originalFile) : null;
+  const { hunks, omitted } = verbose
+    ? { hunks: structuredPatch, omitted: 0 }
+    : truncatePatchLines(structuredPatch, MAX_COLLAPSED_DIFF_LINES);
 
   const text = (
     <Text>
@@ -59,9 +63,7 @@ export function FileEditToolUpdatedMessage({
   if (previewHint) {
     if (style !== 'condensed' && !verbose) {
       return (
-        <MessageResponse>
-          <Text dimColor>{previewHint}</Text>
-        </MessageResponse>
+        <Text dimColor>── {previewHint}</Text>
       );
     }
   } else if (style === 'condensed' && !verbose) {
@@ -69,20 +71,54 @@ export function FileEditToolUpdatedMessage({
   }
 
   return (
-    <MessageResponse>
-      <Box flexDirection="column">
-        {text}
-        {structuredPatch.length > 0 ? (
-          <StructuredDiffList
-            hunks={structuredPatch}
-            dim={false}
-            width={diffWidth}
-            filePath={filePath}
-            firstLine={firstLine}
-            fileContent={originalFile}
-          />
-        ) : null}
-      </Box>
-    </MessageResponse>
+    <Box flexDirection="column">
+      <Text dimColor>── {text}</Text>
+      {hunks.length > 0 ? (
+        <StructuredDiffList
+          hunks={hunks}
+          dim={false}
+          width={diffWidth}
+          filePath={filePath}
+          firstLine={firstLine}
+          fileContent={originalFile}
+        />
+      ) : null}
+      {omitted > 0 ? (
+        <Text color="ansi:blackBright">
+          ... +{omitted} more patch {omitted === 1 ? 'line' : 'lines'}
+        </Text>
+      ) : null}
+    </Box>
   );
+}
+
+function truncatePatchLines(
+  hunks: readonly StructuredPatchHunk[],
+  maxLines: number,
+): { hunks: StructuredPatchHunk[]; omitted: number } {
+  let remaining = maxLines;
+  let omitted = 0;
+  const result: StructuredPatchHunk[] = [];
+
+  for (const hunk of hunks) {
+    if (remaining <= 0) {
+      omitted += hunk.lines.length;
+      continue;
+    }
+
+    if (hunk.lines.length <= remaining) {
+      result.push(hunk);
+      remaining -= hunk.lines.length;
+      continue;
+    }
+
+    result.push({
+      ...hunk,
+      lines: hunk.lines.slice(0, remaining),
+    });
+    omitted += hunk.lines.length - remaining;
+    remaining = 0;
+  }
+
+  return { hunks: result, omitted };
 }

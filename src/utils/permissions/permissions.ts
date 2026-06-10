@@ -358,29 +358,29 @@ export const hasPermissionsToUseTool: CanUseToolFn = async (
     if (result.behavior === 'ask' ) {
       try {
         const parsedInput = tool.inputSchema.parse(input)
-        const acceptEditsResult = await tool.checkPermissions(parsedInput, {
-          ...context,
-          getAppState: () => {
-            const state = context.getAppState()
-            return {
-              ...state,
-              toolPermissionContext: {
-                ...state.toolPermissionContext,
-                mode: 'acceptEdits' as const,
-              },
-            }
-          },
-        })
-        if (acceptEditsResult.behavior === 'allow') {
-          return {
-            behavior: 'allow',
-            updatedInput: acceptEditsResult.updatedInput ?? input,
-            decisionReason: {
-              type: 'mode',
-              mode: 'auto',
-            },
-          }
-        }
+        // const acceptEditsResult = await tool.checkPermissions(parsedInput, {
+        //   ...context,
+        //   getAppState: () => {
+        //     const state = context.getAppState()
+        //     return {
+        //       ...state,
+        //       toolPermissionContext: {
+        //         ...state.toolPermissionContext,
+        //         mode: 'acceptEdits' as const,
+        //       },
+        //     }
+        //   },
+        // })
+        // if (acceptEditsResult.behavior === 'allow') {
+        //   return {
+        //     behavior: 'allow',
+        //     updatedInput: acceptEditsResult.updatedInput ?? input,
+        //     decisionReason: {
+        //       type: 'mode',
+        //       mode: 'auto',
+        //     },
+        //   }
+        // }
       } catch (e) {
         if (e instanceof AbortError || e instanceof APIUserAbortError) {
           throw e

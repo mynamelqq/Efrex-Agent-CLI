@@ -33,6 +33,7 @@ export class StreamingToolExecutor {
   private toolUseContext: ToolUseContext
   private siblingAbortController: AbortController
   private discarded = false
+  private progressWakeResolver: (() => void) | null = null
 
   constructor(
     private readonly toolDefinitions: Tools,
@@ -48,7 +49,31 @@ export class StreamingToolExecutor {
   discard(): void {
     this.discarded = true
     this.siblingAbortController.abort('streaming_fallback')
+    this.notifyProgressAvailable()
     this.tools.length = 0
+  }
+
+  private notifyProgressAvailable(): void {
+    if (this.progressWakeResolver) {
+      const resolve = this.progressWakeResolver
+      this.progressWakeResolver = null
+      resolve()
+    }
+  }
+
+  private waitForProgressOrCompletion(
+    executingPromises: Promise<void>[],
+  ): Promise<void> {
+    const waitForProgress = new Promise<void>(resolve => {
+      this.progressWakeResolver = resolve
+      if (this.discarded || this.hasCompletedResults()) {
+        const wake = this.progressWakeResolver
+        this.progressWakeResolver = null
+        wake?.()
+      }
+    })
+
+    return Promise.race([...executingPromises, waitForProgress])
   }
 
   addTool(block: ToolUseBlock, assistantMessage: AssistantMessage): void {
@@ -164,6 +189,11 @@ export class StreamingToolExecutor {
 
       for await (const update of generator) {
         if (this.discarded) break
+        if (update.message?.type === 'progress') {
+          tool.pendingProgress.push(update.message)
+          this.notifyProgressAvailable()
+          continue
+        }
         messages.push(update.message)
         if (update.contextModifier) {
           contextModifiers.push(update.contextModifier.modifyContext)//加入contextModifiers数组，稍后用于修改工具使用上下文
@@ -194,6 +224,14 @@ export class StreamingToolExecutor {
     }
 
     for (const tool of this.tools) {//遍历工具列表，如果工具状态已完成，产出结果
+      while (tool.pendingProgress.length > 0) {
+        const message = tool.pendingProgress.shift()
+        if (!message) {
+          continue
+        }
+        yield { message, newContext: this.toolUseContext }
+      }
+
       if (tool.status === 'yielded') continue
 
       if (tool.status === 'completed' && tool.results) {
@@ -225,7 +263,7 @@ export class StreamingToolExecutor {
           .map(t => t.promise!)//获取所有正在执行的工具的Promise，等待其中任意一个完成，以便及时产出结果
 
         if (executingPromises.length > 0) {
-          await Promise.race(executingPromises)
+          await this.waitForProgressOrCompletion(executingPromises)
         }
       }
     }
@@ -236,7 +274,9 @@ export class StreamingToolExecutor {
   }
 
   private hasCompletedResults(): boolean {
-    return this.tools.some(t => t.status === 'completed')
+    return this.tools.some(
+      t => t.pendingProgress.length > 0 || t.status === 'completed'
+    )
   }
 
   private hasExecutingTools(): boolean {

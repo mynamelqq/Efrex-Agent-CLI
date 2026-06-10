@@ -142,6 +142,7 @@ export async function exec(
       childProcess,
       abortSignal,
       commandTimeout,
+      onProgress,
     )
 
     // Attach optional real-time stdout callbacks. The command result still

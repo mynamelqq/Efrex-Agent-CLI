@@ -1,8 +1,8 @@
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources';
 import { randomUUID } from 'crypto';
 import * as React from 'react';
-import {BashTool}   from '../../tools/BashTool/BashTools.js';
-import {BashModeProgress} from '../../components/BashModeProgress.js';
+import { BashTool } from '../../tools/BashTool/BashTool.js';
+import { BashModeProgress } from '../../components/BashModeProgress.js';
 import type { SetToolJSXFn } from 'src/Tool.js';
 import type { AttachmentMessage, SystemMessage, UserMessage } from 'src/package/message.js';
 import {
@@ -10,8 +10,9 @@ import {
   createUserInterruptionMessage,
   createUserMessage,
   prepareUserContent,
-} from '../messages.js';import { errorMessage, ShellError } from '../errors.js';
-import {processToolResultBlock}from "src/services/tools/toolExecution.js"
+} from '../messages.js';
+import { errorMessage, ShellError } from '../errors.js';
+import { processToolResultBlock } from "src/services/tools/toolExecution.js";
 import { escapeXml } from '../xml.js';
 import type { ProcessUserInputContext } from './processUserInput.js';
 import { isPowerShellToolEnabled } from '../shell/shellToolUtils.js';

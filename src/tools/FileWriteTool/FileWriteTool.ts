@@ -155,7 +155,7 @@ export const FileWriteTool = buildTool({
       await fileHistoryTrackEdit(
         updateFileHistoryState,
         fullFilePath,
-        assistantMessage.uuid,
+        assistantMessage!.uuid,
       )
     }
 

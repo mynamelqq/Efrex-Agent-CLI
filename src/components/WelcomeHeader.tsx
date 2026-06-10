@@ -3,7 +3,7 @@ import { Box, Text } from '../ink.js';
 import { stringWidth } from '../ink/stringWidth.js';
 import { OffscreenFreeze } from './OffscreenFreeze.js';
 
-type Props = {
+export type WelcomeHeaderProps = {
 	brand: string;
 	version: string;
 	cwd: string;
@@ -12,10 +12,15 @@ type Props = {
 	width: number;
 };
 
-const BRAND_COLOR = '#4da3ff';
-const ACCENT_COLOR = '#23d3b6';
-const BORDER_COLOR = '#2f6f89';
-const DIVIDER_COLOR = '#2b9c8c';
+const BRAND_PURPLE = '#a878ff';
+const BRAND_BLUE = '#5eb8ff';
+const ACCENT_COLOR = '#47d7e8';
+const BORDER_COLOR = '#2f8fd3';
+const DIVIDER_COLOR = '#3f946f';
+const RIGHT_COLOR = '#68c56f';
+const TIP_COLOR = '#ffd12f';
+const BODY_COLOR = '#a9adb8';
+const PATH_COLOR = '#3176ac';
 
 function truncateDisplay(text: string, width: number): string {
 	if (stringWidth(text) <= width) {
@@ -40,7 +45,7 @@ function WelcomeHeader({
 	model,
 	effort,
 	width
-}: Props): React.ReactNode {
+}: WelcomeHeaderProps): React.ReactNode {
 	const boxWidth = Math.max(40, width);
 	const innerWidth = Math.max(1, boxWidth - 2);
 	const leftWidth = Math.max(28, Math.min(52, Math.floor(innerWidth * 0.42)));
@@ -55,31 +60,22 @@ function WelcomeHeader({
 					<Text bold color={ACCENT_COLOR}>
 						»{' '}
 					</Text>
-					<Text bold color={BRAND_COLOR}>
+					<Text bold color={ACCENT_COLOR}>
 						{brand}
 					</Text>
 					<Text color="gray"> {version}</Text>
-					<Text color="gray">
-						{' '}
-						{'─'.repeat(
-							Math.max(
-								0,
-								boxWidth - stringWidth(`» ${brand} ${version}`) - 2
-							)
-						)}
-					</Text>
 				</Box>
 				<Box flexDirection="row" width={boxWidth}>
 					<Text color={BORDER_COLOR}>╭{'─'.repeat(leftWidth)}</Text>
-					<Text color={DIVIDER_COLOR}>┬{'─'.repeat(rightWidth)}╮</Text>
+					<Text color={RIGHT_COLOR}>┬{'─'.repeat(rightWidth)}╮</Text>
 				</Box>
 				<WelcomeRow
 					left="efrex code"
 					right="✦  Getting Started"
 					leftWidth={leftWidth}
 					rightWidth={rightWidth}
-					leftColor={BRAND_COLOR}
-					rightColor={ACCENT_COLOR}
+					brandTitle
+					rightColor={RIGHT_COLOR}
 					bold
 				/>
 				<WelcomeRow
@@ -99,8 +95,8 @@ function WelcomeHeader({
 					right="✦  Tips"
 					leftWidth={leftWidth}
 					rightWidth={rightWidth}
-					leftColor={BRAND_COLOR}
-					rightColor={ACCENT_COLOR}
+					leftColor={BRAND_BLUE}
+					rightColor={TIP_COLOR}
 					boldRight
 				/>
 				<WelcomeRow
@@ -108,7 +104,7 @@ function WelcomeHeader({
 					right="→  Ask questions about your codebase"
 					leftWidth={leftWidth}
 					rightWidth={rightWidth}
-					leftColor={BRAND_COLOR}
+					leftColor={BRAND_BLUE}
 					highlightArrow
 				/>
 				<WelcomeRow
@@ -116,7 +112,7 @@ function WelcomeHeader({
 					right="→  Generate or refactor code"
 					leftWidth={leftWidth}
 					rightWidth={rightWidth}
-					leftColor={BRAND_COLOR}
+					leftColor={BRAND_BLUE}
 					highlightArrow
 				/>
 				<WelcomeRow
@@ -131,12 +127,12 @@ function WelcomeHeader({
 					right=""
 					leftWidth={leftWidth}
 					rightWidth={rightWidth}
-					leftColor={BRAND_COLOR}
+					leftColor={PATH_COLOR}
 					bold
 				/>
 				<Box flexDirection="row" width={boxWidth}>
 					<Text color={BORDER_COLOR}>╰{'─'.repeat(leftWidth)}</Text>
-					<Text color={DIVIDER_COLOR}>┴{'─'.repeat(rightWidth)}╯</Text>
+					<Text color={RIGHT_COLOR}>┴{'─'.repeat(rightWidth)}╯</Text>
 				</Box>
 				<Text> </Text>
 			</Box>
@@ -153,6 +149,7 @@ function WelcomeRow({
 	rightColor,
 	bold = false,
 	boldRight = false,
+	brandTitle = false,
 	highlightArrow = false
 }: {
 	left: string;
@@ -163,6 +160,7 @@ function WelcomeRow({
 	rightColor?: string;
 	bold?: boolean;
 	boldRight?: boolean;
+	brandTitle?: boolean;
 	highlightArrow?: boolean;
 }): React.ReactNode {
 	const leftText = centerDisplay(truncateDisplay(left, leftWidth), leftWidth);
@@ -171,24 +169,58 @@ function WelcomeRow({
 	return (
 		<Box flexDirection="row" width={leftWidth + rightWidth + 3}>
 			<Text color={BORDER_COLOR}>│</Text>
-			<Text color={leftColor ?? 'gray'} bold={bold}>
-				{leftText}
-			</Text>
-			<Text color={DIVIDER_COLOR}>│</Text>
-			{highlightArrow && rightText.startsWith('→') ? (
-				<>
-					<Text color={ACCENT_COLOR} bold>
-						→
-					</Text>
-					<Text color="gray">{rightText.slice(1)}</Text>
-				</>
+			{brandTitle ? (
+				<BrandTitle text={leftText} bold={bold} />
 			) : (
-				<Text color={rightColor ?? 'gray'} bold={boldRight || bold}>
-					{rightText}
+				<Text color={leftColor ?? BODY_COLOR} bold={bold}>
+					{leftText}
 				</Text>
 			)}
 			<Text color={DIVIDER_COLOR}>│</Text>
+			{highlightArrow && rightText.startsWith('→') ? (
+				<>
+					<Text color={TIP_COLOR} bold>
+						→
+					</Text>
+					<Text color={BODY_COLOR}>{rightText.slice(1)}</Text>
+				</>
+			) : (
+				<Text color={rightColor ?? BODY_COLOR} bold={boldRight || bold}>
+					{rightText}
+				</Text>
+			)}
+			<Text color={RIGHT_COLOR}>│</Text>
 		</Box>
+	);
+}
+
+function BrandTitle({
+	text,
+	bold
+}: {
+	text: string;
+	bold: boolean;
+}): React.ReactNode {
+	const index = text.indexOf('efrex code');
+	if (index === -1) {
+		return (
+			<Text color={BRAND_BLUE} bold={bold}>
+				{text}
+			</Text>
+		);
+	}
+
+	return (
+		<>
+			<Text color={BODY_COLOR}>{text.slice(0, index)}</Text>
+			<Text color={BRAND_PURPLE} bold={bold}>
+				efrex
+			</Text>
+			<Text color={BRAND_BLUE} bold={bold}>
+				{' code'}
+			</Text>
+			<Text color={BODY_COLOR}>{text.slice(index + 'efrex code'.length)}</Text>
+		</>
 	);
 }
 

@@ -708,6 +708,7 @@ async function* runPowerShellCommand({
         fullOutput = allLines;
         lastTotalLines = totalLines;
         lastTotalBytes = isIncomplete ? totalBytes : 0;
+        progressVersion += 1;
       },
       preventCwdChanges,
     });
@@ -734,12 +735,33 @@ async function* runPowerShellCommand({
   const startTime = Date.now();
   let nextProgressTime = startTime + PROGRESS_THRESHOLD_MS;
   let foregroundTaskId: string | undefined;
+  let progressVersion = 0;
+  let yieldedProgressVersion = 0;
 
   // Progress loop: wrap in try/finally so stopPolling is called on every exit
   // path — normal completion, timeout/interrupt backgrounding, and Ctrl+B
   // (matches BashTool pattern; see PR #18887 review thread at :560)
   try {
     while (true) {
+      if (progressVersion > yieldedProgressVersion) {
+        yieldedProgressVersion = progressVersion;
+        const elapsed = Date.now() - startTime;
+        const elapsedSeconds = Math.floor(elapsed / 1000);
+
+        yield {
+          type: 'progress',
+          fullOutput,
+          output: lastProgressOutput,
+          elapsedTimeSeconds: elapsedSeconds,
+          totalLines: lastTotalLines,
+          totalBytes: lastTotalBytes,
+          ...(timeout ? { timeoutMs } : undefined),
+        };
+
+        nextProgressTime = Date.now() + PROGRESS_INTERVAL_MS;
+        continue;
+      }
+
       const now = Date.now();
       const timeUntilNextProgress = Math.max(0, nextProgressTime - now);
 

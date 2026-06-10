@@ -6,7 +6,7 @@ import { MessageResponse } from 'src/components/MessageResponse.js';
 import { OutputLine } from 'src/components/shell/OutputLine.js';
 import { ShellProgressMessage } from 'src/components/shell/ShellProgressMessage.js';
 import { ShellTimeDisplay } from 'src/components/shell/ShellTimeDisplay.js';
-import { Box, Text } from '@anthropic/ink';
+import { Box, Text } from 'src/ink';
 import type { Tool } from 'src/Tool.js';
 import type { ProgressMessage } from 'src/package/message.js';
 import type { PowerShellProgress } from './PowerShellTool';

@@ -98,28 +98,30 @@ function fitDisplay(text: string, width: number): string {
 }
 
 function isDangerousCommand(command: string): boolean {
-	return /\b(remove-item|clear-content|set-content|add-content|new-item|copy-item|move-item|rename-item)\b|\b(del|erase|rmdir)\b|\bgit\s+reset\s+--hard\b/i.test(
+	return /\brm\s+(-[^\s]*r[^\s]*f|-[^\s]*f[^\s]*r)\b|\b(shred|mkfs|dd)\b|\bchmod\s+-R\b|\bchown\s+-R\b|\bgit\s+reset\s+--hard\b/i.test(
 		command
 	);
 }
 
 function getRiskLabel(command: string, description: string): string {
 	if (isDangerousCommand(command)) {
-		return 'High — may modify or remove files in a way that is hard to undo.';
+		return 'High — may delete, overwrite, or recursively change files.';
 	}
 
-	return `${description || 'runs a PowerShell command in the current workspace.'}`;
+	return description || 'Runs a Bash command in the current workspace.';
 }
 
-export function PowerShellPermissionRequest({
+export function BashPermissionRequest({
 	toolUseConfirm,
 	toolUseContext,
 	onDone,
 	onReject,
 	currentMessageCount = 0
 }: PermissionRequestProps): React.ReactNode {
+	void currentMessageCount;
+
 	const { columns } = useWindowSize();
-	const panelWidth = Math.min(120, Math.max(60, columns - 4));
+	const panelWidth = Math.min(118, Math.max(58, columns - 4));
 	const contentWidth = Math.max(32, panelWidth - 6);
 	const command = String(
 		(toolUseConfirm.input as Record<string, unknown>).command ?? ''
@@ -129,7 +131,9 @@ export function PowerShellPermissionRequest({
 			toolUseConfirm.description ??
 			''
 	);
-	const [selectedIndex, setSelectedIndex] = React.useState(0);
+	const [selectedIndex, setSelectedIndex] = React.useState(
+		isDangerousCommand(command) ? 1 : 0
+	);
 	const didResolveRef = React.useRef(false);
 	const startResolution = React.useCallback(
 		(action: () => void | Promise<void>) => {
@@ -152,9 +156,7 @@ export function PowerShellPermissionRequest({
 	}, [onReject, startResolution, toolUseConfirm]);
 
 	const allow = React.useCallback(
-		(
-			permissionUpdates: PermissionUpdate[] = []
-		) => {
+		(permissionUpdates: PermissionUpdate[] = []) => {
 			startResolution(() => {
 				toolUseConfirm.onAllow(toolUseConfirm.input, permissionUpdates);
 			});
@@ -182,7 +184,7 @@ export function PowerShellPermissionRequest({
 				key: 'a',
 				hotkey: 'A',
 				label: 'Allow once',
-				color: 'ansi:green',
+				color: 'ansi:greenBright',
 				action: () => allow()
 			},
 			{
@@ -198,7 +200,7 @@ export function PowerShellPermissionRequest({
 						key: 'b',
 						hotkey: 'B',
 						label: 'Trust this session',
-						color: 'ansi:yellow' as const,
+						color: 'ansi:yellowBright' as const,
 						action: allowAllCommands
 					}
 				]
@@ -256,17 +258,18 @@ export function PowerShellPermissionRequest({
 	);
 
 	const optionColumnWidth = Math.min(
-		30,
-		Math.max(24, Math.floor(contentWidth * 0.24))
+		28,
+		Math.max(22, Math.floor(contentWidth * 0.25))
 	);
 	const bodyWidth = Math.max(24, contentWidth - optionColumnWidth - 3);
 	const divider = '─'.repeat(contentWidth);
 	const shortcutHint = bypassAvailable ? 'A/D/B' : 'A/D';
+	const dangerous = isDangerousCommand(command);
 
 	return (
 		<Box
 			borderStyle="round"
-			borderColor="ansi:yellow"
+			borderColor={dangerous ? 'ansi:redBright' : 'ansi:cyan'}
 			flexDirection="column"
 			alignSelf="flex-start"
 			width={panelWidth}
@@ -277,12 +280,12 @@ export function PowerShellPermissionRequest({
 			<Box flexDirection="row">
 				<Box width={bodyWidth} flexDirection="column" paddingRight={2}>
 					<Box flexDirection="row">
-						<Text color="ansi:yellow" bold>
-							?{' '}
+						<Text color={dangerous ? 'ansi:redBright' : 'ansi:cyan'} bold>
+							$ {' '}
 						</Text>
 						<Text color="ansi:whiteBright">
 							{fitDisplay(
-								'efrex code wants to run the following command:',
+								'efrex code wants to run the following shell command:',
 								bodyWidth - 2
 							)}
 						</Text>
@@ -292,18 +295,14 @@ export function PowerShellPermissionRequest({
 							(line, index) => (
 								<Text
 									key={`command-${index}`}
-									color={
-										isDangerousCommand(command)
-											? 'ansi:redBright'
-											: 'ansi:cyan'
-									}
+									color={dangerous ? 'ansi:redBright' : 'ansi:greenBright'}
 								>
 									{line.length > 0 ? `$ ${line}` : ' '}
 								</Text>
 							)
 						)}
 					</Box>
-					<Text color="ansi:white">
+					<Text color={dangerous ? 'ansi:redBright' : 'ansi:white'}>
 						{fitDisplay(getRiskLabel(command, description), bodyWidth)}
 					</Text>
 				</Box>
@@ -328,7 +327,7 @@ export function PowerShellPermissionRequest({
 					})}
 				</Box>
 			</Box>
-			<Text color="ansi:yellow">{divider}</Text>
+			<Text color={dangerous ? 'ansi:redBright' : 'ansi:cyan'}>{divider}</Text>
 			<Box>
 				<Text color="ansi:whiteBright">
 					{fitDisplay(`Select an option (${shortcutHint}):`, contentWidth)}

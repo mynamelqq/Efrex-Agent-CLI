@@ -18,6 +18,9 @@ type Props = {
 	toolName: string;
 	input: unknown;
 	width: number;
+	maxLines?: number | null;
+	showOmitted?: boolean;
+	compact?: boolean;
 };
 
 type EditPreview = {
@@ -44,7 +47,10 @@ type PreviewData = EditPreview | CreatePreview | null;
 export function FileToolPermissionPreview({
 	toolName,
 	input,
-	width
+	width,
+	maxLines = null,
+	showOmitted = true,
+	compact = false
 }: Props): React.ReactNode {
 	const preview = useMemo(() => buildPreviewData(toolName, input), [toolName, input]);
 
@@ -53,31 +59,142 @@ export function FileToolPermissionPreview({
 	}
 
 	if (preview.kind === 'create') {
+		const { text, omitted } = truncateTextLines(
+			preview.content || '(No content)',
+			maxLines
+		);
 		return (
-			<Box flexDirection="column" marginTop={1}>
-				<Text color="ansi:blackBright">Preview</Text>
+			<Box flexDirection="column" marginTop={compact ? 0 : 1}>
 				<HighlightedCode
-					code={preview.content || '(No content)'}
+					code={text}
 					filePath={preview.filePath}
 					width={width}
 				/>
+				{showOmitted && omitted > 0 ? (
+					<Text color="ansi:blackBright">
+						... +{omitted} more {omitted === 1 ? 'line' : 'lines'}
+					</Text>
+				) : null}
 			</Box>
 		);
 	}
 
+	const { hunks, omitted } = truncatePatchLines(
+		preview.patch,
+		maxLines
+	);
+
 	return (
-		<Box flexDirection="column" marginTop={1}>
-			<Text color="ansi:blackBright">Preview</Text>
+		<Box flexDirection="column" marginTop={compact ? 0 : 1}>
 			<StructuredDiffList
-				hunks={preview.patch}
+				hunks={hunks}
 				dim={false}
 				width={width}
 				filePath={preview.filePath}
 				firstLine={firstLineOf(preview.originalFile)}
 				fileContent={preview.originalFile}
 			/>
+			{showOmitted && omitted > 0 ? (
+				<Text color="ansi:blackBright">
+					... +{omitted} more {omitted === 1 ? 'line' : 'lines'}
+				</Text>
+			) : null}
 		</Box>
 	);
+}
+
+function truncateTextLines(
+	text: string,
+	maxLines: number | null
+): { text: string; omitted: number } {
+	const lines = text.split('\n');
+	if (maxLines === null) {
+		return { text, omitted: 0 };
+	}
+
+	if (lines.length <= maxLines) {
+		return { text, omitted: 0 };
+	}
+
+	return {
+		text: lines.slice(0, maxLines).join('\n'),
+		omitted: lines.length - maxLines
+	};
+}
+
+function truncatePatchLines(
+	hunks: EditPreview['patch'],
+	maxLines: number | null
+): { hunks: EditPreview['patch']; omitted: number } {
+	if (maxLines === null) {
+		return { hunks, omitted: 0 };
+	}
+
+	if (maxLines > 0 && maxLines < 6) {
+		return truncatePatchAroundChanges(hunks, maxLines);
+	}
+
+	let remaining = maxLines;
+	let omitted = 0;
+	const result: EditPreview['patch'] = [];
+
+	for (const hunk of hunks) {
+		if (remaining <= 0) {
+			omitted += hunk.lines.length;
+			continue;
+		}
+
+		if (hunk.lines.length <= remaining) {
+			result.push(hunk);
+			remaining -= hunk.lines.length;
+			continue;
+		}
+
+		result.push({
+			...hunk,
+			lines: hunk.lines.slice(0, remaining)
+		});
+		omitted += hunk.lines.length - remaining;
+		remaining = 0;
+	}
+
+	return { hunks: result, omitted };
+}
+
+function truncatePatchAroundChanges(
+	hunks: EditPreview['patch'],
+	maxLines: number
+): { hunks: EditPreview['patch']; omitted: number } {
+	for (const hunk of hunks) {
+		const changeIndex = hunk.lines.findIndex(line =>
+			(line.startsWith('+') || line.startsWith('-')) &&
+			!line.startsWith('+++') &&
+			!line.startsWith('---')
+		);
+
+		if (changeIndex === -1) {
+			continue;
+		}
+
+		const contextBefore = maxLines >= 4 ? 1 : 0;
+		const start = Math.max(0, changeIndex - contextBefore);
+		const end = Math.min(hunk.lines.length, start + maxLines);
+
+		return {
+			hunks: [
+				{
+					...hunk,
+					lines: hunk.lines.slice(start, end)
+				}
+			],
+			omitted: Math.max(0, hunk.lines.length - (end - start)) +
+				hunks
+					.filter(item => item !== hunk)
+					.reduce((total, item) => total + item.lines.length, 0)
+		};
+	}
+
+	return truncatePatchLines(hunks, Math.max(6, maxLines));
 }
 
 function buildPreviewData(toolName: string, input: unknown): PreviewData {

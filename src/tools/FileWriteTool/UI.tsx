@@ -7,7 +7,7 @@ import { FallbackToolUseErrorMessage } from 'src/components/FallbackToolUseError
 import { FileEditToolUpdatedMessage } from 'src/components/FileEditToolUpdatedMessage.js';
 import { FileEditToolUseRejectedMessage } from 'src/components/FileEditToolUseRejectedMessage.js';
 import { HighlightedCode } from 'src/components/HighlightedCode';
-import { Box, Text } from '@anthropic/ink';
+import { Box, Text } from 'src/ink';
 import { FilePathLink } from 'src/components/FilePathLink.js';
 import type { ToolProgressData } from 'src/Tool.js';
 import { TerminalSizeContext } from 'src/ink/components/TerminalSizeContext.js';
@@ -18,7 +18,7 @@ import { getDisplayPath } from 'src/utils/file.js';
 import type { Output } from './FileWriteTool.js';
 import { useWindowSize } from 'src/ink.js';
 
-const MAX_LINES_TO_RENDER = 10;
+const MAX_LINES_TO_RENDER = 50;
 // Model output uses \n regardless of platform, so always split on \n.
 // os.EOL is \r\n on Windows, which would give numLines=1 for all files.
 const EOL = '\n';
@@ -47,28 +47,25 @@ function FileWriteToolCreatedMessage({
   const plusLines = numLines - MAX_LINES_TO_RENDER;
 
   return (
-    <MessageResponse>
+    <Box flexDirection="column">
+      <Text dimColor>
+        ── Write {verbose ? filePath : relative(getCwd(), filePath)}
+      </Text>
       <Box flexDirection="column">
-        <Text>
-          Wrote <Text bold>{numLines}</Text> lines to{' '}
-          <Text bold>{verbose ? filePath : relative(getCwd(), filePath)}</Text>
-        </Text>
-        <Box flexDirection="column">
-          <HighlightedCode
-            code={
-              verbose ? contentWithFallback : contentWithFallback.split('\n').slice(0, MAX_LINES_TO_RENDER).join('\n')
-            }
-            filePath={filePath}
-            width={columns - 12}
-          />
-        </Box>
-        {!verbose && plusLines > 0 && (
-          <Text dimColor>
-            … +{plusLines} {plusLines === 1 ? 'line' : 'lines'} 
-          </Text>
-        )}
+        <HighlightedCode
+          code={
+            verbose ? contentWithFallback : contentWithFallback.split('\n').slice(0, MAX_LINES_TO_RENDER).join('\n')
+          }
+          filePath={filePath}
+          width={columns - 12}
+        />
       </Box>
-    </MessageResponse>
+      {!verbose && plusLines > 0 && (
+        <Text dimColor>
+          … +{plusLines} {plusLines === 1 ? 'line' : 'lines'}
+        </Text>
+      )}
+    </Box>
   );
 }
 
@@ -161,15 +158,7 @@ export function renderToolResultMessage(
             </MessageResponse>
           );
         }
-      } else if (style === 'condensed' && !verbose) {
-        const numLines = countLines(content);
-        return (
-          <Text>
-            Wrote <Text bold>{numLines}</Text> lines to <Text bold>{relative(getCwd(), filePath)}</Text>
-          </Text>
-        );
       }
-
       return <FileWriteToolCreatedMessage filePath={filePath} content={content} verbose={verbose} />;
     }
     case 'update': {

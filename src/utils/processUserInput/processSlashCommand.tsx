@@ -160,6 +160,7 @@ export async function processSlashCommand(
   } = await getMessagesForSlashCommand(
     commandName,
     parsedArgs,
+    setToolJSX,
     context,
     precedingInputBlocks,
     isAlreadyProcessing,
@@ -222,6 +223,7 @@ export async function processSlashCommand(
 async function getMessagesForSlashCommand(
   commandName: string,
   args: string,
+  setToolJSX: SetToolJSXFn,
   context: ProcessUserInputContext,
   precedingInputBlocks: ContentBlockParam[],
   _isAlreadyProcessing?: boolean,

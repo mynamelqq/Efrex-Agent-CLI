@@ -4,30 +4,26 @@ import type {
 	Message,
 	ToolResultBlockParam
 } from 'src/package/message.js';
+import type { ProgressMessage } from 'src/package/message.js';
 import { CanUseToolFn } from 'src/hooks/useCanUseTool.js';
 import { FILE_EDIT_TOOL_NAME } from 'src/tools/FileEditTool/constants.js';
-import {BashToolInput}from "src/tools/BashTool/BashTools.js"
+import { BashToolInput } from "src/tools/BashTool/BashTool.js";
 import { FILE_WRITE_TOOL_NAME } from 'src/tools/FileWriteTool/prompt.js';
 import { BASH_TOOL_NAME } from 'src/tools/BashTool/toolName.js';
 import { FILE_READ_TOOL_NAME } from 'src/tools/FileReadTool/prompt.js';
-import { ContentBlockParam } from 'packages/@ant/model-provider/src/index.js';
-import { findToolByName, type ToolUseContext, Tool } from '../../Tool.js';
+import { findToolByName, type ToolUseContext } from '../../Tool.js';
 import { createUserMessage } from 'src/utils/messages.js';
-import { logError } from 'src/utils/logger.js';
 import { normalizeToolInput } from 'src/utils/api.js';
 import { resolveHookPermissionDecision } from './toolHooks.js';
-import { PermissionDecision,PermissionResult } from 'src/types/permissions.js';
+import { PermissionResult } from 'src/types/permissions.js';
 import type { z } from 'zod/v4';
 import {
 	maybePersistLargeToolResult,
 	getPersistenceThreshold
 } from 'src/utils/toolResultStorage.js';
 // import { Stream } from '../../utils/stream.js'
-import {
-	createToolResultStopMessage,
-	CANCEL_MESSAGE
-} from 'src/utils/messages.js';
 import { formatZodValidationError } from 'src/utils/toolErrors.js';
+import { randomUUID } from 'node:crypto';
 export type MessageUpdateLazy<M extends Message = Message> = {
 	message: M;
 	contextModifier?: {
@@ -258,36 +254,101 @@ export async function* runToolUse(
 		permissionDecision?.behavior === 'allow'
 			? (permissionDecision.updatedInput ?? parsedInput.data)
 			: parsedInput.data;
-    const resultingMessages = []
 	try {
-		const result = await tool.call(
-			permittedInput,
-			toolUseContext,
-			canUseTool,
-			assistantMessage
-		);
+		const pendingUpdates: MessageUpdateLazy[] = [];
+		let waitingResolver: (() => void) | null = null;
+		let settled = false;
+		let toolResult: Awaited<ReturnType<typeof tool.call>> | undefined;
+		let toolError: unknown;
+		const notify = () => {
+			if (waitingResolver) {
+				const resolve = waitingResolver;
+				waitingResolver = null;
+				resolve();
+			}
+		};
+
+		void tool
+			.call(
+				permittedInput,
+				toolUseContext,
+				canUseTool,
+				assistantMessage,
+				progress => {
+					pendingUpdates.push({
+						message: {
+							type: 'progress',
+							uuid: randomUUID(),
+							timestamp: new Date().toISOString(),
+							data: progress.data,
+							toolUseID: toolUse.id
+						} as ProgressMessage
+					});
+					notify();
+				}
+			)
+			.then(result => {
+				toolResult = result;
+				settled = true;
+				notify();
+			})
+			.catch(error => {
+				toolError = error;
+				settled = true;
+				notify();
+			});
+
+		while (!settled || pendingUpdates.length > 0) {
+			while (pendingUpdates.length > 0) {
+				const update = pendingUpdates.shift();
+				if (update) {
+					yield update;
+				}
+			}
+
+			if (settled) {
+				break;
+			}
+
+			await new Promise<void>(resolve => {
+				waitingResolver = resolve;
+				if (settled || pendingUpdates.length > 0) {
+					const wake = waitingResolver;
+					waitingResolver = null;
+					wake?.();
+				}
+			});
+		}
+
+		if (toolError) {
+			throw toolError;
+		}
+		if (!toolResult) {
+			throw new Error(`Tool ${tool.name} completed without a result.`);
+		}
+
 		const toolResultBlock = await processToolResultBlock(
 			tool,
-			result.data,
+			toolResult.data,
 			toolUse.id
 		);
 
 		yield {
 			message: createUserMessage({
 				content: [toolResultBlock],
-				toolUseResult: result.data,
+				toolUseResult: toolResult.data,
 				sourceToolAssistantUUID: assistantMessage.uuid
 			}),
-			contextModifier: result.contextModifier
+			contextModifier: toolResult.contextModifier
 				? {
 						toolUseID: toolUse.id,
-						modifyContext: result.contextModifier
+						modifyContext: toolResult.contextModifier
 					}
 				: undefined
 		};
 
-		if (result.newMessages && result.newMessages.length > 0) {
-			for (const message of result.newMessages) {
+		if (toolResult.newMessages && toolResult.newMessages.length > 0) {
+			for (const message of toolResult.newMessages) {
 				yield { message };
 			}
 		}

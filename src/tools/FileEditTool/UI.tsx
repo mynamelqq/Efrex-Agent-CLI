@@ -6,7 +6,7 @@ import { extractTag } from 'src/utils/messages.js';
 import { FallbackToolUseErrorMessage } from 'src/components/FallbackToolUseErrorMessage.js';
 import { FileEditToolUpdatedMessage } from 'src/components/FileEditToolUpdatedMessage.js';
 
-import { Text } from '@anthropic/ink';
+import { Text } from 'src/ink.js';
 import { FilePathLink } from 'src/components/FilePathLink.js';
 import type { Tools } from 'src/Tool.js';
 import type { Message, ProgressMessage } from 'src/package/message.js';
@@ -59,17 +59,23 @@ export function getToolUseSummary(
 }
 
 export function renderToolUseMessage(
-  { file_path }: { file_path?: string },
+  input: {
+    file_path?: string;
+    old_string?: string;
+    new_string?: string;
+    replace_all?: boolean;
+    edits?: unknown[];
+  },
   { verbose }: { verbose: boolean },
 ): React.ReactNode {
-  if (!file_path) {
+  if (!input.file_path) {
     return null;
   }
   // For plan files, path is already in userFacingName
   // if (file_path.startsWith(getPlansDirectory())) {
   //   return '';
   // }
-  return <FilePathLink filePath={file_path}>{verbose ? file_path : getDisplayPath(file_path)}</FilePathLink>;
+  return <FilePathLink filePath={input.file_path}>{verbose ? input.file_path : getDisplayPath(input.file_path)}</FilePathLink>;
 }
 
 export function renderToolResultMessage(

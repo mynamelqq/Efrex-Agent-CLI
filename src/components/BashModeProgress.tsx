@@ -1,7 +1,7 @@
 import React from 'react';
-import { Box } from '@anthropic/ink';
-import { BashTool } from "src/tools/BashTool/BashTools.js";
-import type { ShellProgress } from 'src/tools.js'
+import { Box } from "src/ink.js";
+import { BashTool } from "src/tools/BashTool/BashTool.js";
+import type { ShellProgress } from 'src/tools.js';
 import { UserBashInputMessage } from './messages/UserBashInputMessage';
 import { ShellProgressMessage } from './shell/ShellProgressMessage.js';
 

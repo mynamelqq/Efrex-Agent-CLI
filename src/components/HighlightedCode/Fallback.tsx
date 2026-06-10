@@ -1,6 +1,7 @@
 import { extname } from 'path';
 import React, { Suspense, use, useMemo } from 'react';
-import { Ansi, Text } from '@anthropic/ink';
+import { Ansi } from '@anthropic/ink';
+import { Box, Text } from "src/ink.js";
 import { LRUCache } from 'lru-cache';
 import { getCliHighlightPromise } from '../../utils/cliHighlight';
 import { logForDebugging } from '../../utils/debug.js';

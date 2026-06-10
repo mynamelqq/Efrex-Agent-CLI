@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { Ansi, Box, type DOMElement, measureElement, NoSelect, Text, useTheme } from '@anthropic/ink';
+import { Ansi,  type DOMElement, measureElement, NoSelect, useTheme } from '@anthropic/ink';
+import {Box,Text}from "src/ink.js";
 import { isFullscreenEnvEnabled } from '../utils/fullscreen.js';
 import sliceAnsi from '../utils/sliceAnsi.js';
 import { countCharInString } from '../utils/stringUtils.js';

@@ -1,6 +1,12 @@
 import React, { type RefObject, useCallback, useEffect, useRef } from 'react';
-import { useInput } from '../ink.js';
+import { useInput, type Key } from '../ink.js';
 import type { ScrollBoxHandle } from '../ink/components/ScrollBox.js';
+import { useSelection } from '../ink/hooks/use-selection.js';
+import type { FocusMove } from '../ink/selection.js';
+import {
+	useCopyOnSelect,
+	useSelectionBgColor
+} from '../hooks/useCopyOnSelect.js';
 
 type Props = {
 	scrollRef: RefObject<ScrollBoxHandle | null>;
@@ -28,6 +34,53 @@ function computeWheelStep(intervalMs: number): number {
 	return Math.round(BASE_WHEEL_STEP + t * (MAX_WHEEL_STEP - BASE_WHEEL_STEP));
 }
 
+function shouldClearSelectionOnKey(key: Key): boolean {
+	if (key.wheelUp || key.wheelDown) {
+		return false;
+	}
+
+	const isNav =
+		key.leftArrow ||
+		key.rightArrow ||
+		key.upArrow ||
+		key.downArrow ||
+		key.home ||
+		key.end ||
+		key.pageUp ||
+		key.pageDown;
+
+	if (isNav && (key.shift || key.meta || key.super)) {
+		return false;
+	}
+
+	return true;
+}
+
+function selectionFocusMoveForKey(key: Key): FocusMove | null {
+	if (!key.shift || key.meta) {
+		return null;
+	}
+	if (key.leftArrow) {
+		return 'left';
+	}
+	if (key.rightArrow) {
+		return 'right';
+	}
+	if (key.upArrow) {
+		return 'up';
+	}
+	if (key.downArrow) {
+		return 'down';
+	}
+	if (key.home) {
+		return 'lineStart';
+	}
+	if (key.end) {
+		return 'lineEnd';
+	}
+	return null;
+}
+
 export function ScrollKeybindingHandler({
 	scrollRef,
 	isActive,
@@ -38,6 +91,10 @@ export function ScrollKeybindingHandler({
 	const momentumDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const momentumLoopRef = useRef<ReturnType<typeof setInterval> | null>(null);
 	const momentumDirectionRef = useRef<0 | 1 | -1>(0);
+	const selection = useSelection();
+
+	useCopyOnSelect(selection, isActive);
+	useSelectionBgColor(selection);
 
 	const clearMomentum = useCallback(() => {
 		if (momentumDelayRef.current !== null) {
@@ -89,6 +146,31 @@ export function ScrollKeybindingHandler({
 		(input, key, event) => {
 			if (!isActive) {
 				return;
+			}
+
+			if (selection.hasSelection()) {
+				if (key.ctrl && input === 'c') {
+					selection.copySelection();
+					event.stopImmediatePropagation();
+					return;
+				}
+
+				if (key.escape) {
+					selection.clearSelection();
+					event.stopImmediatePropagation();
+					return;
+				}
+
+				const focusMove = selectionFocusMoveForKey(key);
+				if (focusMove) {
+					selection.moveFocus(focusMove);
+					event.stopImmediatePropagation();
+					return;
+				}
+
+				if (shouldClearSelectionOnKey(key)) {
+					selection.clearSelection();
+				}
 			}
 
 			const handle = scrollRef.current;
