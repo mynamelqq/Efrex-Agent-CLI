@@ -8,6 +8,7 @@ import {
   AuthenticationError,
 } from '@anthropic-ai/sdk'
 import { getAnthropicApiKey, getAnthropicBaseURL } from 'src/utils/anthropicConfig.js'
+import { strip1mContextSuffix } from './modelName.js'
 import { getInitialSettings } from 'src/utils/settings/settings.js'
 
 // Cache valid models to avoid repeated API calls
@@ -19,7 +20,7 @@ const validModelCache = new Map<string, boolean>()
 export async function validateModel(
   model: string,
 ): Promise<{ valid: boolean; error?: string }> {
-  const normalizedModel = model.trim()
+  const normalizedModel = strip1mContextSuffix(model.trim())
 
   // Empty model is invalid
   if (!normalizedModel) {
@@ -157,5 +158,4 @@ function handleValidationError(
     error: `Unable to validate model: ${errorMessage}`,
   }
 }
-
 

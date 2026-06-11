@@ -7,6 +7,7 @@ import { formatDuration, formatNumber } from '../utils/format.js';
 type Props = {
 	statusText: string;
 	statusMode: 'requesting' | 'default' | null;
+	statusKind?: 'default' | 'compact';
 	startedAtMs: number | null;
 	toolCount?: number;
 };
@@ -69,6 +70,7 @@ function getShimmerSegments(
 export function StatusAnimationRow({
 	statusText,
 	statusMode,
+	statusKind = 'default',
 	startedAtMs,
 	toolCount
 }: Props): React.ReactNode {
@@ -90,13 +92,20 @@ export function StatusAnimationRow({
 	const elapsedMs = startedAtMs === null ? 0 : Math.max(0, Date.now() - startedAtMs);
 	const longRunning = elapsedMs >= 60_000;
 	const veryLongRunning = elapsedMs >= 180_000;
-	const accentColor = veryLongRunning
-		? 'yellowBright'
-		: longRunning
-			? 'blueBright'
-			: statusMode === 'requesting'
-				? 'cyanBright'
-				: 'greenBright';
+	const accentColor =
+		statusKind === 'compact'
+			? veryLongRunning
+				? 'yellowBright'
+				: longRunning
+					? 'yellow'
+					: 'magentaBright'
+			: veryLongRunning
+				? 'yellowBright'
+				: longRunning
+					? 'blueBright'
+					: statusMode === 'requesting'
+						? 'cyanBright'
+						: 'greenBright';
 	const textColor = statusMode === 'requesting' ? 'ansi:blueBright' : 'gray';
 	const glimmerCycleLength = statusMessageWidth + GLIMMER_PAD_COLUMNS * 2;
 	const cyclePosition =
@@ -125,7 +134,7 @@ export function StatusAnimationRow({
 		>
 			<Box flexShrink={0} width={3}>
 				<Text color={accentColor} dim={prefixDim} bold={prefixBold}>
-					{'• '}
+					{'● '}
 				</Text>
 			</Box>
 			<Box flexDirection="row" flexWrap="nowrap" flexGrow={1} flexShrink={0} overflow="hidden">

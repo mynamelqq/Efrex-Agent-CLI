@@ -19,6 +19,7 @@ import type { SystemPrompt } from 'src/prompt.js';
 import { createAssistantAPIErrorMessage, normalizeContentFromAPI } from 'src/utils/messages.js';
 import { getAnthropicApiKey, getAnthropicBaseURL, getRequestTimeoutMs } from 'src/utils/anthropicConfig.js';
 import { normalizeMessagesForAPI, toolToAPISchema } from 'src/utils/api.js';
+import { strip1mContextSuffix } from 'src/utils/model/modelName.js';
 import type { ThinkingConfig } from 'src/utils/effort.js';
 import type { Options } from '../efrex.js';
 
@@ -97,6 +98,7 @@ export async function* queryModelAnthropic(
 > {
 	try {
 		const client = getAnthropicClient();
+		const apiModel = strip1mContextSuffix(options.model);
 		const anthropicMessages = toAnthropicMessages(messages, tools);
 		const anthropicTools: BetaToolUnion[] = await Promise.all(
 			tools.map(tool =>
@@ -109,7 +111,7 @@ export async function* queryModelAnthropic(
 
 		const stream = client.beta.messages.stream(
 			{
-				model: options.model,
+				model: apiModel,
 				max_tokens: options.maxOutputTokensOverride ?? 32_000,
 				messages: anthropicMessages,
 				system: systemPrompt.join('\n\n'),

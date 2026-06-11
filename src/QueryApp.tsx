@@ -778,11 +778,12 @@ function getAssistantToolUseViewportMessages(
 	tools: readonly Tool[],
 	verbose: boolean
 ): ViewportMessage[] {
-	if (!Array.isArray(message.message?.content)) {
+	const content = message.message?.content;
+	if (!Array.isArray(content)) {
 		return [];
 	}
 
-	return message.message.content
+	return content
 		.map((block, index): ViewportMessage | null => {
 			if (!block || typeof block !== 'object') {
 				return null;
@@ -1274,11 +1275,12 @@ function getToolResultBlock(message: MessageType): {
 	isError: boolean;
 	content: unknown;
 } | null {
-	if (!Array.isArray(message.message?.content)) {
+	const content = message.message?.content;
+	if (!Array.isArray(content)) {
 		return null;
 	}
 
-	const block = message.message.content.find((contentBlock: unknown) => {
+	const block = content.find((contentBlock: unknown) => {
 		if (!contentBlock || typeof contentBlock !== 'object') {
 			return false;
 		}
@@ -1303,11 +1305,12 @@ function getToolResultBlocks(message: MessageType): Array<{
 	block: { tool_use_id: string; is_error?: unknown; content?: unknown };
 	index: number;
 }> {
-	if (!Array.isArray(message.message?.content)) {
+	const content = message.message?.content;
+	if (!Array.isArray(content)) {
 		return [];
 	}
 
-	return message.message.content
+	return content
 		.map((contentBlock, index) => {
 			if (!contentBlock || typeof contentBlock !== 'object') {
 				return null;
@@ -1537,11 +1540,12 @@ function shouldAppendStreamingPlaceholder(
 }
 
 function isToolResultUserMessage(message: MessageType): boolean {
-	if (message.type !== 'user' || !Array.isArray(message.message?.content)) {
+	const content = message.message?.content;
+	if (message.type !== 'user' || !Array.isArray(content)) {
 		return false;
 	}
 
-	return message.message.content.some(block => {
+	return content.some(block => {
 		if (!block || typeof block !== 'object') {
 			return false;
 		}
@@ -1554,11 +1558,12 @@ function extractToolResult(message: MessageType): {
 	text: string;
 	phase: 'call' | 'done' | 'error';
 } {
-	if (!Array.isArray(message.message?.content)) {
+	const content = message.message?.content;
+	if (!Array.isArray(content)) {
 		return { text: '', phase: 'done' };
 	}
 
-	const toolResult = message.message.content.find((block: unknown) => {
+	const toolResult = content.find((block: unknown) => {
 		if (!block || typeof block !== 'object') {
 			return false;
 		}
@@ -1710,10 +1715,9 @@ function messageToViewport(
 			};
 		}
 
-		const toolUseItems: ToolUseRenderItem[] = Array.isArray(
-			message.message?.content
-		)
-			? message.message.content
+		const content = message.message?.content;
+		const toolUseItems: ToolUseRenderItem[] = Array.isArray(content)
+			? content
 					.map((block): ToolUseRenderItem | null => {
 						if (!block || typeof block !== 'object') {
 							return null;
@@ -1738,7 +1742,7 @@ function messageToViewport(
 					.filter(
 						(value): value is ToolUseRenderItem => value !== null
 					)
-			: extractToolUseLabels(message.message?.content).map(label => ({
+			: extractToolUseLabels(content).map(label => ({
 					text: label,
 					content: <Text>{label}</Text>
 				}));
@@ -2523,12 +2527,7 @@ export default function QueryApp({
 				setCompactUiState(prev => ({
 					...prev,
 					active: true,
-					statusText:
-						event.hookType === 'pre_compact'
-							? 'Efrex 正在整理历史上下文...'
-							: event.hookType === 'post_compact'
-								? 'Efrex 正在恢复压缩后的会话状态...'
-								: 'Efrex 正在初始化压缩流程...'
+					statusText: '正在压缩'
 				}));
 				break;
 			case 'compact_start':
@@ -2537,7 +2536,7 @@ export default function QueryApp({
 					active: true,
 					streamMode: 'requesting',
 					responseLength: 0,
-					statusText: 'Efrex 正在生成对话摘要...'
+					statusText: '正在压缩'
 				}));
 				break;
 			case 'compact_end':
@@ -2595,9 +2594,7 @@ const getToolUseContext = useCallback(
 						responseLength,
 						statusText:
 							prev.active && prev.streamMode === 'responding'
-								? responseLength > 0
-									? 'Efrex 正在生成压缩摘要...'
-									: 'Efrex 正在压缩对话...'
+								? '正在压缩'
 								: prev.statusText
 					};
 				});
@@ -2609,10 +2606,8 @@ const getToolUseContext = useCallback(
 					streamMode: mode,
 					statusText:
 						mode === 'responding'
-							? prev.responseLength > 0
-								? 'Efrex 正在生成压缩摘要...'
-								: 'Efrex 正在压缩对话...'
-							: prev.statusText ?? 'Efrex 正在压缩对话...'
+							? '正在压缩'
+							: prev.statusText ?? '正在压缩'
 				}));
 			},
 			onCompactProgress: handleCompactProgress,
@@ -3078,6 +3073,8 @@ const getToolUseContext = useCallback(
 				? 'requesting'
 				: 'default'
 		: null;
+	const statusKind =
+		compactUiState.active && !apiRetryUiState.active ? 'compact' : 'default';
 
 
 	const commandSelectorQuery = getSlashCommandQuery(input.trim());
@@ -3172,6 +3169,7 @@ const getToolUseContext = useCallback(
 				<StatusAnimationRow
 					statusText={statusText}
 					statusMode={statusMode}
+					statusKind={statusKind}
 					startedAtMs={loadingStartTimeRef.current}
 					toolCount={streamingAssistant.pendingToolCalls.length}
 				/>

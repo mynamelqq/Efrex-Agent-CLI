@@ -12,6 +12,7 @@ import { logError } from './utils/log.js'
 import { getLocalISODate } from './constants/common'
 import { setCachedEfrexMdContent } from './bootstrap/state.js'
 import { logForDebugging } from './utils/debug.js'
+import { has1mContext, strip1mContextSuffix } from './utils/model/modelName.js'
 // Default max output tokens
 const MAX_OUTPUT_TOKENS_DEFAULT = 32_000
 // Maximum output tokens for compact operations
@@ -217,7 +218,7 @@ function getChineseCompatibleMaxOutputTokens(model: string): {
 
 
 function normalizeModelName(model: string): string {
-  return model.toLowerCase().replace(/\[1m\]$/, '')
+  return strip1mContextSuffix(model).toLowerCase()
 }
 
 function modelMatchesFamily(model: string, family: string): boolean {
@@ -230,6 +231,8 @@ export function getContextWindowForModel(
   model: string,
   betas?: string[],
 ): number {
+  if (has1mContext(model)) return 1_000_000
+
   const m = normalizeModelName(model)
 
   // ── OpenAI ────────────────────────────────────────────────────────
