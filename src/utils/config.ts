@@ -1,9 +1,12 @@
 
 import { feature } from 'bun:bundle'
 import { randomBytes } from 'crypto'
-import { unwatchFile, watchFile } from 'fs'
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, unwatchFile, watchFile } from 'fs'
 import { getManagedFilePath } from './settings/mdm/managedPath.js'
 import memoize from 'lodash/memoize.js'
+
+import { ConfigParseError, getErrnoCode } from './errors.js'
+import pickBy from 'lodash/pickBy.js'
 import { basename, dirname, join, resolve } from 'path'
 import { getOriginalCwd } from '../bootstrap/state.js'
 import { getCwd } from '../utils/cwd.js'
@@ -18,7 +21,9 @@ import { normalizePathForConfigKey } from './path.js'
 /* eslint-enable @typescript-eslint/no-require-imports */
 import type { ImageDimensions } from './imageResizer.js'
 import { ThemeSetting } from 'packages/@ant/ink/src/theme/types.js'
-
+import { getGlobalEfrexFile } from './env.js'
+import { writeFileSyncAndFlush_DEPRECATED } from './file.js'
+import * as lockfile from './lockfile.js'
 
 
 
@@ -26,7 +31,9 @@ import { ThemeSetting } from 'packages/@ant/ink/src/theme/types.js'
 // Re-entrancy guard: prevents getConfig → logEvent → getGlobalConfig → getConfig
 // infinite recursion when the config file is corrupted. logEvent's sampling check
 // reads GrowthBook features from the global config, which calls getConfig again.
-let insideGetConfig = false
+/// 重入保护：防止 getConfig → logEvent → getGlobalConfig → getConfig 
+// 当配置文件损坏时，会导致无限递归。logEvent 的采样检查 // 从全局配置中读取 GrowthBookBook 功能，而该功能又再次调用 getConfig。
+let insideGetConfig = false//重进守卫
 
 // Image dimension info for coordinate mapping (only set when image was resized)
 export type PastedContent = {
@@ -145,6 +152,7 @@ export type AccountInfo = {
   subscriptionCreatedAt?: string
 }
 
+export const DEFAULT_GLOBAL_CONFIG: GlobalConfig = createDefaultGlobalConfig()
 
 export type DiffTool = 'terminal' | 'auto'
 
@@ -580,6 +588,65 @@ export function createDefaultGlobalConfig(): GlobalConfig {
     copyFullResponse: false,
   }
 }
+export function saveGlobalConfig(//保存全局配置
+  updater: (currentConfig: GlobalConfig) => GlobalConfig,
+): void {
+  let written: GlobalConfig | null = null
+  try {
+    const didWrite = saveConfigWithLock(//是否发生了写入
+      getGlobalEfrexFile(),
+      createDefaultGlobalConfig,//创默认建配置回调
+      current => {
+        const config = updater(current)
+        // Skip if no changes (same reference returned)
+        if (config === current) {
+          return current
+        }
+        written = {
+          ...config,
+          projects: removeProjectHistory(current.projects),
+        }
+        return written
+      },
+    )
+    // Only write-through if we actually wrote. If the auth-loss guard
+    // tripped (or the updater made no changes), the file is untouched and
+    // the cache is still valid -- touching it would corrupt the guard.
+    if (didWrite && written) {
+      writeThroughGlobalConfigCache(written)
+    }
+  } catch (error) {
+    logForDebugging(`Failed to save config with lock: ${error}`, {
+      level: 'error',
+    })
+    // Fall back to non-locked version on error. This fallback is a race
+    // window: if another process is mid-write (or the file got truncated),
+    // getConfig returns defaults. Refuse to write those over a good cached
+    // config to avoid wiping auth. See GH #3117.
+    const currentConfig = getConfig(
+      getGlobalEfrexFile(),
+      createDefaultGlobalConfig,
+    )
+    // if (wouldLoseAuthState(currentConfig)) {
+    //   logForDebugging(
+    //     'saveGlobalConfig fallback: re-read config is missing auth that cache has; refusing to write. See GH #3117.',
+    //     { level: 'error' },
+    //   )
+    //   return
+    // }
+    const config = updater(currentConfig)
+    // Skip if no changes (same reference returned)
+    if (config === currentConfig) {
+      return
+    }
+    written = {
+      ...config,
+      projects: removeProjectHistory(currentConfig.projects),
+    }
+    saveConfig(getGlobalEfrexFile(), written, DEFAULT_GLOBAL_CONFIG)
+    writeThroughGlobalConfigCache(written)
+  }
+}
 
 // Cache for global config
 let globalConfigCache: { config: GlobalConfig | null; mtime: number } = {
@@ -598,6 +665,34 @@ export const CONFIG_WRITE_DISPLAY_THRESHOLD = 20
 function writeThroughGlobalConfigCache(config: GlobalConfig): void {
   globalConfigCache = { config, mtime: Date.now() }
   lastReadFileStats = null
+}
+/**
+ * Removes history field from projects (migrated to history.jsonl)从项目中移除历史字段
+ * @internal
+ */
+function removeProjectHistory(
+  projects: Record<string, ProjectConfig> | undefined,
+): Record<string, ProjectConfig> | undefined {
+  if (!projects) {
+    return projects
+  }
+
+  const cleanedProjects: Record<string, ProjectConfig> = {}
+  let needsCleaning = false
+
+  for (const [path, projectConfig] of Object.entries(projects)) {
+    // history is removed from the type but may exist in old configs
+    const legacy = projectConfig as ProjectConfig & { history?: unknown }
+    if (legacy.history !== undefined) {//项目配置的历史字段不为空
+      needsCleaning = true//需要清理
+      const { history, ...cleanedConfig } = legacy//清理历史字段
+      cleanedProjects[path] = cleanedConfig
+    } else {
+      cleanedProjects[path] = projectConfig
+    }
+  }
+
+  return needsCleaning ? cleanedProjects : projects
 }
 export function getGlobalConfig(): GlobalConfig {
   if (globalConfigCache.config) {//缓存命中加1
@@ -621,6 +716,36 @@ export function getGlobalConfig(): GlobalConfig {
   } catch {
     // If anything goes wrong, fall back to uncached behavior
     return createDefaultGlobalConfig()
+  }
+}
+
+export function saveConfig<A extends object>(
+  file: string,
+  config: A,
+  defaultConfig: A,
+): void {
+  // Ensure the directory exists before writing the config file
+  const dir = dirname(file)
+  // mkdirSync is already recursive in FsOperations implementation
+  mkdirSync(dir)
+
+  // Filter out any values that match the defaults
+  const filteredConfig = pickBy(//挑选出符合默认配置的选项
+    config,
+    (value, key) =>
+      JSON.stringify(value) !== JSON.stringify(defaultConfig[key as keyof A]),
+  )
+  // Write config file with secure permissions - mode only applies to new files
+  writeFileSyncAndFlush_DEPRECATED(//
+    file,
+    JSON.stringify(filteredConfig, null, 2),
+    {
+      encoding: 'utf-8',
+      mode: 0o600,
+    },
+  )
+  if (file === getGlobalEfrexFile()) {
+    globalConfigWriteCount++
   }
 }
 export function getCurrentProjectConfig(): ProjectConfig {
@@ -673,4 +798,389 @@ export function getMemoryPath(memoryType: MemoryType): string {
     //   return getAutoMemEntrypoint()
   }
   return '' // unreachable in external builds where TeamMem is not in MemoryType
+}
+/**
+* 如果执行了写入操作则返回 true；如果跳过写入操作（无更改或触发了认证丢失保护）则返回 false。
+* 调用者可利用此结果决定是否失效缓存——在跳过写入后失效缓存会破坏认证丢失保护所依赖的正常缓存状态。
+ */
+function saveConfigWithLock<A extends object>(//保存配置
+  file: string,
+  createDefault: () => A,
+  mergeFn: (current: A) => A,
+): boolean {
+  const defaultConfig = createDefault()
+  const dir = dirname(file)
+
+  // Ensure directory exists (mkdirSync is already recursive in FsOperations)
+  mkdirSync(dir)//确保路径存在
+
+  let release
+  try {
+    const lockFilePath = `${file}.lock`//文件名.lock
+    const startTime = Date.now()
+    release = lockfile.lockSync(file, {//同步锁 文件路径 
+      lockfilePath: lockFilePath,
+      onCompromised: err => {
+        // Default onCompromised throws from a setTimeout callback, which
+        // becomes an unhandled exception. Log instead -- the lock being
+        // stolen (e.g. after a 10s event-loop stall) is recoverable.
+        logForDebugging(`Config lock compromised: ${err}`, { level: 'error' })
+      },
+    })
+    const lockTime = Date.now() - startTime
+    // Check for stale write - file changed since we last read it
+    // Only check for global config file since lastReadFileStats tracks that specific file
+    if (lastReadFileStats && file === getGlobalEfrexFile()) {//如果之前读过 而且文件是同一份配置 检查一下有没有被写过，被写过就直接再读
+      try {
+        const currentStats = statSync(file)
+        if (
+          currentStats.mtimeMs !== lastReadFileStats.mtime ||
+          currentStats.size !== lastReadFileStats.size
+        ) {
+          
+        }
+      } catch (e) {
+        const code = getErrnoCode(e)
+        if (code !== 'ENOENT') {
+          throw e
+        }
+        // File doesn't exist yet, no stale check needed
+      }
+    }
+
+    // Re-read the current config to get latest state. If the file is
+    // momentarily corrupted (concurrent writes, kill-during-write), this
+    // returns defaults -- we must not write those back over good config.
+    const currentConfig = getConfig(file, createDefault)//重新读取文件配置
+    // if (file === getGlobalEfrexFile() && wouldLoseAuthState(currentConfig)) {
+    //   logForDebugging(
+    //     'saveConfigWithLock: re-read config is missing auth that cache has; refusing to write to avoid wiping ~/.claude.json. See GH #3117.',
+    //     { level: 'error' },
+    //   )
+    //   return false
+    // }
+
+    // Apply the merge function to get the updated config
+    const mergedConfig = mergeFn(currentConfig)//使用合并函数 更新配置
+
+    // Skip write if no changes (same reference returned)
+    if (mergedConfig === currentConfig) {//如果没有变动，就不写入
+      return false
+    }
+
+    // Filter out any values that match the defaults
+    const filteredConfig = pickBy(//过滤掉不相同的配置
+      mergedConfig,
+      (value, key) =>
+        JSON.stringify(value) !== JSON.stringify(defaultConfig[key as keyof A]),
+    )
+
+    // Create timestamped backup of existing config before writing
+    // We keep multiple backups to prevent data loss if a reset/corrupted config
+    // overwrites a good backup. Backups are stored in ~/.claude/backups/ to
+    // keep the home directory clean.
+    try {
+      const fileBase = basename(file)//文件名
+      const backupDir = getConfigBackupDir()//备份文件
+
+      // Ensure backup directory exists
+      try {
+        mkdirSync(backupDir)
+      } catch (mkdirErr) {
+        const mkdirCode = getErrnoCode(mkdirErr)
+        if (mkdirCode !== 'EEXIST') {
+          throw mkdirErr
+        }
+      }
+
+      // Check existing backups first -- skip creating a new one if a recent
+      // backup already exists. During startup, many saveGlobalConfig calls fire
+      // within milliseconds of each other; without this check, each call
+      // creates a new backup file that accumulates on disk.
+      const MIN_BACKUP_INTERVAL_MS = 60_000
+      const existingBackups = readdirSync(backupDir)//先检查备份文件夹找到这个文件的备份
+        .filter(f => f.startsWith(`${fileBase}.backup.`))
+        .sort()
+        .reverse() // Most recent first (timestamps sort lexicographically)
+
+      const mostRecentBackup = existingBackups[0]//排序找到最新的文件
+      const mostRecentTimestamp = mostRecentBackup
+        ? Number(mostRecentBackup.split('.backup.').pop())
+        : 0
+      const shouldCreateBackup =//如果上次备份的时间超过最小设定的阈值
+        Number.isNaN(mostRecentTimestamp) ||
+        Date.now() - mostRecentTimestamp >= MIN_BACKUP_INTERVAL_MS
+
+      if (shouldCreateBackup) {//复制文件备份过去
+        const backupPath = join(backupDir, `${fileBase}.backup.${Date.now()}`)
+        copyFileSync(file, backupPath)
+      }
+
+      // Clean up old backups, keeping only the 5 most recent
+      const MAX_BACKUPS = 5//最多5个备份文件 
+      // Re-read if we just created one; otherwise reuse the list
+      const backupsForCleanup = shouldCreateBackup
+        ? readdirSync(backupDir)
+            .filter(f => f.startsWith(`${fileBase}.backup.`))
+            .sort()
+            .reverse()//清理掉旧的
+        : existingBackups
+
+      for (const oldBackup of backupsForCleanup.slice(MAX_BACKUPS)) {
+        try {
+          unlinkSync(join(backupDir, oldBackup))//删除
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
+    } catch (e) {
+      const code = getErrnoCode(e)
+      if (code !== 'ENOENT') {
+        logForDebugging(`Failed to backup config: ${e}`, {
+          level: 'error',
+        })
+      }
+      // No file to backup or backup failed, continue with write
+    }
+
+    // Write config file with secure permissions - mode only applies to new files
+    writeFileSyncAndFlush_DEPRECATED(//写入配置文件
+      file,
+      JSON.stringify(filteredConfig, null, 2),//过滤掉的配置
+      {
+        encoding: 'utf-8',
+        mode: 0o600,
+      },
+    )
+    if (file === getGlobalEfrexFile()) {
+      globalConfigWriteCount++
+    }
+    return true
+  } finally {
+    if (release) {//最后释放文件锁
+      release()
+    }
+  }
+}
+// Flag to track if config reading is allowed
+let configReadingAllowed = false
+
+/**
+ * Returns the directory where config backup files are stored.
+ * Uses ~/.claude/backups/ to keep the home directory clean.
+ */
+function getConfigBackupDir(): string {
+  return join(getEfrexConfigHomeDir(), 'backups')
+}
+
+/**
+查找指定配置文件的最新备份文件。 
+*** 首先检查 ~/.claude/backups/ 目录，若不存在则回退到旧位置（配置文件所在目录旁边），以保证向后兼容性。
+ * 返回最新备份文件的完整路径，若无备份则返回 null。
+ */
+function findMostRecentBackup(file: string): string | null {//找到最新的备份文件
+  const fileBase = basename(file)
+  const backupDir = getConfigBackupDir()
+
+  // Check the new backup directory first
+  try {
+    const backups = readdirSync(backupDir)
+      .filter(f => f.startsWith(`${fileBase}.backup.`))
+      .sort()
+
+    const mostRecent = backups.at(-1) // Timestamps sort lexicographically
+    if (mostRecent) {
+      return join(backupDir, mostRecent)
+    }
+  } catch {
+    // Backup dir doesn't exist yet
+  }
+
+  // Fall back to legacy location (next to the config file)
+  const fileDir = dirname(file)//回退到配置文件所在的文件夹 旧位置
+
+  try {
+    const backups =readdirSync(fileDir)
+      .filter(f => f.startsWith(`${fileBase}.backup.`))
+      .sort()
+
+    const mostRecent = backups.at(-1) // Timestamps sort lexicographically
+    if (mostRecent) {
+      return join(fileDir, mostRecent)
+    }
+
+    // Check for legacy backup file (no timestamp)
+    const legacyBackup = `${file}.backup`//检查是否存在旧的备份
+    try {
+      statSync(legacyBackup)
+      return legacyBackup
+    } catch {
+      // Legacy backup doesn't exist
+    }
+  } catch {
+    // Ignore errors reading directory
+  }
+
+  return null
+}
+
+function getConfig<A>(//读取文件获取配置 然后跟默认配置合并
+  file: string,
+  createDefault: () => A,
+  throwOnInvalid?: boolean,
+): A {
+  // Log a warning if config is accessed before it's allowed
+  if (!configReadingAllowed && process.env.NODE_ENV !== 'test') {
+    throw new Error('Config accessed before allowed.')
+  }
+
+
+  try {
+    const fileContent = readFileSync(file, {
+      encoding: 'utf-8',
+    })
+    try {
+      // Strip BOM before parsing - PowerShell 5.x adds BOM to UTF-8 files
+      const parsedConfig = JSON.parse(stripBOM(fileContent))//powershell 5.x会增加BOM到UTF-8
+      return {
+        ...createDefault(),//创建默认配置的回调
+        ...parsedConfig,//解析出来的配置 合并
+      }
+    } catch (error) {//解析错误
+      // Throw a ConfigParseError with the file path and default config
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+      throw new ConfigParseError(errorMessage, file, createDefault())
+    }
+  } catch (error) {//主要是错误处理 
+    // Handle file not found - check for backup and return default
+    const errCode = getErrnoCode(error)
+    if (errCode === 'ENOENT') {//文件没找到
+      const backupPath = findMostRecentBackup(file)//找到最新的该文件的备份
+      if (backupPath) {
+        process.stderr.write(
+          `\nClaude configuration file not found at: ${file}\n` +
+            `A backup file exists at: ${backupPath}\n` +
+            `You can manually restore it by running: cp "${backupPath}" "${file}"\n\n`,
+        )
+      }
+      return createDefault()
+    }
+
+    // Re-throw ConfigParseError if throwOnInvalid is true
+    if (error instanceof ConfigParseError && throwOnInvalid) {
+      throw error
+    }
+
+    // Log config parse errors so users know what happened
+    if (error instanceof ConfigParseError) {//配置解析错误 可能被删减损坏了
+      logForDebugging(
+        `Config file corrupted, resetting to defaults: ${error.message}`,
+        { level: 'error' },
+      )
+
+      // Guard: logEvent → shouldSampleEvent → getGlobalConfig → getConfig
+      // causes infinite recursion when the config file is corrupted, because
+      // the sampling check reads a GrowthBook feature from global config.
+      // Only log analytics on the outermost call.
+      if (!insideGetConfig) {//如果守卫正常设置true
+        insideGetConfig = true
+        try {
+          // Log the error for monitoring
+          logError(error)
+
+          // Log analytics event for config corruption
+          let hasBackup = false
+          try {
+            statSync(`${file}.backup`)//如果有备份文件
+            hasBackup = true
+          } catch {
+            // No backup
+          }
+        } finally {
+          insideGetConfig = false
+        }
+      }
+
+      process.stderr.write(
+        `\nClaude configuration file at ${file} is corrupted: ${error.message}\n`,//打印错误
+      )
+
+      // Try to backup the corrupted config file (only if not already backed up)
+      const fileBase = basename(file)
+      const corruptedBackupDir = getConfigBackupDir()//获取备份文件夹
+
+      // Ensure backup directory exists
+      try {
+        mkdirSync(corruptedBackupDir)
+      } catch (mkdirErr) {
+        const mkdirCode = getErrnoCode(mkdirErr)
+        if (mkdirCode !== 'EEXIST') {
+          throw mkdirErr
+        }
+      }
+
+      const existingCorruptedBackups = readdirSync(corruptedBackupDir)//如果存在损害的备份 file.corrupted...
+        .filter(f => f.startsWith(`${fileBase}.corrupted.`))
+
+      let corruptedBackupPath: string | undefined
+      let alreadyBackedUp = false
+
+      //检查当前损坏的内容是否与任何现有备份匹配
+      const currentContent = readFileSync(file, { encoding: 'utf-8' })//读取损害的内容
+      for (const backup of existingCorruptedBackups) {//遍历损坏的备份文件
+        try {
+          const backupContent = readFileSync(//读取文件
+            join(corruptedBackupDir, backup),
+            { encoding: 'utf-8' },
+          )
+          if (currentContent === backupContent) {//如果相同
+            alreadyBackedUp = true//以及备份=true
+            break
+          }
+        } catch {
+          // Ignore read errors on backups
+        }
+      }
+
+      if (!alreadyBackedUp) {//如果没有对损坏的内容备份
+        corruptedBackupPath = join(
+          corruptedBackupDir,
+          `${fileBase}.corrupted.${Date.now()}`,//创建一个新的文件，后缀日期，然后对损坏内容进行一个复制操作
+        )
+        try {
+          copyFileSync(file, corruptedBackupPath)
+          logForDebugging(
+            `Corrupted config backed up to: ${corruptedBackupPath}`,
+            {
+              level: 'error',
+            },
+          )
+        } catch {
+          // Ignore backup errors
+        }
+      }
+
+      // Notify user about corrupted config and available backup
+      const backupPath = findMostRecentBackup(file)//找到最新的该文件备份
+      if (corruptedBackupPath) {//如果备份了，提示损坏的文件备份到该路径
+        process.stderr.write(
+          `The corrupted file has been backed up to: ${corruptedBackupPath}\n`,
+        )
+      } else if (alreadyBackedUp) {//备份了直接提示
+        process.stderr.write(`The corrupted file has already been backed up.\n`)
+      }
+
+      if (backupPath) {//回退，如果已经有最新备份了 告诉用户去复制
+        process.stderr.write(
+          `A backup file exists at: ${backupPath}\n` +
+            `You can manually restore it by running: cp "${backupPath}" "${file}"\n\n`,
+        )
+      } else {
+        process.stderr.write(`\n`)
+      }
+    }
+
+    return createDefault()
+  }
 }

@@ -3,7 +3,8 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { which } from './which.js'
 type Platform = 'win32' | 'darwin' | 'linux'
-import {  isEnvTruthy } from './envUtils.js'
+import {  getEfrexConfigHomeDir, isEnvTruthy } from './envUtils.js'
+import { existsSync } from 'fs'
 
 export const env = {
   platform: (['win32', 'darwin'].includes(process.platform)
@@ -36,7 +37,7 @@ export const JETBRAINS_IDES = [
   'androidstudio',
 ]
 // Detect terminal type with fallbacks for all platforms
-function detectTerminal(): string | null {
+function detectTerminal(): string | null {//检测环境变量
   if (process.env.CURSOR_TRACE_ID) return 'cursor'
   // Cursor and Windsurf under WSL have TERM_PROGRAM=vscode
   if (process.env.VSCODE_GIT_ASKPASS_MAIN?.includes('cursor')) {
@@ -130,3 +131,17 @@ function detectTerminal(): string | null {
   return null
 }
 
+// Config and data paths
+export const getGlobalEfrexFile = memoize((): string => {//缓存
+  // Legacy fallback for backwards compatibility
+  if (
+    existsSync(
+      join(getEfrexConfigHomeDir(), '.config.json'),
+    )
+  ) {
+    return join(getEfrexConfigHomeDir(), '.config.json')
+  }
+
+  const filename = `.efrex.json`
+  return join(process.env.CONFIG_DIR || homedir(), filename)
+})

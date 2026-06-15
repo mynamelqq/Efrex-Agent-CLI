@@ -13,6 +13,7 @@ import { createUserMessage } from '../messages.js'
 export function processTextPrompt(
   input: string | Array<ContentBlockParam>,
   imageContentBlocks: ContentBlockParam[],
+  attachmentMessages: AttachmentMessage[],
   imagePasteIds: number[],
   uuid?: string,
   permissionMode?: PermissionMode,
@@ -55,7 +56,7 @@ export function processTextPrompt(
     })
 
     return {
-      messages: [userMessage],
+      messages: [userMessage,...attachmentMessages],
       shouldQuery: true,
     }
   }
@@ -68,7 +69,7 @@ export function processTextPrompt(
   })
 
   return {
-    messages: [userMessage],
+    messages: [userMessage,...attachmentMessages],
     shouldQuery: true,
   }
 }

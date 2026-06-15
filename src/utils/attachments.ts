@@ -1,3 +1,19 @@
+import { Message } from "execa"
+import { IDESelection } from "src/hooks/useIdeSelection"
+import { AttachmentMessage } from "src/package/message"
+import { QuerySource } from "src/services/compact/querySource"
+import { ToolUseContext } from "src/Tool"
+import { QueuedCommand } from "src/types/textInputTypes"
+import { createAttachmentMessage } from "./messages"
+import { logError } from "./log"
+import { truncate } from "lodash"
+import { dirname, parse, relative, resolve } from 'path'
+import { logAntError } from "./debug"
+import { createAbortController } from "./abortController"
+import { MCPServerConnection } from "packages/mcp-client/src"
+import { isSupportedTerminal, toIDEDisplayName } from "./ide"
+import { envDynamic } from "./envDynamic"
+import { getCwd } from "./cwd"
 
 
 export type Attachment =
@@ -294,3 +310,174 @@ export type Attachment =
       warningCount: number
       sample: string
     }
+/**
+ * This is janky
+ * TODO: Generate attachments when we create messages
+ */
+export async function getAttachments(
+  input: string | null,
+  toolUseContext: ToolUseContext,
+  ideSelection: IDESelection | null,
+  queuedCommands: QueuedCommand[],
+  messages?: Message[],
+  querySource?: QuerySource,
+  options?: { skipSkillDiscovery?: boolean },
+): Promise<Attachment[]> {
+
+  // This will slow down submissions
+  // TODO: Compute attachments as the user types, not here (though we use this
+  // function for slash command prompts too)
+  const abortController = createAbortController()
+  const timeoutId = setTimeout(ac => ac.abort(), 1000, abortController)
+  const context = { ...toolUseContext, abortController }
+
+  const isMainThread = true
+
+
+  // Process user input attachments first (includes @mentioned files)
+  // This ensures files are added to nestedMemoryAttachmentTriggers before nested_memory processes them
+  const userAttachmentResults = await Promise.all([])
+
+  // Thread-safe attachments available in sub-agents
+  // NOTE: These must be created AFTER userInputAttachments completes to ensure
+  // nestedMemoryAttachmentTriggers is populated before getNestedMemoryAttachments runs
+  // const allThreadAttachments = [
+    // queuedCommands is already agent-scoped by the drain gate in query.ts —
+    // main thread gets agentId===undefined, subagents get their own agentId.
+    // Must run for all threads or subagent notifications drain into the void
+    // (removed from queue by removeFromQueue but never attached).    
+    // maybe('changed_files', () => getChangedFiles(context)),
+  
+
+  // ]
+
+  // Attachments which are semantically only for the main conversation or don't have concurrency-safe implementations
+  const mainThreadAttachments =  [
+        maybe('ide_selection', async () =>
+          getSelectedLinesFromIDE(ideSelection, toolUseContext),
+        ),
+
+      ]
+
+
+  // Process thread and main thread attachments in parallel (no dependencies between them)
+  const [threadAttachmentResults] =
+    await Promise.all([
+      // Promise.all(allThreadAttachments),
+      Promise.all(mainThreadAttachments),
+    ])
+
+  clearTimeout(timeoutId)
+  // Defensive: a getter leaking [undefined] crashes .map(a => a.type) below.
+  return (
+    [
+      ...userAttachmentResults.flat(),
+      ...threadAttachmentResults.flat(),
+      // ...mainThreadAttachmentResults.flat(),
+    ] as Attachment[]
+  ).filter(a => a !== undefined && a !== null)
+}
+async function maybe<A>(label: string, f: () => Promise<A[]>): Promise<A[]> {//异步包装函数，用于执行可能失败的异步操作（特别是获取附件数据）
+  const startTime = Date.now()
+  try {
+    const result = await f()
+    const duration = Date.now() - startTime
+    // Log only 5% of events to reduce volume
+    if (Math.random() < 0.05) {
+      // jsonStringify(undefined) returns undefined, so .length would throw
+      const attachmentSizeBytes = result
+        .filter(a => a !== undefined && a !== null)
+        .reduce((total, attachment) => {
+          return total + JSON.stringify(attachment).length
+        }, 0)
+    }
+    return result
+  } catch (e) {
+    const duration = Date.now() - startTime
+    // Log only 5% of events to reduce volume
+    if (Math.random() < 0.05) {
+    
+    }
+    logError(e)
+    // For Ant users, log the full error to help with debugging
+    logAntError(`Attachment error in ${label}`, e)
+
+    return []
+  }
+}
+export async function* getAttachmentMessages(
+  input: string | null,
+  toolUseContext: ToolUseContext,
+  ideSelection: IDESelection | null,
+  queuedCommands: QueuedCommand[],
+  messages?: Message[],
+  querySource?: QuerySource,
+  options?: { skipSkillDiscovery?: boolean },
+): AsyncGenerator<AttachmentMessage, void> {
+  // TODO: Compute this upstream
+  const attachments = await getAttachments(
+    input,
+    toolUseContext,
+    ideSelection,
+    queuedCommands,
+    messages,
+    querySource,
+    options,
+  )
+
+  if (attachments.length === 0) {
+    return
+  }
+
+  
+
+  for (const attachment of attachments) {
+    yield createAttachmentMessage(attachment)
+  }
+}
+export function getConnectedIdeName(
+  mcpClients: MCPServerConnection[],
+): string | null {
+  const ideClient = mcpClients.find(
+    client => client.type === 'connected' && client.name === 'ide',
+  )
+  return getIdeClientName(ideClient)
+}
+export function getIdeClientName(
+  ideClient?: MCPServerConnection,
+): string | null {
+  const config = ideClient?.config
+  return config?.type === 'sse-ide' || config?.type === 'ws-ide'
+    ? config.ideName
+    : isSupportedTerminal()
+      ? toIDEDisplayName(envDynamic.terminal)
+      : null
+}
+async function getSelectedLinesFromIDE(
+  ideSelection: IDESelection | null,
+  toolUseContext: ToolUseContext,
+): Promise<Attachment[]> {
+  const ideName = getConnectedIdeName(toolUseContext.options.mcpClients)
+  if (
+    !ideName ||
+    ideSelection?.lineStart === undefined ||
+    !ideSelection.text ||
+    !ideSelection.filePath
+  ) {
+    return []
+  }
+
+  const appState = toolUseContext.getAppState()
+
+  return [
+    {
+      type: 'selected_lines_in_ide',
+      ideName,
+      lineStart: ideSelection.lineStart,
+      lineEnd: ideSelection.lineStart + ideSelection.lineCount - 1,
+      filename: ideSelection.filePath,
+      content: ideSelection.text,
+      displayPath: relative(getCwd(), ideSelection.filePath),
+    },
+  ]
+}

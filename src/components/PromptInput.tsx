@@ -17,6 +17,9 @@ import type { PastedContent } from 'src/utils/config.js';
 import type { ImageDimensions } from 'src/utils/imageResizer.js';
 import { PromptInputMode } from 'src/types/textInputTypes.js';
 import type { InputEvent, Key } from '@anthropic/ink';
+import { IdeStatusIndicator } from './IdeStatusIndicator.js';
+import type { IDESelection } from '../hooks/useIdeSelection.js';
+import type { MCPServerConnection } from '../services/mcp/types.js';
 
 const FOCUSED_INPUT_CURSOR_BG = '#f7f7f3';
 const FOCUSED_INPUT_CURSOR_FG = '#141414';
@@ -63,6 +66,8 @@ type Props = {
 	setPastedContents: React.Dispatch<
 		React.SetStateAction<Record<number, PastedContent>>
 	>;
+	ideSelection?: IDESelection;
+	mcpClients?: MCPServerConnection[];
 };
 
 export default function PromptInput({
@@ -86,7 +91,8 @@ export default function PromptInput({
 	onCyclePermissionMode,
 	pastedContents: _pastedContents,
 	setPastedContents,
-
+	ideSelection,
+	mcpClients,
 }: Props) {
 	const [cursorOffset, setCursorOffset] = React.useState(value.length);
 	const lastInternalValueRef = React.useRef(value);
@@ -319,7 +325,6 @@ export default function PromptInput({
 				PASTE_TOKEN_PATTERN,
 				match => chalk.bgHex(PASTE_TOKEN_BG).hex(PASTE_TOKEN_COLOR)(match)
 		  );
-
 	return (
 		<Box ref={cursorRef} width={width} flexShrink={0}>
 			<Text wrap="truncate-end">

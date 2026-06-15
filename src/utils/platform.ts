@@ -1,10 +1,10 @@
-import { readdir, readFile } from 'fs/promises'
-import { release as osRelease } from 'os'
-export type Platform = 'macos' | 'windows' | 'wsl' | 'linux' | 'unknown'
+import { readdir, readFile } from 'fs/promises';
+import { release as osRelease } from 'os';
 import memoize from 'lodash/memoize';
-export const SUPPORTED_PLATFORMS: Platform[] = ['macos', 'wsl']
 import { readFileSync } from 'fs';
-import { logError } from './logger';
+import { logError } from './log';
+export type Platform = 'macos' | 'windows' | 'wsl' | 'linux' | 'unknown'
+export const SUPPORTED_PLATFORMS: Platform[] = ['macos', 'wsl']
 export const getPlatform = memoize((): Platform => {//获取运行平台
   try {
     if (process.platform === 'darwin') {

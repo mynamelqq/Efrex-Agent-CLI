@@ -1,9 +1,9 @@
 ﻿import type { ToolUseBlock } from 'src/package/message'
 import type { AssistantMessage, Message } from 'src/package/message.js'
 import {
-  findToolByName,
-  type Tools,
-  type ToolUseContext,
+    findToolByName,
+    type Tools,
+    type ToolUseContext,
 } from '../../Tool.js'
 import { normalizeToolInput } from 'src/utils/api.js'
 
@@ -11,11 +11,10 @@ import { createChildAbortController } from 'src/utils/abortController.js'
 import { createUserMessage } from 'src/utils/messages.js'
 import { runToolUse } from './toolExecution.js'
 import { type MessageUpdate } from './toolOrchestration.js'
-import { loggerFor } from 'node_modules/openai/internal/utils/log.mjs'
-import { logError } from 'src/utils/logger.js'
+import { logError } from 'src/utils/log.js'
+import { CanUseToolFn } from 'src/hooks/useCanUseTool.js'
 //Agent Tool Runtime  并发工具调度器
 type ToolStatus = 'queued' | 'executing' | 'completed' | 'yielded'//排队、执行中、已完成、已产出结果
-import { CanUseToolFn } from 'src/hooks/useCanUseTool.js'
 type TrackedTool = {//跟踪工具的状态和结果
   id: string
   block: ToolUseBlock

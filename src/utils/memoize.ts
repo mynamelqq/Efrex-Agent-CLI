@@ -1,5 +1,5 @@
 import { LRUCache } from 'lru-cache'
-import { logError } from './logger.js'
+import { logError } from './log.js'
 type CacheEntry<T> = {
   value: T
   timestamp: number

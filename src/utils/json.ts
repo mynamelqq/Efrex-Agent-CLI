@@ -1,6 +1,5 @@
-import { open, readFile, stat } from 'fs/promises'
 import { stripBOM } from './jsonRead'
-import { logError } from './logger.js'
+import { logError } from './log.js'
 import { memoizeWithLRU } from './memoize.js'
 const PARSE_CACHE_MAX_KEY_BYTES = 8 * 1024
 type CachedParse = { ok: true; value: unknown } | { ok: false }

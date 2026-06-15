@@ -9,15 +9,16 @@ import type {
   Message,
 } from 'src/package/message.js'
 export function getTokenUsage(message: Message): Usage | undefined {
+  const content = message.message?.content
   if (
     message?.type === 'assistant' &&//必须是助手消息 + 存在 message 对象 + 包含 usage
     message.message &&
     'usage' in message.message &&
     !(
-      Array.isArray(message.message.content) &&
-      (message.message.content as ContentItem[])[0]?.type === 'text' &&
+      Array.isArray(content) &&
+      (content as ContentItem[])[0]?.type === 'text' &&
       SYNTHETIC_MESSAGES.has(//2. 过滤：合成模型直接返回 undefined
-        (message.message.content as Array<ContentItem & { text: string }>)[0]!
+        (content as Array<ContentItem & { text: string }>)[0]!
           .text,
       )
     ) &&// 3. 过滤：文本类型的合成消息（内置固定消息）
@@ -36,10 +37,11 @@ export function getTokenUsage(message: Message): Usage | undefined {
 function getAssistantMessageId(message: Message): string | undefined {
   if (
     message?.type === 'assistant' &&
-    'id' in message.message! &&
-    message.message!.model !== SYNTHETIC_MODEL
+    message.message &&
+    'id' in message.message &&
+    message.message.model !== SYNTHETIC_MODEL
   ) {
-    return message.message!.id as string |undefined
+    return message.message.id as string |undefined
   }
   return undefined
 }

@@ -95,10 +95,10 @@ export function StatusAnimationRow({
 	const accentColor =
 		statusKind === 'compact'
 			? veryLongRunning
-				? 'yellowBright'
+				? 'rgb(255,209,102)'
 				: longRunning
-					? 'yellow'
-					: 'magentaBright'
+					? 'rgb(255,184,108)'
+					: 'rgb(255,121,198)'
 			: veryLongRunning
 				? 'yellowBright'
 				: longRunning
@@ -106,7 +106,12 @@ export function StatusAnimationRow({
 					: statusMode === 'requesting'
 						? 'cyanBright'
 						: 'greenBright';
-	const textColor = statusMode === 'requesting' ? 'ansi:blueBright' : 'gray';
+	const textColor =
+		statusKind === 'compact'
+			? accentColor
+			: statusMode === 'requesting'
+				? 'ansi:blueBright'
+				: 'gray';
 	const glimmerCycleLength = statusMessageWidth + GLIMMER_PAD_COLUMNS * 2;
 	const cyclePosition =
 		glimmerCycleLength > 0 ? Math.floor(elapsedMs / glimmerSpeed) : 0;

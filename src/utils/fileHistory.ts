@@ -1,30 +1,23 @@
 
 import { createHash, type UUID } from 'crypto'
 import { dirname, isAbsolute, join, relative } from 'path'
-import { diffLines } from 'diff'
 import type { Stats } from 'fs'
 import { getOriginalCwd } from 'src/bootstrap/state'
-import { logError } from './logger'
+import { logError } from './log'
 import { getSessionId } from 'src/bootstrap/state'
 import { recordFileHistorySnapshot } from './sessionStorage'
 import {
-  chmod,
-  copyFile,
-  link,
-  mkdir,
-  readFile,
-  stat,
-  unlink,
+    chmod,
+    copyFile, mkdir,
+    readFile,
+    stat
 } from 'fs/promises'
 import { isEnvTruthy } from './envUtils'
-import type { LogOption } from 'src/types/logs.js'
-import { inspect } from 'util'
 import { logForDebugging } from './debug.js'
-import {getEfrexConfigHomeDir} from './envUtils.js'
-import { getErrnoCode, isENOENT } from './errors.js'
-import { pathExists } from './file.js'
-type BackupFileName = string | null // The null value means the file does not exist in this version
+import { getEfrexConfigHomeDir } from './envUtils.js'
+import { isENOENT } from './errors.js'
 import { getGlobalConfig } from './config'
+type BackupFileName = string | null // The null value means the file does not exist in this version
 export type FileHistoryBackup = {
   backupFileName: BackupFileName
   version: number

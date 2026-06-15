@@ -122,7 +122,7 @@ const lightTheme: Theme = {
   permission: 'rgb(87,105,247)', // Medium blue
   permissionShimmer: 'rgb(137,155,255)', // Lighter blue for shimmer effect
   planMode: 'rgb(0,102,102)', // Muted teal
-  ide: 'rgb(71,130,200)', // Muted blue
+  ide: 'rgb(226,137,255)', // Pink-purple
   promptBorder: 'rgb(153,153,153)', // Medium gray
   promptBorderShimmer: 'rgb(183,183,183)', // Lighter gray for shimmer effect
   text: 'rgb(0,0,0)', // Black
@@ -204,7 +204,7 @@ const lightAnsiTheme: Theme = {
   permission: 'ansi:blue',
   permissionShimmer: 'ansi:blueBright',
   planMode: 'ansi:cyan',
-  ide: 'ansi:blueBright',
+  ide: 'ansi:magentaBright',
   promptBorder: 'ansi:white',
   promptBorderShimmer: 'ansi:whiteBright',
   text: 'ansi:black',
@@ -285,7 +285,7 @@ const darkAnsiTheme: Theme = {
   permission: 'ansi:blueBright',
   permissionShimmer: 'ansi:blueBright',
   planMode: 'ansi:cyanBright',
-  ide: 'ansi:blue',
+  ide: 'ansi:magentaBright',
   promptBorder: 'ansi:white',
   promptBorderShimmer: 'ansi:whiteBright',
   text: 'ansi:whiteBright',
@@ -366,7 +366,7 @@ const lightDaltonizedTheme: Theme = {
   permission: 'rgb(51,102,255)', // Bright blue
   permissionShimmer: 'rgb(101,152,255)', // Lighter bright blue for shimmer
   planMode: 'rgb(51,102,102)', // Muted blue-gray (works for color-blind)
-  ide: 'rgb(71,130,200)', // Muted blue
+  ide: 'rgb(226,137,255)', // Pink-purple
   promptBorder: 'rgb(153,153,153)', // Medium gray
   promptBorderShimmer: 'rgb(183,183,183)', // Lighter gray for shimmer
   text: 'rgb(0,0,0)', // Black
@@ -447,7 +447,7 @@ const darkTheme: Theme = {
   permission: 'rgb(177,185,249)', // Light blue-purple
   permissionShimmer: 'rgb(207,215,255)', // Lighter blue-purple for shimmer
   planMode: 'rgb(72,150,140)', // Muted sage green
-  ide: 'rgb(71,130,200)', // Muted blue
+  ide: 'rgb(226,137,255)', // Pink-purple
   promptBorder: 'rgb(136,136,136)', // Medium gray
   promptBorderShimmer: 'rgb(166,166,166)', // Lighter gray for shimmer
   text: 'rgb(255,255,255)', // White
@@ -528,7 +528,7 @@ const darkDaltonizedTheme: Theme = {
   permission: 'rgb(153,204,255)', // Light blue
   permissionShimmer: 'rgb(183,224,255)', // Lighter blue for shimmer
   planMode: 'rgb(102,153,153)', // Muted gray-teal (works for color-blind)
-  ide: 'rgb(71,130,200)', // Muted blue
+  ide: 'rgb(226,137,255)', // Pink-purple
   promptBorder: 'rgb(136,136,136)', // Medium gray
   promptBorderShimmer: 'rgb(166,166,166)', // Lighter gray for shimmer
   text: 'rgb(255,255,255)', // White

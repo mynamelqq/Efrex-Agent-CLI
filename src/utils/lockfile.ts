@@ -10,10 +10,10 @@ import type { CheckOptions, LockOptions, UnlockOptions } from 'proper-lockfile'
 
 type Lockfile = typeof import('proper-lockfile')
 
-let _lockfile: Lockfile | undefined
+let _lockfile: Lockfile | undefined// 缓存实例
 
 function getLockfile(): Lockfile {
-  if (!_lockfile) {
+  if (!_lockfile) { // ← 第一次才执行
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     _lockfile = require('proper-lockfile') as Lockfile
   }
@@ -23,10 +23,10 @@ function getLockfile(): Lockfile {
 export function lock(
   file: string,
   options?: LockOptions,
-): Promise<() => Promise<void>> {
+): Promise<() => Promise<void>> {////异步加锁
   return getLockfile().lock(file, options)
 }
-
+// 导出的 API 与 proper-lockfile 完全一致
 export function lockSync(file: string, options?: LockOptions): () => void {
   return getLockfile().lockSync(file, options)
 }
@@ -35,6 +35,8 @@ export function unlock(file: string, options?: UnlockOptions): Promise<void> {
   return getLockfile().unlock(file, options)
 }
 
-export function check(file: string, options?: CheckOptions): Promise<boolean> {
+export function check(file: string, options?: CheckOptions): Promise<boolean> {//检查锁定状态
   return getLockfile().check(file, options)
 }
+//API 透明：导出的 lock / unlock / check / lockSync 函数签名与原库完全一致，调用方无感知替换
+// API 是 文件锁操作 的封装，用于在多个进程间协调对同一文件的访问，防止并发冲突。

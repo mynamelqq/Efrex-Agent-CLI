@@ -24,6 +24,7 @@ export async function executeUserInput(params: ExecuteUserInputParams): Promise<
     setAppState,
     onBeforeQuery,
     queuedCommands,
+    ideSelection,
     onInputChange,
     resetHistory
   } = params
@@ -74,6 +75,7 @@ export async function executeUserInput(params: ExecuteUserInputParams): Promise<
         isMeta: cmd.isMeta,
         skipAttachments: !isFirst,
         autonomy: cmd.autonomy,
+        ideSelection: isFirst ? ideSelection : undefined,
       })
 
       const origin = cmd.origin ??

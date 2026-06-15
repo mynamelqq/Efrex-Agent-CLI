@@ -383,7 +383,13 @@ export function addToTotalLinesChanged(added: number, removed: number): void {
   STATE.totalLinesAdded += added
   STATE.totalLinesRemoved += removed
 }
-
+let scrollDraining = false
+/** True while scroll is actively draining (within 150ms of last event).
+ *  Intervals should early-return when this is set — the work picks up next
+ *  tick after scroll settles. */
+export function getIsScrollDraining(): boolean {
+  return scrollDraining
+}
 /**
  * Get the stable project root directory.
  * Unlike getOriginalCwd(), this is never updated by mid-session EnterWorktreeTool

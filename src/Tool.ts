@@ -5,6 +5,7 @@ import { AppState } from './state/AppStateStore';
 import type { FileStateCache } from './utils/fileStateCache';
 import type { FileHistoryState } from './utils/fileHistory';
 import { ProgressMessage } from 'src/package/message';
+import {UUID}from "crypto";
 import type {
 	UserMessage,
 	AssistantMessage,
@@ -24,6 +25,7 @@ import {
 	ToolPermissionRulesBySource
 } from './types/permissions';
 import { PermissionDecision, PermissionResult } from './types/permissions';
+import { MCPServerConnection } from 'packages/mcp-client/src';
 export type ValidationResult =
 	| { result: true }
 	| {
@@ -103,6 +105,7 @@ export type ToolUseContext = {
 		mainLoopModel: string;
 		tools: Tools;
 		isNonInteractiveSession: boolean;
+		mcpClients: MCPServerConnection[]
 	};
 	readFileState: FileStateCache;
 	// addNotification?: (notif: Notification) => void
@@ -121,7 +124,7 @@ export type ToolUseContext = {
 		maxTokens?: number;
 		maxSizeBytes?: number;
 	};
-
+  	setConversationId?: (id: UUID) => void
 	getAppState(): AppState;
 	setAppState(f: (prev: AppState) => AppState): void;
 	setResponseLength?: (f: (prev: number) => number) => void;

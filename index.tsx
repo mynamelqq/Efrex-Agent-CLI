@@ -6,13 +6,13 @@
  *
  * @author Yaqi Li <github.com/mynamelqq>
  */
-import { AppState,getDefaultAppState  } from 'src/state/AppState.js';
+import { AppState, getDefaultAppState } from 'src/state/AppState.js';
 
 import { getCwd } from 'src/utils/cwd.js';
 import { loadConversationForResume } from 'src/utils/conservationRecovery.js';
 import React from 'react';
 import { processResumedConversation } from 'src/utils/sessionRestore.js';
-import { attachErrorLogSink, createFileErrorSink } from './src/utils/logger.js';
+import { attachErrorLogSink,  } from './src/utils/log.js';
 import path from 'node:path';
 import Launcher from './src/launcher.js';
 import { init } from 'src/entrypoints/init.js';
@@ -85,7 +85,8 @@ function StartupGate({
 		return;
 	}
 
-	attachErrorLogSink(createFileErrorSink());
+	const { initSinks } = await import('src/utils/sinks.js');
+    initSinks();
 
 	const efrexFolder = path.join(homedir(), '.efrex');
 	if (!existsSync(efrexFolder)) {

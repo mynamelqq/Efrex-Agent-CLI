@@ -53,3 +53,61 @@ export async function getAncestorCommandsAsync(
   }
   return result.stdout.split('\0').filter(Boolean)
 }
+
+/**
+ * Gets the ancestor process chain for a given process (up to maxDepth levels)
+ * @param pid - The starting process ID
+ * @param maxDepth - Maximum number of ancestors to fetch (default: 10)
+ * @returns Array of ancestor PIDs from immediate parent to furthest ancestor
+ */
+export async function getAncestorPidsAsync(//跨平台祖先 PID 获取
+  pid: string | number,
+  maxDepth = 10,
+): Promise<number[]> {
+  if (process.platform === 'win32') {//}//通过 ParentProcessId 属性向上追溯
+    // For Windows, use a PowerShell script that walks the process tree
+    const script = `
+      $pid = ${String(pid)}
+      $ancestors = @()
+      for ($i = 0; $i -lt ${maxDepth}; $i++) {
+        $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$pid" -ErrorAction SilentlyContinue
+        if (-not $proc -or -not $proc.ParentProcessId -or $proc.ParentProcessId -eq 0) { break }
+        $pid = $proc.ParentProcessId
+        $ancestors += $pid
+      }
+      $ancestors -join ','
+    `.trim()
+
+    const result = await execFileNoThrowWithCwd(
+      'powershell.exe',
+      ['-NoProfile', '-Command', script],
+      { timeout: 3000 },
+    )
+    if (result.code !== 0 || !result.stdout?.trim()) {
+      return []
+    }
+    return result.stdout
+      .trim()
+      .split(',')
+      .filter(Boolean)
+      .map(p => parseInt(p, 10))
+      .filter(p => !isNaN(p))
+  }
+
+  // For Unix, use a shell command that walks up the process tree
+  // This uses a single process invocation instead of multiple sequential calls
+  const script = `pid=${String(pid)}; for i in $(seq 1 ${maxDepth}); do ppid=$(ps -o ppid= -p $pid 2>/dev/null | tr -d ' '); if [ -z "$ppid" ] || [ "$ppid" = "0" ] || [ "$ppid" = "1" ]; then break; fi; echo $ppid; pid=$ppid; done`
+
+  const result = await execFileNoThrowWithCwd('sh', ['-c', script], {
+    timeout: 3000,
+  })
+  if (result.code !== 0 || !result.stdout?.trim()) {
+    return []
+  }
+  return result.stdout
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map(p => parseInt(p, 10))
+    .filter(p => !isNaN(p))
+}

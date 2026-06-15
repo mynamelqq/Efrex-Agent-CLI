@@ -25,3 +25,17 @@ function safeStringify(value: unknown): string {
     return '[unserializable metadata]'
   }
 }
+/**
+ * Logs errors for Ants only, always visible in production.
+ */
+export function logAntError(context: string, error: unknown): void {
+  if (process.env.USER_TYPE !== 'ant') {
+    return
+  }
+
+  if (error instanceof Error && error.stack) {
+    logForDebugging(`[ANT-ONLY] ${context} stack trace:\n${error.stack}`, {
+      level: 'error',
+    })
+  }
+}

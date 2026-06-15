@@ -1437,3 +1437,40 @@ export function normalizeMessages(messages: Message[]): NormalizedMessage[] {
     }
   })
 }
+export function isSyntheticMessage(message: Message): boolean {
+  return (
+    message.type !== 'progress' &&//progress消息不算synthetic
+    message.type !== 'attachment' &&//attachment消息不算synthetic
+    message.type !== 'system' &&//system消息不算synthetic
+    Array.isArray(message.message?.content) &&//synthetic消息必须有content数组
+    message.message?.content[0]?.type === 'text' &&//synthetic消息的第一个content块必须是text块
+    SYNTHETIC_MESSAGES.has(//content数组的第一个text块的文本必须在SYNTHETIC_MESSAGES集合中
+      (message.message?.content[0] as { text: string }).text,
+    )
+  )
+}
+export function getUserMessageText(
+  message: Message | NormalizedMessage,
+): string | null {
+  if (message.type !== 'user') {
+    return null
+  }
+
+  const content = message.message?.content
+
+  return getContentText(content as string | ContentBlockParam[])
+}
+export function textForResubmit(
+  msg: UserMessage,
+): { text: string; mode: 'bash' | 'prompt' } | null {
+  const content = getUserMessageText(msg)
+  if (content === null) return null
+  const bash = extractTag(content, 'bash-input')//抽取bash-input标签的内容，如果存在则优先使用bash输入模式
+  if (bash) return { text: bash, mode: 'bash' }
+  const cmd = extractTag(content, COMMAND_NAME_TAG)//抽取command-name标签的内容，如果存在则使用命令输入模式
+  if (cmd) {
+    const args = extractTag(content, COMMAND_ARGS_TAG) ?? ''
+    return { text: `${cmd} ${args}`, mode: 'prompt' }
+  }
+  return { text: content, mode: 'prompt' }
+}

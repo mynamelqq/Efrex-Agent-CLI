@@ -36,6 +36,9 @@ import {
   createUserMessage,
 } from '../messages.js'
 import { getCommandName } from 'src/types/command.js'
+import { IDESelection } from 'src/hooks/useIdeSelection.js'
+import { getAttachmentMessages } from '../attachments.js'
+import QueryApp from 'src/QueryApp.js'
 export type ProcessUserInputContext = ToolUseContext & LocalJSXCommandContext
 
 export type ProcessUserInputBaseResult = {
@@ -77,6 +80,7 @@ export async function processUserInput({
   isMeta,
   skipAttachments,
   autonomy,
+  ideSelection
 }: {
   input: string | Array<ContentBlockParam>
   /**
@@ -112,6 +116,7 @@ export async function processUserInput({
   isMeta?: boolean
   skipAttachments?: boolean
   autonomy?: QueuedCommand['autonomy']
+  ideSelection?: IDESelection
 }): Promise<ProcessUserInputBaseResult> {
   const inputString = typeof input === 'string' ? input : null
   // Immediately show the user input prompt while we are still processing the input.
@@ -135,6 +140,7 @@ export async function processUserInput({
     isAlreadyProcessing,
     canUseTool,
     appState.toolPermissionContext.mode,
+    ideSelection,
     skipSlashCommands,
     bridgeOrigin,
     isMeta,
@@ -175,6 +181,7 @@ async function processUserInputBase(
   isAlreadyProcessing?: boolean,
   canUseTool?: CanUseToolFn,
   permissionMode?: PermissionMode,
+  ideSelection?: IDESelection,
   skipSlashCommands?: boolean,
   bridgeOrigin?: boolean,
   isMeta?: boolean,
@@ -291,26 +298,28 @@ async function processUserInputBase(
     }
     imageContentBlocks.push(resized.block)
   }
-
-
+  
+ 
   // with a helpful message rather than letting the model see raw "/config".
   let effectiveSkipSlash = skipSlashCommands
-  // Bash commands
-  if (inputString !== null && mode === 'bash') {
-    const { processBashCommand } = await import('./processBashCommand.js')
-    return addImageMetadataMessage(
-      await processBashCommand(
-        inputString,
-        precedingInputBlocks,
-        [],
-        context,
-        setToolJSX,
-    ),
-      imageMetadataTexts,
-    )
-  }
+     // For slash commands, attachments will be extracted within getMessagesForSlashCommand
+  const shouldExtractAttachments =//是否应该包含附件
+    !skipAttachments &&
+    inputString !== null &&
+    (mode !== 'prompt' || effectiveSkipSlash || !inputString.startsWith('/'))
 
-  // Slash commands
+  const attachmentMessages = shouldExtractAttachments//核心函数 获取所有的附件消息
+    ? await toArray(
+        getAttachmentMessages(
+          inputString,
+          context,
+          ideSelection ?? null,
+          [], // queuedCommands - handled by query.ts for mid-turn attachments
+          messages,
+        ),
+      )
+    : []
+   // Slash commands
   // Skip for remote bridge messages — input from CCR clients is plain text
   if (
     inputString !== null &&
@@ -331,15 +340,34 @@ async function processUserInputBase(
     return slashResult
   }
 
+  // Bash commands
+  if (inputString !== null && mode === 'bash') {
+    const { processBashCommand } = await import('./processBashCommand.js')
+    return addImageMetadataMessage(
+      await processBashCommand(
+        inputString,
+        precedingInputBlocks,
+        [],
+        context,
+        setToolJSX,
+    ),
+      imageMetadataTexts,
+    )
+  }
+
+ 
+
 
   // Regular user prompt正常用户输入
   return addImageMetadataMessage(
     processTextPrompt(
       normalizedInput,
       imageContentBlocks,
+      attachmentMessages,
       imagePasteIds,
       uuid,
       permissionMode,
+      
     ),
     imageMetadataTexts,
   )

@@ -37,7 +37,29 @@ export function isAbortError(e: unknown): boolean {
     (e instanceof Error && e.name === 'AbortError')
   )
 }
-
+/**
+ * True if the error means the path is missing, inaccessible, or
+ * structurally unreachable — use in catch blocks after fs operations to
+ * distinguish expected "nothing there / no access" from unexpected errors.
+ *
+ * Covers:
+ *  ENOENT    — path does not exist
+ *  EACCES    — permission denied
+ *  EPERM     — operation not permitted
+ *  ENOTDIR   — a path component is not a directory (e.g. a file named
+ *              `.claude` exists where a directory is expected)
+ *  ELOOP     — too many symlink levels (circular symlinks)
+ */
+export function isFsInaccessible(e: unknown): e is NodeJS.ErrnoException {
+  const code = getErrnoCode(e)
+  return (
+    code === 'ENOENT' ||
+    code === 'EACCES' ||
+    code === 'EPERM' ||
+    code === 'ENOTDIR' ||
+    code === 'ELOOP'
+  )
+}
 /**
  * Normalize an unknown value into an Error.
  * Use at catch-site boundaries when you need an Error instance.
@@ -63,6 +85,37 @@ export class ShellError extends Error {
     this.name = 'ShellError'
   }
 }
+/**
+ * Extract error message + top N stack frames from an unknown error.
+ * Use when the error flows to the model as a tool_result — full stack
+ * traces are ~500-2000 chars of mostly-irrelevant internal frames and
+ * waste context tokens. Keep the full stack in debug logs instead.
+ */
+export function shortErrorStack(e: unknown, maxFrames = 5): string {
+  if (!(e instanceof Error)) return String(e)
+  if (!e.stack) return e.message
+  // V8/Bun stack format: "Name: message\n    at frame1\n    at frame2..."
+  // First line is the message; subsequent "    at " lines are frames.
+  const lines = e.stack.split('\n')//按换行符分开
+  const header = lines[0] ?? e.message//获取关键信息
+  const frames = lines.slice(1).filter(l => l.trim().startsWith('at '))
+  if (frames.length <= maxFrames) return e.stack//
+  return [header, ...frames.slice(0, maxFrames)].join('\n')
+}
 
+/**
+ * Custom error class for configuration file parsing errors
+ * Includes the file path and the default configuration that should be used
+ */
+export class ConfigParseError extends Error {
+  filePath: string
+  defaultConfig: unknown
 
+  constructor(message: string, filePath: string, defaultConfig: unknown) {
+    super(message)
+    this.name = 'ConfigParseError'
+    this.filePath = filePath
+    this.defaultConfig = defaultConfig
+  }
+}
 export class MalformedCommandError extends Error {}

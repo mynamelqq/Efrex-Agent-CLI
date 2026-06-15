@@ -4,6 +4,7 @@ import figures from 'figures';
 import * as React from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppState } from 'src/state/AppState.js';
+import {getUserMessageText, isSyntheticMessage, isToolUseResultMessage} from 'src/utils/messages.js';
 import {
   type DiffStats,
   fileHistoryEnabled,
@@ -47,6 +48,9 @@ export function selectableUserMessagesFilter(message: Message): message is UserM
   if (message.type !== 'user') {
     return false;
   }
+  if (isSyntheticMessage(message)) {
+    return false;
+  }
   if (Array.isArray(message.message!.content) && message.message!.content[0]?.type === 'tool_result') {
     return false;
   }
@@ -58,9 +62,7 @@ export function selectableUserMessagesFilter(message: Message): message is UserM
   }
 
   const content = message.message!.content as (ContentBlockParam[]|ContentBlock[]|string);
-  const lastBlock = typeof content === 'string' ? null : content![content!.length - 1];
-  const messageText =
-    typeof content === 'string' ? content.trim() : lastBlock && isTextBlock(lastBlock) ? lastBlock.text.trim() : '';
+  const messageText = getUserMessageText(message)?.trim() ?? '';
 
   // Filter out non-user-authored messages (command outputs, task notifications, ticks).
   if (
@@ -73,6 +75,46 @@ export function selectableUserMessagesFilter(message: Message): message is UserM
     messageText.indexOf(`<${TEAMMATE_MESSAGE_TAG}`) !== -1
   ) {
     return false;
+  }
+  return true;
+}
+
+/**
+ * Checks if all messages after the given index are synthetic (interruptions, cancels, etc.)
+ * or non-meaningful content. Returns true if there's nothing meaningful to confirm -
+ * for example, if the user hit enter then immediately cancelled.
+ */
+export function messagesAfterAreOnlySynthetic(messages: Message[], fromIndex: number): boolean {
+  for (let i = fromIndex + 1; i < messages.length; i++) {
+    const msg = messages[i];
+    if (!msg) continue;
+
+    // Skip known non-meaningful message types
+    if (isSyntheticMessage(msg)) continue;
+    if (isToolUseResultMessage(msg)) continue;
+    if (msg.type === 'progress') continue;
+    if (msg.type === 'system') continue;
+    if (msg.type === 'attachment') continue;
+    if (msg.type === 'user' && msg.isMeta) continue;
+
+    // Assistant with actual content = meaningful
+    if (msg.type === 'assistant') {
+      const content = msg.message!.content;
+      if (Array.isArray(content)) {
+        const hasMeaningfulContent = content.some(
+          block => (block.type === 'text' && block.text.trim()) || block.type === 'tool_use',
+        );
+        if (hasMeaningfulContent) return false;
+      }
+      continue;
+    }
+
+    // User messages that aren't synthetic or meta = meaningful
+    if (msg.type === 'user') {
+      return false;
+    }
+
+    // Other types (e.g., tombstone) are non-meaningful, continue
   }
   return true;
 }

@@ -440,3 +440,27 @@ export async function restoreHistoryImages(
 
   return restored
 }
+
+/**
+ * Undo the most recent addToHistory call. Used by auto-restore-on-interrupt:
+ * when Esc rewinds the conversation before any response arrives, the submit is
+ * semantically undone — the history entry should be too, otherwise Up-arrow
+ * shows the restored text twice (once from the input box, once from disk).
+ *
+ * Fast path pops from the pending buffer. If the async flush already won the
+ * race (TTFT is typically >> disk write latency), the entry's timestamp is
+ * added to a skip-set consulted by getHistory. One-shot: clears the tracked
+ * entry so a second call is a no-op.
+ */
+export function removeLastFromHistory(): void {
+  if (!lastAddedEntry) return
+  const entry = lastAddedEntry
+  lastAddedEntry = null
+
+  const idx = pendingEntries.lastIndexOf(entry)
+  if (idx !== -1) {
+    pendingEntries.splice(idx, 1)//如果还在等待写入，就直接从待写入列表中删除
+  } else {
+    skippedTimestamps.add(entry.timestamp)//如果已经被flush了，就把时间戳加入跳过列表
+  }
+}

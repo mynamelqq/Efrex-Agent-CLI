@@ -44,9 +44,10 @@ import type {
 import { createUserMessage, SYNTHETIC_MODEL } from './messages.js'
 import type { z } from 'zod/v4'
 import { toJSONSchema } from 'zod/v4'
-import { logForDebugging } from './debug.js'
+import { logAntError, logForDebugging } from './debug.js'
 import { getToolSchemaCache } from './toolSchemaCache.js'
 import { last } from 'lodash'
+import { Attachment } from './attachments.js'
 
 
 
@@ -87,7 +88,59 @@ export async function toolToAPISchema(
   }
   return base
 }
+/**
+重新排列消息顺序，使附件逐级上升，直至到达以下任一位置： * - 一个工具调用结果（包含“工具结果”内容的用户消息） * - 任何助手消息
+ */
+export function reorderAttachmentsForAPI(messages: Message[]): Message[] {//从后向前扫描消息数组  附件不能跨消息归属
+  // We build `result` backwards (push) and reverse once at the end — O(N).
+  // Using unshift inside the loop would be O(N²).
+  const result: Message[] = []
+  // Attachments are pushed as we encounter them scanning bottom-up, so
+  // this buffer holds them in reverse order (relative to the input array).
+  const pendingAttachments: AttachmentMessage[] = []
 
+  // Scan from the bottom up
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]!
+
+    if (message.type === 'attachment') {//遇到附件：放入缓冲区
+      // Collect attachment to bubble up
+      pendingAttachments.push(message as AttachmentMessage)
+    } else {  // 遇到非附件消息
+    // 检查是否是停止点
+      // Check if this is a stopping point
+      const isStoppingPoint =
+        message.type === 'assistant' ||
+        (message.type === 'user' &&
+          Array.isArray(message.message?.content) &&
+          (message.message?.content as Array<{ type: string }>)[0]?.type ===
+            'tool_result')
+
+      if (isStoppingPoint && pendingAttachments.length > 0) {
+         // 先将缓冲区中的附件全部推入结果
+        // Hit a stopping point — attachments stop here (go after the stopping point).
+        // pendingAttachments is already reversed; after the final result.reverse()
+        // they will appear in original order right after `message`.
+        for (let j = 0; j < pendingAttachments.length; j++) {
+          result.push(pendingAttachments[j]!)
+        }
+        result.push(message)// 再推入停止点消息
+        pendingAttachments.length = 0
+      } else {
+        // Regular message
+        result.push(message)// 普通消息直接推入
+      }
+    }
+  }
+
+  // Any remaining attachments bubble all the way to the top.
+  for (let j = 0; j < pendingAttachments.length; j++) {// 扫描结束后，如果缓冲区还有附件（没有遇到停止点）
+    result.push(pendingAttachments[j]!)
+  }
+
+  result.reverse()
+  return result
+}
 // TODO: Generalize this to all tools
 export function normalizeToolInput<T extends Tool>(//FileWriteTool.name FileEditTool.name
   tool: T,
@@ -101,9 +154,12 @@ export function normalizeMessagesForAPI(
 ): (UserMessage | AssistantMessage)[] {
   const result: (UserMessage | AssistantMessage)[] = []
   let assistantMessageIndexesById = new Map<string, number>()
-
-  for (const message of messages) {
-    if (message.type !== 'user' && message.type !== 'assistant'&&message.type !== 'system') continue
+  // 首先，重新排列附件的顺序，使其逐层向上排列，直至最终到达工具结果或助手消息处。
+  //然后删除虚拟消息——这些消息仅用于显示（例如 REPL 内部工具 // 调用）且绝不能传递至 API。
+  const reorderedMessages = reorderAttachmentsForAPI(messages).filter(//附件内容
+    m => !((m.type === 'user' || m.type === 'assistant') && m.isVirtual),
+  )
+  for (const message of reorderedMessages) {
     if (message.isVirtual) continue
     if (message.type === 'system')
     {
@@ -120,10 +176,15 @@ export function normalizeMessagesForAPI(
         }
         result.push(userMsg)
     }
-    if (message.type === 'user') {
+    else if (message.type === 'user') {
       pushUserMessage(result, message as UserMessage)
       assistantMessageIndexesById = new Map()
       continue
+    }
+    else if(message.type=='attachment'){
+      const rawAttachmentMessage = normalizeAttachmentForAPI(message.attachment as Attachment)//核心函数
+      const attachmentMessage=rawAttachmentMessage
+      result.push(...attachmentMessage)
     }
     // Keep normal assistant turns in API context. Only synthetic API error
     // placeholders should be stripped, otherwise tool_use blocks disappear
@@ -183,7 +244,7 @@ function pushAssistantMessage(
 }
 
 function getAssistantMessageId(message: AssistantMessage): string | undefined {
-  const id = message.message.id
+  const id = message.message?.id
   if (typeof id === 'string' && id.length > 0) {
     return id
   }
@@ -194,8 +255,9 @@ function normalizeAssistantMessageForAPI(
   message: AssistantMessage,
   tools: Tools,
 ): AssistantMessage {
-  const sourceContent = Array.isArray(message.message.content)
-    ? (message.message.content as unknown[])
+  const messageContent = message.message?.content
+  const sourceContent = Array.isArray(messageContent)
+    ? (messageContent as unknown[])
     : []
   const content = sourceContent.map(block => {
         const typedBlock = block as unknown as Record<string, unknown>
@@ -333,7 +395,7 @@ function filterWhitespaceOnlyAssistantMessages(
 ): (UserMessage | AssistantMessage)[] {
   return messages.filter(message => {
     if (message.type !== 'assistant') return true
-    const content = message.message.content
+    const content = message.message?.content
     if (typeof content === 'string') return content.trim().length > 0
     if (!Array.isArray(content)) return false
     return (content as unknown[]).some(block => {
@@ -353,7 +415,7 @@ function filterOrphanedThinkingOnlyMessages(
 ): (UserMessage | AssistantMessage)[] {
   return messages.filter(message => {
     if (message.type !== 'assistant') return true
-    const content = message.message.content
+    const content = message.message?.content
     if (!Array.isArray(content) || content.length === 0) return true
 
     return (content as unknown[]).some(isMeaningfulNonThinkingBlock)
@@ -377,7 +439,7 @@ function filterTrailingThinkingFromLastAssistant(
   const lastAssistant = messages[lastAssistantIndex]
   if (lastAssistant?.type !== 'assistant') return messages
 
-  const content = lastAssistant.message.content
+  const content = lastAssistant.message?.content
   if (!Array.isArray(content) || content.length === 0) return messages
 
   const trimmedContent = [...(content as unknown[])]
@@ -432,7 +494,7 @@ function ensureAssistantMessagesHaveContent(
 ): (UserMessage | AssistantMessage)[] {
   return messages.map(message => {
     if (message.type !== 'assistant') return message
-    const content = message.message.content
+    const content = message.message?.content
     if ((Array.isArray(content) && content.length > 0) || typeof content === 'string') {
       return message
     }
@@ -477,4 +539,99 @@ export function appendSystemContext(
       .map(([key, value]) => `${key}: ${value}`)
       .join('\n'),
   ].filter(Boolean)
+}
+
+export function normalizeAttachmentForAPI(
+  attachment: Attachment,
+): UserMessage[] {
+  switch (attachment.type) {
+
+    case 'selected_lines_in_ide': {
+      const maxSelectionLength = 2000
+      const content =
+        attachment.content.length > maxSelectionLength
+          ? attachment.content.substring(0, maxSelectionLength) +
+            '\n... (truncated)'
+          : attachment.content
+
+      return wrapMessagesInSystemReminder([
+        createUserMessage({
+          content: `The user selected the lines ${attachment.lineStart} to ${attachment.lineEnd} from ${attachment.filename}:\n${content}\n\nThis may or may not be related to the current task.`,
+          isMeta: true,
+        }),
+      ])
+    }
+    // case 'opened_file_in_ide': {
+    //   return wrapMessagesInSystemReminder([
+    //     createUserMessage({
+    //       content: `The user opened the file ${attachment.filename} in the IDE. This may or may not be related to the current task.`,
+    //       isMeta: true,
+    //     }),
+    //   ])
+    // }
+
+
+      return []
+  }
+
+  // Handle legacy attachments that were removed
+  // IMPORTANT: if you remove an attachment type from normalizeAttachmentForAPI, make sure
+  // to add it here to avoid errors from old --resume'd sessions that might still have
+  // these attachment types.
+  const LEGACY_ATTACHMENT_TYPES = [
+    'autocheckpointing',
+    'background_task_status',
+    'todo',
+    'task_progress', // removed in PR #19337
+    'ultramemory', // removed in PR #23596
+  ]
+  if (LEGACY_ATTACHMENT_TYPES.includes((attachment as { type: string }).type)) {
+    return []
+  }
+
+  logAntError(
+    'normalizeAttachmentForAPI',
+    new Error(
+      `Unknown attachment type: ${(attachment as { type: string }).type}`,
+    ),
+  )
+  return []
+}
+export function wrapInSystemReminder(content: string): string {
+  return `<system-reminder>\n${content}\n</system-reminder>`
+}
+
+export function wrapMessagesInSystemReminder(
+  messages: UserMessage[],
+): UserMessage[] {
+  return messages.map(msg => {
+    if (typeof msg.message.content === 'string') {
+      return {
+        ...msg,
+        message: {
+          ...msg.message,
+          content: wrapInSystemReminder(msg.message.content),
+        },
+      }
+    } else if (Array.isArray(msg.message.content)) {
+      // For array content, wrap text blocks in system-reminder
+      const wrappedContent = msg.message.content.map(block => {
+        if (block.type === 'text') {
+          return {
+            ...block,
+            text: wrapInSystemReminder(block.text),
+          }
+        }
+        return block
+      })
+      return {
+        ...msg,
+        message: {
+          ...msg.message,
+          content: wrappedContent,
+        },
+      }
+    }
+    return msg
+  })
 }

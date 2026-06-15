@@ -1,7 +1,7 @@
 import { writeFile } from 'fs/promises'
 import { join } from 'path'
 import { formatFileSize } from './format.js'
-import { logError } from './logger.js'
+import { logError } from './log.js'
 import { toError } from './errors.js'
 
 /**

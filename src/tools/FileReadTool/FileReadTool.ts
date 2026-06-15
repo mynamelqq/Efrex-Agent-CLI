@@ -1,10 +1,10 @@
 
 import {
-  appendFile,
-  mkdir,
-  readdir,
-  readFile as readFileAsync,
-  stat
+    appendFile,
+    mkdir,
+    readdir,
+    readFile as readFileAsync,
+    stat
 } from 'fs/promises'
 import { Base64ImageSource } from '@anthropic-ai/sdk/resources.js'
 import { addLineNumbers } from '../../utils/file'
@@ -20,41 +20,39 @@ import { isENOENT } from '../../utils/errors'
 import { PermissionDecision } from 'src/types/permissions'
 import { getEfrexConfigHomeDir } from '../../utils/envUtils'
 import {
-  open
+    open
 } from 'fs/promises'
 import { ToolUseContext } from '../../Tool'
 import {
-  compressImageBufferWithTokenLimit,
-  createImageDataURL,
-  createImageMetadataText,
-  detectImageFormatFromBuffer,
-  type ImageDimensions,
-  type ImageMediaType,
-  ImageResizeError,
-  maybeResizeAndDownsampleImageBuffer,
+    compressImageBufferWithTokenLimit, createImageMetadataText,
+    detectImageFormatFromBuffer,
+    type ImageDimensions,
+    type ImageMediaType,
+    ImageResizeError,
+    maybeResizeAndDownsampleImageBuffer
 } from '../../utils/imageResizer.js'
 import { hasBinaryExtension } from '../../utils/file'
-import { findSimilarFile ,suggestPathUnderCwd} from '../../utils/file'
+import { findSimilarFile, suggestPathUnderCwd } from '../../utils/file'
 import {
-  isPDFExtension,
-  parsePDFPageRange,
+    isPDFExtension,
+    parsePDFPageRange,
 } from '../../utils/pdfUtils'
 import { getErrnoCode } from '../../utils/errors'
 import { getFileModificationTimeAsync } from '../../utils/file'
 import { LOG_PATHS } from '../../utils/logPaths'
-import { logError } from '../../utils/logger'
-import { userFacingName,getToolUseSummary } from './UI'
+import { logError } from '../../utils/log'
+import { userFacingName, getToolUseSummary } from './UI'
 import { getDefaultFileReadingLimits } from './limits'
 import { ToolDef } from '../../Tool'
 import { z } from 'zod/v4'
 import { lazySchema } from '../../utils/lazySchema'
 import { buildTool } from '../../Tool'
 import { getCwd } from '../../utils/cwd'
-import { FILE_READ_TOOL_NAME,DESCRIPTION } from './prompt'
-import {semanticNumber}from "../../utils/semanticNumber"
-import { renderToolUseMessage,renderToolResultMessage,renderToolUseErrorMessage} from './UI'
+import { FILE_READ_TOOL_NAME, DESCRIPTION } from './prompt'
+import { semanticNumber } from "../../utils/semanticNumber"
+import { renderToolUseMessage, renderToolResultMessage, renderToolUseErrorMessage } from './UI'
 import { expandPath } from '../../utils/path'
-import {PDF_MAX_PAGES_PER_READ,PDF_AT_MENTION_INLINE_THRESHOLD ,PDF_EXTRACT_SIZE_THRESHOLD} from '../../constants/ApiLimits'
+import { PDF_MAX_PAGES_PER_READ, PDF_AT_MENTION_INLINE_THRESHOLD, PDF_EXTRACT_SIZE_THRESHOLD } from '../../constants/ApiLimits'
 const inputSchema = lazySchema(() =>
   z.strictObject({
 

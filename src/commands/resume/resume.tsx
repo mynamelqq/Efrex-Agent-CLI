@@ -7,22 +7,22 @@ import { LogSelector } from '../../components/LogSelector.js';
 import { MessageResponse } from '../../components/MessageResponse.js';
 import { Box, Text, useWindowSize } from '../../ink.js';
 import type {
-	CommandResultDisplay,
-	LocalJSXCommandCall,
-	ResumeEntrypoint,
+    CommandResultDisplay,
+    LocalJSXCommandCall,
+    ResumeEntrypoint,
 } from '../../types/command.js';
 import type { LogOption } from '../../types/logs.js';
 import { formatLogMetadata } from '../../utils/format.js';
-import { getLogDisplayTitle } from '../../utils/logger.js';
+import { getLogDisplayTitle } from '../../utils/log.js';
 import { logError } from '../../utils/log.js';
 import { validateUuid } from '../../utils/sessionStoragePortable.js';
 import {
-	getLastSessionLog,
-	getSessionIdFromLog,
-	isLiteLog,
-	loadAllProjectsMessageLogs,
-	loadFullLog,
-	loadSameRepoMessageLogs,
+    getLastSessionLog,
+    getSessionIdFromLog,
+    isLiteLog,
+    loadAllProjectsMessageLogs,
+    loadFullLog,
+    loadSameRepoMessageLogs,
 } from '../../utils/sessionStorage.js';
 
 type ResumeResult =

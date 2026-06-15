@@ -13,6 +13,7 @@ import { isValidImagePaste } from 'src/types/textInputTypes.js'
 import type { PromptInputMode } from 'src/types/textInputTypes.js'
 import { parseReferences, expandPastedTextRefs } from 'src/history.js'
 import type { SetToolJSXFn } from 'src/Tool.js'
+import { IDESelection } from 'src/hooks/useIdeSelection.js'
 type BaseExecutionParams = {
   queuedCommands?: QueuedCommand[]
   messages: Message[]//
@@ -25,7 +26,7 @@ type BaseExecutionParams = {
     abortController: AbortController,
     mainLoopModel: string,
   ) => ProcessUserInputContext
-
+  ideSelection: IDESelection | undefined
   setAbortController: (abortController: AbortController | null) => void//
   onQuery: (
     newMessages: Message[],
@@ -102,7 +103,8 @@ export async function handlePromptSubmit(
     bridgeOrigin,
     helpers,
     onInputChange,
-    getToolUseContext
+    getToolUseContext,
+    ideSelection,
   } = params
 
   const setCursorOffset = helpers?.setCursorOffset ?? (() => {})
@@ -124,6 +126,7 @@ export async function handlePromptSubmit(
       onInputChange ,
       resetHistory,
       setToolJSX: params.setToolJSX,
+      ideSelection,
     })
     return
   }
@@ -214,6 +217,7 @@ export async function handlePromptSubmit(
     setToolJSX: params.setToolJSX,
     resetHistory,
     onBeforeQuery,
+    ideSelection,
   })
  
 }

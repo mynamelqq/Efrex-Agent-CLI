@@ -4,7 +4,7 @@ import { Box, Text, useInput, useWindowSize } from '../ink.js';
 import { stringWidth } from '../ink/stringWidth.js';
 import type { LogOption } from '../types/logs.js';
 import { formatLogMetadata } from '../utils/format.js';
-import { getLogDisplayTitle } from '../utils/logger.js';
+import { getLogDisplayTitle } from '../utils/log.js';
 import { truncateToWidth } from '../utils/truncate.js';
 
 export type LogSelectorProps = {

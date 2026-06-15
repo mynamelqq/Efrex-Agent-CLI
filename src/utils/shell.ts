@@ -1,6 +1,6 @@
 import {
-  getOriginalCwd,
-  setCwdState,
+    getOriginalCwd,
+    setCwdState,
 } from '../bootstrap/state.js'
 import { accessSync } from 'fs'
 import { logForDebugging } from './debug.js'
@@ -9,22 +9,22 @@ import { execFileSync, spawn } from 'child_process'
 import { isAbsolute, resolve } from 'path'
 import { getCachedPowerShellPath } from './shell/powershellDetection.js'
 import { getPlatform } from './platform.js'
-import { logError } from './logger.js'
+import { logError } from './log.js'
 import { constants as fsConstants, readFileSync } from 'fs'
 import { errorMessage } from './errors.js'
 import {
-  createAbortedCommand,
-  createFailedCommand,
-  ShellCommand,
-  wrapSpawn,
+    createAbortedCommand,
+    createFailedCommand,
+    ShellCommand,
+    wrapSpawn,
 } from './ShellCommand.js'
 import { pwd } from './cwd.js'
 import { memoize } from 'lodash'
-import { realpathSync,unlinkSync,realpath} from 'fs'
-import { ShellType,ShellProvider} from './shell/shellProvider.js'
+import { realpathSync, unlinkSync, realpath } from 'fs'
+import { ShellType, ShellProvider } from './shell/shellProvider.js'
 import { cwd } from 'process'
 import { createPowerShellProvider } from './powershellProvider.js'
-import { posixPathToWindowsPath} from './windowsPaths.js'
+import { posixPathToWindowsPath } from './windowsPaths.js'
 import { isENOENT } from './errors.js'
 import { getSessionId } from '../bootstrap/state.js'
 import { createBashShellProvider } from './bash/bashProvider.js'

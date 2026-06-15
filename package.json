@@ -2,7 +2,9 @@
 	"name": "ChatUI-CLI",
 	"workspaces": [
 		"packages/@ant/*",
-		"packages/color-diff-napi"
+		"packages/color-diff-napi",
+		"packages/mcp-client",
+		"packages/agent-tools"
 	],
 	"private": true,
 	"description": "a terminal agent developed by YaQi Li(Efrewew)",
@@ -41,6 +43,8 @@
 		"@anthropic-ai/sdk": "^0.81.0",
 		"@anthropic/ink": "workspace:*",
 		"@inkjs/ui": "^2.0.0",
+		"@modelcontextprotocol/sdk": "^1.29.0",
+		"@types/proper-lockfile": "^4.1.4",
 		"auto-bind": "^5.0.1",
 		"axios": "^1.16.0",
 		"chalk": "^5.6.2",
@@ -56,6 +60,7 @@
 		"color-diff-napi": "workspace:*",
 		"diff": "^9.0.0",
 		"emoji-regex": "^10.6.0",
+		"env-paths": "^4.0.0",
 		"execa": "^9.6.1",
 		"figures": "^6.1.0",
 		"fuse.js": "^7.4.1",

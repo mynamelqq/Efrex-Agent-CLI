@@ -5,12 +5,13 @@ import { Command, getCommandName } from './types/command.js';
 import { restoreSessionStateFromLog } from './utils/sessionRestore.js';
 import {cwd}from "process"
 import { useQueueProcessor } from './hooks/useQueueProcessor.js';
-import { UUID } from 'node:crypto';
+import {getCommandQueueLength} from './utils/messageQueueManager.js';
+import { randomUUID, UUID } from 'node:crypto';
 import { LogOption } from './types/logs.js';
 import { dirname } from 'path';
 import { ResumeEntrypoint } from './types/command.js';
 import { FileHistoryState } from './utils/fileHistory.js';
-import { isCompactBoundaryMessage } from './utils/messages.js';
+import { isCompactBoundaryMessage,isSyntheticMessage,textForResubmit} from './utils/messages.js';
 import {
 	Box,
 	Text,
@@ -22,9 +23,11 @@ import { getTerminalFocused } from './ink/terminal-focus-state.js';
 import { resetCostState, switchSession } from './bootstrap/state.js';
 import { stringWidth } from './ink/stringWidth.js';
 import { createFileStateCacheWithSizeLimit, READ_FILE_STATE_CACHE_SIZE } from './utils/fileStateCache.js';
+import {selectableUserMessagesFilter,messagesAfterAreOnlySynthetic} from './components/MessageSelector.js';
 import { useAppStateStore } from './state/AppState.js';
+import type { ContentBlockParam, ContentBlock, ImageBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs';
 import { buildEffectiveSystemPrompt } from './utils/systemPrompt.js';
-import { addToHistory } from './history.js';
+import { addToHistory,removeLastFromHistory} from './history.js';
 import { useMemo } from 'react';
 import { useArrowKeyHistory } from './hooks/useArrowKeyHistory.js';
 import { useLogMessages } from './hooks/useLogMessages.js';
@@ -32,6 +35,7 @@ import type { ProcessUserInputContext } from './utils/executeUserInput.js';
 import type { ScrollBoxHandle } from './ink/components/ScrollBox.js';
 import { AlternateScreen } from './ink/components/AlternateScreen.js';
 import PromptInput from './components/PromptInput.js';
+import { IdeStatusIndicator } from './components/IdeStatusIndicator.js';
 import { isCommandEnabled } from './types/command.js';
 import MessageViewport from './components/MessageViewport.js';
 import FullscreenLayout from './components/FullscreenLayout.js';
@@ -40,7 +44,8 @@ import { PastedContent } from './utils/config.js';
 import type {
 	ApiRetryStatusEvent,
 	Message as MessageType,
-	ProgressMessage
+	ProgressMessage,
+	UserMessage
 } from './package/message.js';
 import {
 	findToolByName,
@@ -102,6 +107,14 @@ import { logForDebugging } from './utils/debug.js';
 import { deserializeMessages } from './utils/conservationRecovery.js';
 import { asSessionId } from './types/ids.js';
 import { clearSessionMetadata, resetSessionFilePointer, restoreSessionMetadata } from './utils/sessionStorage.js';
+import { consumeEarlyInput } from './utils/earlyInput.js';
+import { resetMicrocompactState } from './services/compact/mircoCompact.js';
+import { InternalPermissionMode } from './types/permissions.js';
+import { useIDEIntegration } from './hooks/useIDEIntegration.js';
+import { MCPServerConnection, ScopedMcpServerConfig } from "src/services/mcp/types.js"
+import { IDEExtensionInstallationStatus, IdeType } from './utils/ide.js';
+import { MCPConnectionManager } from './services/mcp/MCPConnectionManager.js';
+import { IDESelection, useIdeSelection } from './hooks/useIdeSelection.js';
 type ViewportMessage = {
 	id: number;
 	role: 'user' | 'assistant' | 'tool' | 'meta';
@@ -115,7 +128,8 @@ type ViewportMessage = {
 };
 
 type ViewportSliceAnchor = { key: string; idx: number } | null;
-
+// 为接受 MCPServerConnection[] 的钩子提供稳定的空数组 — 避免在远程模式下每次渲染都创建新的 [] 字面量，这会导致 useEffect 依赖变化和无限重渲染循环。
+const EMPTY_MCP_CLIENTS: MCPServerConnection[] = [];
 
 const MAX_VIEWPORT_MESSAGES_WITHOUT_VIRTUALIZATION = 200;
 const VIEWPORT_MESSAGE_CAP_STEP = 50;
@@ -1909,7 +1923,22 @@ export default function QueryApp({
 	const { exit } = useApp();
 	const { columns, rows } = useWindowSize();
 	const isTerminalFocused = getTerminalFocused();
-	const [input, setInput] = useState('');
+	// Initialize input with any early input that was captured before REPL was ready.
+	// Using lazy initialization ensures cursor offset is set correctly in PromptInput.
+	const [inputValue, setInputValueRaw] = useState(() => consumeEarlyInput());
+	const inputValueRef = useRef(inputValue);
+	inputValueRef.current = inputValue;
+	const setInputValue = useCallback(
+		(value: React.SetStateAction<string>) => {
+			const nextValue =
+				typeof value === 'function'
+					? value(inputValueRef.current)
+					: value;
+			inputValueRef.current = nextValue;
+			setInputValueRaw(nextValue);
+		},
+		[]
+	);
 	const [screen, setScreen] = useState<AppScreen>('prompt');
 	const [cursorSyncKey, setCursorSyncKey] = useState(0);
 	const [pastedContents, setPastedContents] = useState<Record<number, PastedContent>>({});
@@ -1919,9 +1948,9 @@ export default function QueryApp({
 	// call entirely in external builds, so this is safe despite looking conditional.
 	const store = useAppStateStore();
 	const { onHistoryUp, onHistoryDown, resetHistory } = useArrowKeyHistory(
-		setInput,
+		setInputValue,
 		setPastedContents,
-		input,
+		inputValue,
 		pastedContents,
 	);
 	// Local state for commands (hot-reloadable when skill files change)
@@ -1931,12 +1960,12 @@ export default function QueryApp({
 	const commands = useMemo(() => (disableSlashCommands ? [] : mergedCommands), [disableSlashCommands, mergedCommands]);
 	const handleInputChange = useCallback((nextValue: string) => {
 		const matches = getSlashCommandMatches(nextValue, commands);
-		setInput(nextValue);
+		setInputValue(nextValue);
 		setFilteredCommands(matches.map(match => match.command));
 		setShowCommandSelector(matches.length > 0);
 		setSelectedCommandIndex(0);
 		resetHistory();
-	}, [commands, resetHistory]);
+	}, [commands, resetHistory, setInputValue]);
 	const [alertMessage, setAlertMessage] = useState<string | null>(null);
 	const [exitHint, setExitHint] = useState(false);
 	const exitHintRef = useRef(false);
@@ -1960,6 +1989,8 @@ export default function QueryApp({
 	const [messages, rawSetMessages] = useState<MessageType[]>(
 		() => initialMessages ?? []
 	);
+	const [conversationId, setConversationId] = useState(() => randomUUID());
+	const [lastQueryCompletionTime, setLastQueryCompletionTime] = useState(0);
 	const [completedTurnFooters, setCompletedTurnFooters] = useState<
 		CompletedTurnFooter[]
 	>([]);
@@ -1977,6 +2008,22 @@ export default function QueryApp({
 	const [toolUseConfirmQueue, setToolUseConfirmQueue] = useState<
 		ToolUseConfirm[]
 	>([]);
+	let initialDynamicMcpConfig: Record<string, ScopedMcpServerConfig>={}//初始的MCP 配置一般为空
+	const [dynamicMcpConfig, setDynamicMcpConfig] = useState<Record<string, ScopedMcpServerConfig> | undefined>(
+		initialDynamicMcpConfig,
+	);
+	 const onChangeDynamicMcpConfig = useCallback(
+		(config: Record<string, ScopedMcpServerConfig>) => {
+			setDynamicMcpConfig(config);
+		},
+		[setDynamicMcpConfig],
+	);
+	  // IDE integration
+  	const [ideSelection, setIDESelection] = useState<IDESelection | undefined>(undefined);//保存当前IDE选择的位置文本
+	const [ideInstallationStatus, setIDEInstallationStatus] = useState<IDEExtensionInstallationStatus | null>(null);
+	const [showIdeOnboarding, setShowIdeOnboarding] = useState(false);
+	const [ideToInstallExtension, setIDEToInstallExtension] = useState<IdeType | null>(null);
+
 	const [toolJSX, setToolJSXInternal] = useState<{
 		jsx: React.ReactNode | null;
 		shouldHidePromptInput: boolean;
@@ -1992,7 +2039,13 @@ export default function QueryApp({
 	);
 	const loading = isQueryActive;
 	const showSpinner = loading && (!toolJSX || toolJSX.showSpinner !== false);
-	
+	const isRemoteSession = false
+	// Ref for the synchronous restore callback — set after restoreMessageSync is
+	// defined, read in the onQuery finally block for auto-restore on interrupt.
+	const restoreMessageSyncRef = useRef<(m: UserMessage) => void>(() => {});
+	const mcp = useAppState(s => s.mcp);
+	useIdeSelection(isRemoteSession ? EMPTY_MCP_CLIENTS : mcp.clients, setIDESelection);
+
 	const messagesRef = useRef(messages);
 	const appStateRef = useRef(appState);
 	const [inputMode, setInputMode] = useState<PromptInputMode>('prompt');
@@ -2001,6 +2054,7 @@ export default function QueryApp({
 	// 始终指向当前中止控制器的 Ref，用于在异步回调中读取最新 controller。
 	const abortControllerRef = useRef<AbortController | null>(null);
 	abortControllerRef.current = abortController;
+	const userCancelAbortRef = useRef(false);
 	const readFileStateRef = useRef(new FileStateCache(500, 50 * 1024 * 1024));
 	const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const nextPlaceholderIdRef = useRef(1);
@@ -2096,7 +2150,14 @@ export default function QueryApp({
 
 		setToolJSXInternal(args);
 	}, []);
-
+	// Initialize IDE integration
+	useIDEIntegration({//读取ide lock配置 加入到appstate中，安装插件
+		autoConnectIdeFlag:true,
+		ideToInstallExtension,
+		setDynamicMcpConfig,
+		setShowIdeOnboarding,
+		setIDEInstallationState: setIDEInstallationStatus,
+	});
 	const resume = useCallback(
 		async (sessionId: UUID, log: LogOption, entrypoint: ResumeEntrypoint) => {
 			const resumeStart = performance.now();
@@ -2129,7 +2190,7 @@ export default function QueryApp({
 				clearLocalJSX: true
 			});
 			setAbortController(null);
-
+			setConversationId(sessionId);
 			// Get target session's costs BEFORE saving current session
 			// (saveCurrentSessionCosts overwrites the config, so we need to read first)
 			// const targetSessionCosts = getStoredSessionCosts(sessionId);
@@ -2187,13 +2248,13 @@ export default function QueryApp({
 
 			// Clear input to ensure no residual state
 			// setInputValue('');
-			setInput('');
+			setInputValue('');
 
 		} catch (error) {
 			throw error;
 		}
 		},
-		[resetLoadingState, setAppState, setMessages, setInput, setToolJSX],
+		[resetLoadingState, setAppState, setMessages, setInputValue, setToolJSX],
 	);
 	const handleCyclePermissionMode = useCallback(() => {
 		const { nextMode, context: preparedContext } =
@@ -2260,11 +2321,11 @@ export default function QueryApp({
 
 	const handleCommandSelect = useCallback((command: Command) => {
 		const nextValue = `/${getCommandName(command)}${command.argumentHint ? ' ' : ''}`;
-		setInput(nextValue);
+		setInputValue(nextValue);
 		setCursorSyncKey(prev => prev + 1);
 		setFilteredCommands(commands);
 		setShowCommandSelector(false);
-	}, [commands]);
+	}, [commands, setInputValue]);
 
 	const handleCtrlC = useCallback(() => {
 		if (exitHintRef.current) {
@@ -2279,12 +2340,13 @@ export default function QueryApp({
 		if (loading) {
 			queryGuard.forceEnd();
 			resetLoadingState();
+			userCancelAbortRef.current = true;
 			abortControllerRef.current?.abort('user-cancel');
 			setAbortController(null);
 			return;
 		}
 
-		setInput('');
+		setInputValue('');
 		exitHintRef.current = true;
 		setExitHint(true);
 		if (exitTimerRef.current) {
@@ -2351,7 +2413,7 @@ export default function QueryApp({
 				const selectedCommand = filteredCommands[selectedCommandIndex];
 				if (selectedCommand) {
 					const commandValue = `/${getCommandName(selectedCommand)}`;
-					setInput('');
+					setInputValue('');
 					setCursorSyncKey(prev => prev + 1);
 					setFilteredCommands(commands);
 					setShowCommandSelector(false);
@@ -2493,8 +2555,25 @@ export default function QueryApp({
 					);
 				},
 				onMessage: newMessage => {
+					const apiErrorText =
+						newMessage.type === 'assistant' &&
+						Array.isArray(newMessage.message?.content)
+							? newMessage.message.content
+									.filter(block => block.type === 'text')
+									.map(block => block.text)
+									.join('\n')
+							: '';
+					const isUserAbortApiError =
+						userCancelAbortRef.current &&
+						newMessage.type === 'assistant' &&
+						newMessage.isApiErrorMessage &&
+						apiErrorText.includes('API Error: Request was aborted.');
+					if (isUserAbortApiError) {
+						return;
+					}
 					if (isCompactBoundaryMessage(newMessage)) {
 						setCompletedTurnFooters([]);
+						setConversationId(randomUUID());
 						setMessages(() => [newMessage]);
 					} else {
 						setMessages(prev => [...prev, newMessage]);
@@ -2576,6 +2655,7 @@ const getToolUseContext = useCallback(
 			commands,
 			tools: activeTools,
 			debug,
+			mcpClients:s.mcp.clients,
 			verbose: false,
 			thinkingConfig:{ type: 'disabled' },
 			mainLoopModel,
@@ -2626,6 +2706,7 @@ const getToolUseContext = useCallback(
 				return { ...prev, fileHistory: updated };
 			});
 			},
+			setConversationId,
 			readFileState: readFileState.current,
 			onChangeAPIKey: () => {}
 			};
@@ -2634,6 +2715,7 @@ const getToolUseContext = useCallback(
 		 commands,
       debug,
       store,
+	  setConversationId,
       setAppState,
       setMessages,
       disabled,
@@ -2696,7 +2778,9 @@ const getToolUseContext = useCallback(
 				}
 			} catch (error) {
 				if (error instanceof Error && error.name === 'AbortError') {
-					setAlertMessage('当前请求已取消');
+					if (abortController.signal.reason !== 'user-cancel') {
+						setAlertMessage('当前请求已取消');
+					}
 				} else {
 					setAlertMessage(
 						error instanceof Error ? error.message : String(error)
@@ -2720,6 +2804,7 @@ const getToolUseContext = useCallback(
 			if (!queryGuard.getSnapshot()) {
 				loadingStartTimeRef.current = startedAt;
 			}
+			userCancelAbortRef.current = false;
 			const thisGeneration = queryGuard.tryStart();
 			if (thisGeneration === null) {
 				return;
@@ -2728,7 +2813,7 @@ const getToolUseContext = useCallback(
 				loadingStartTimeRef.current = startedAt;
 			}
 			setMessages(oldMessages => [...oldMessages, ...newMessages]);
-			setInput('');
+			setInputValue('');
 			setStreamingAssistant({
 				active: false,
 				placeholderId: nextPlaceholderIdRef.current++,
@@ -2745,9 +2830,9 @@ const getToolUseContext = useCallback(
 				active: false,
 				statusText: null
 			});
-
+			const latestMessages = messagesRef.current;
 			try {
-				const latestMessages = messagesRef.current;
+				
 				await onQueryImpl(
 					latestMessages,
 					newMessages,
@@ -2757,8 +2842,9 @@ const getToolUseContext = useCallback(
 					mainLoopModel
 				);
 			} finally {
-				if (queryGuard.end(thisGeneration) && shouldQuery) {
+				if (queryGuard.end(thisGeneration) ) {
 					const durationMs = Date.now() - startedAt;
+					setLastQueryCompletionTime(Date.now());
 					setCompletedTurnFooters(oldFooters => [
 						...oldFooters,
 						{
@@ -2785,12 +2871,140 @@ const getToolUseContext = useCallback(
 						active: false,
 						statusText: null
 					});
+					// Clear the controller so CancelRequestHandler's canCancelRunningTask
+					// reads false at the idle prompt. Without this, the stale non-aborted
+					// controller makes ctrl+c fire onCancel() (aborting nothing) instead of
+					// propagating to the double-press exit flow.
+					setAbortController(null);
+				}
+				// Auto-restore: if the user interrupted before any meaningful response
+				// arrived, rewind the conversation and restore their prompt — same as
+				// opening the message selector and picking the last message.
+				// This runs OUTSIDE the queryGuard.end() check because onCancel calls
+				// forceEnd(), which bumps the generation so end() returns false above.
+				// Guards: reason === 'user-cancel' (onCancel/Esc; programmatic aborts
+				// use 'background'/'interrupt' and must not rewind — note abort() with
+				// no args sets reason to a DOMException, not undefined), !isActive (no
+				// newer query started — cancel+resubmit race), empty input (don't
+				// clobber text typed during loading), no queued commands (user queued
+				// B while A was loading → they've moved on, don't restore A; also
+				// avoids removeLastFromHistory removing B's entry instead of A's),
+				// not viewing a teammate (messagesRef is the main conversation — the
+				// old Up-arrow quick-restore had this guard, preserve it).
+				if (
+					abortController.signal.reason === 'user-cancel' &&
+					!queryGuard.isActive &&
+					inputValueRef.current === '' &&
+					getCommandQueueLength() === 0 
+					) {
+					const msgs = messagesRef.current;
+					const lastUserMsg = msgs.findLast(
+						(message): message is UserMessage =>
+							selectableUserMessagesFilter(message) &&
+							!isSyntheticMessage(message)
+					);
+					if (lastUserMsg) {
+						const idx = msgs.lastIndexOf(lastUserMsg);
+						if (messagesAfterAreOnlySynthetic(msgs, idx)) {
+							// The submit is being undone — undo its history entry too,
+							// otherwise Up-arrow shows the restored text twice.
+							removeLastFromHistory();
+							restoreMessageSyncRef.current(lastUserMsg );
+						}
+					}
 				}
 			}
 		},
 		[columns, onQueryImpl, queryGuard]
 	);
+	// Rewind conversation state to just before `message`: slice messages,
+	// reset conversation ID, microcompact state, permission mode, prompt suggestion.
+	// Does NOT touch the prompt input. Index is computed from messagesRef (always
+	// fresh via the setMessages wrapper) so callers don't need to worry about
+	// stale closures.
+	const rewindConversationTo = useCallback(
+		(message: UserMessage) => {
+		const prev = messagesRef.current;
+		const messageIndex = prev.lastIndexOf(message);
+		if (messageIndex === -1) return;
 
+		setMessages(prev.slice(0, messageIndex));//恢复
+		// Careful, this has to happen after setMessages
+		setConversationId(randomUUID());
+		// Reset cached microcompact state so stale pinned cache edits
+		// don't reference tool_use_ids from truncated messages
+		resetMicrocompactState();
+
+		// Restore state from the message we're rewinding to
+		const permMode = message.permissionMode as InternalPermissionMode | undefined;
+		setAppState(prev => ({
+			...prev,
+			// Restore permission mode from the message
+			toolPermissionContext:
+			permMode && prev.toolPermissionContext.mode !== permMode
+				? {
+					...prev.toolPermissionContext,
+					mode: permMode,
+				}
+				: prev.toolPermissionContext,
+			// Clear stale prompt suggestion from previous conversation state
+			promptSuggestion: {
+			text: null,
+			promptId: null,
+			shownAt: 0,
+			acceptedAt: 0,
+			generationRequestId: null,
+			},
+		}));
+		},
+		[setMessages, setAppState],
+	);
+	// Synchronous rewind + input population. Used directly by auto-restore on
+	// interrupt (so React batches with the abort's setMessages → single render,
+	// no flicker). MessageSelector wraps this in setImmediate via handleRestoreMessage.
+	const restoreMessageSync = useCallback(
+		(message: UserMessage) => {
+		rewindConversationTo(message);
+
+		const r = textForResubmit(message);
+		if (r) {
+			setInputValue(r.text);
+			setInputMode(r.mode);
+		}
+
+		// Restore pasted images
+		if (Array.isArray(message.message.content) && message.message.content.some(block => block.type === 'image')) {
+			const imageBlocks: Array<ImageBlockParam> = message.message.content.filter(block => block.type === 'image');
+			if (imageBlocks.length > 0) {
+			const newPastedContents: Record<number, PastedContent> = {};
+			imageBlocks.forEach((block, index) => {
+				if (block.source.type === 'base64') {
+				const id = (message.imagePasteIds as number[] | undefined)?.[index] ?? index + 1;
+				newPastedContents[id] = {
+					id,
+					type: 'image',
+					content: block.source.data,
+					mediaType: block.source.media_type,
+				};
+				}
+			});
+			setPastedContents(newPastedContents);
+			}
+		}
+		},
+		[rewindConversationTo, setInputValue],
+	);
+	restoreMessageSyncRef.current = restoreMessageSync;
+
+	// MessageSelector path: defer via setImmediate so the "Interrupted" message
+	// renders to static output before rewind — otherwise it remains vestigial
+	// at the top of the screen.
+	const handleRestoreMessage = useCallback(
+		async (message: UserMessage) => {
+		setImmediate((restore, message) => restore(message), restoreMessageSync, message);
+		},
+		[restoreMessageSync],
+	);
 	const onSubmit = useCallback(
 		async (value: string) => {
 			const text = value.trim();
@@ -2889,7 +3103,7 @@ const getToolUseContext = useCallback(
 				// Add the just-submitted command to the front of the ghost-text
 				// cache so it's suggested immediately (not after the 60s TTL).
 				if (inputMode === 'bash') {
-					// prependToShellHistoryCache(input.trim());
+					// prependToShellHistoryCache(inputValue.trim());
 				}
 
 			}
@@ -2922,6 +3136,7 @@ const getToolUseContext = useCallback(
 				commands,
 				setAppState,
 				queryGuard,
+				ideSelection
 			});
 			
 		},
@@ -2990,7 +3205,7 @@ const getToolUseContext = useCallback(
 			isTranscriptMode
 		]
 	);
-
+	  const [remountKey, setRemountKey] = useState(0);
 	const streamingPlaceholder = useMemo(() => {
 		if (loading && streamingAssistant.placeholderId !== null) {
 			if (streamingAssistant.text.trim().length > 0) {
@@ -3077,7 +3292,7 @@ const getToolUseContext = useCallback(
 		compactUiState.active && !apiRetryUiState.active ? 'compact' : 'default';
 
 
-	const commandSelectorQuery = getSlashCommandQuery(input.trim());
+	const commandSelectorQuery = getSlashCommandQuery(inputValue.trim());
 	const visibleCommandWindow = getVisibleWindow(
 		filteredCommands,
 		selectedCommandIndex,
@@ -3129,6 +3344,7 @@ const getToolUseContext = useCallback(
 			onBeforeQuery,
 			setMessages,
 			queuedCommands,
+			ideSelection
 		});
 		},
 		[
@@ -3199,7 +3415,7 @@ const getToolUseContext = useCallback(
 							</Box>
 							<PromptInput
 								messages={messages}
-								value={input}
+								value={inputValue}
 								height={terminalRows}
 								width={promptInputWidth}
 								maxVisibleLines={maxPromptInputRows}
@@ -3224,9 +3440,13 @@ const getToolUseContext = useCallback(
 								setPastedContents={setPastedContents}
 								mode={inputMode}
 								onModeChange={setInputMode}
+								ideSelection={ideSelection}
+								mcpClients={mcp.clients}
 							/>
 						</Box>
-						<Text color={inputRuleColor}>{inputRule}</Text>
+						<Box width={terminalColumns - 2}>
+							<Text color={inputRuleColor}>{inputRule}</Text>
+						</Box>
 						{inputMode === 'bash' ? (
 							<Text color={bashInputAccentColor}>! for bash mode</Text>
 						) : null}
@@ -3305,11 +3525,20 @@ const getToolUseContext = useCallback(
 							</Box>
 						) : (
 							<>
-								<Box paddingLeft={2}>
+								<Box
+									paddingLeft={2}
+									width={terminalColumns - 2}
+									flexDirection="row"
+									justifyContent="space-between"
+								>
 									<Text color={permissionModeColor}>
 										{permissionModeLabel}
 										<Text color="ansi:blackBright"> · Shift+Tab</Text>
 									</Text>
+									<IdeStatusIndicator
+										ideSelection={ideSelection}
+										mcpClients={mcp.clients}
+									/>
 								</Box>
 							</>
 						)}
@@ -3330,6 +3559,7 @@ const getToolUseContext = useCallback(
 	const scrollableContent = (
 		<Box flexDirection="column">
 			<MessageViewport
+				key={conversationId}
 				welcomeHeader={welcomeHeader}
 				messages={viewportMessages}
 				width={messageWidth}
@@ -3363,6 +3593,7 @@ const getToolUseContext = useCallback(
 			<Box paddingX={2} width="100%">
 				<Box width={transcriptColumnWidth}>
 					<MessageViewport
+						key={conversationId}
 						headerLines={[]}
 						messages={viewportMessages}
 						width={transcriptColumnWidth}
@@ -3413,6 +3644,7 @@ const getToolUseContext = useCallback(
 
 	if (isFullscreenEnvEnabled()) {
 		return (
+			<MCPConnectionManager key={remountKey} dynamicMcpConfig={dynamicMcpConfig} isStrictMcpConfig={strictMcpConfig}>
 			<AlternateScreen mouseTracking>
 				<ScrollKeybindingHandler
 					scrollRef={scrollRef}
@@ -3425,15 +3657,18 @@ const getToolUseContext = useCallback(
 					bottom={bottomContent}
 				/>
 			</AlternateScreen>
+		</MCPConnectionManager>
 		);
 	}
 
 	return (
-		<FullscreenLayout
-			scrollRef={scrollRef}
-			scrollable={scrollableContent}
-			overlay={toolPermissionOverlay}
-			bottom={bottomContent}
-		/>
+		<MCPConnectionManager key={remountKey} dynamicMcpConfig={dynamicMcpConfig} isStrictMcpConfig={strictMcpConfig}>
+			<FullscreenLayout
+				scrollRef={scrollRef}
+				scrollable={scrollableContent}
+				overlay={toolPermissionOverlay}
+				bottom={bottomContent}
+			/>
+		</MCPConnectionManager>
 	);
 }
