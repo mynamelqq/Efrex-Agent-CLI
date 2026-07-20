@@ -12,7 +12,7 @@ import { memoize } from 'lodash'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { createAbortController } from 'src/utils/abortController'
 import { logMCPDebug,logMCPError } from 'src/utils/log.js'
-import { Transport } from 'packages/mcp-client/src'
+import { normalizeNameForMCP, Transport } from 'packages/mcp-client/src'
 import { errorMessage } from 'src/utils/errors.js'
 import { sleep } from 'bun'
 import { getOriginalCwd } from 'src/bootstrap/state.js'
@@ -55,15 +55,78 @@ import {
 } from 'packages/mcp-client'
 import { maybeNotifyIDEConnected } from '../../utils/ide.js'
 import { registerCleanup } from 'src/utils/cleanupRegistry.js'
+import { MCPProgress } from '../compact/querySource.js'
+import { MCPToolResult } from 'src/utils/mcpValidation.js'
+import { isPersistError, persistToolResult } from 'src/utils/toolResultStorage.js'
+/**
+ * Custom error class to indicate that an MCP tool call failed due to
+ * authentication issues (e.g., expired OAuth token returning 401).
+ * This error should be caught at the tool execution layer to update
+ * the client's status to 'needs-auth'.
+ */
+export class McpAuthError extends Error {
+  serverName: string
+  constructor(serverName: string, message: string) {
+    super(message)
+    this.name = 'McpAuthError'
+    this.serverName = serverName
+  }
+}
+/**
+ * Thrown when an MCP session has expired and the connection cache has been cleared.
+ * The caller should get a fresh client via ensureConnectedClient and retry.
+ */
+class McpSessionExpiredError extends Error {
+  constructor(serverName: string) {
+    super(`MCP server "${serverName}" session expired`)
+    this.name = 'McpSessionExpiredError'
+  }
+}
+/**
+ * Detects whether an error is an MCP "Session not found" error (HTTP 404 + JSON-RPC code -32001).
+ * Per the MCP spec, servers return 404 when a session ID is no longer valid.
+ * We check both signals to avoid false positives from generic 404s (wrong URL, server gone, etc.).
+ */
+export const isMcpSessionExpiredError = isMcpSessionExpiredErrorFromPackage
 function getConnectionTimeoutMs(): number {
   return parseInt(process.env.MCP_TIMEOUT || '', 10) || 30000
 }
+/**
+ * Default timeout for MCP tool calls (effectively infinite - ~27.8 hours).
+ */
+const DEFAULT_MCP_TOOL_TIMEOUT_MS = 100_000_000
+
 /**
  * Cap on MCP tool descriptions and server instructions sent to the model.
  * OpenAPI-generated MCP servers have been observed dumping 15-60KB of endpoint
  * docs into tool.description; this caps the p95 tail without losing the intent.
  */
 const MAX_MCP_DESCRIPTION_LENGTH = PKG_MAX_MCP_DESCRIPTION_LENGTH
+/**
+ * Gets the timeout for MCP tool calls in milliseconds.
+ * Uses MCP_TOOL_TIMEOUT environment variable if set, otherwise defaults to ~27.8 hours.
+ */
+function getMcpToolTimeoutMs(): number {
+  return (
+    parseInt(process.env.MCP_TOOL_TIMEOUT || '', 10) ||
+    DEFAULT_MCP_TOOL_TIMEOUT_MS
+  )
+}
+/**
+ * Thrown when an MCP tool returns `isError: true`. Carries the result's `_meta`
+ * so SDK consumers can still receive it — per the MCP spec, `_meta` is on the
+ * base Result type and is valid on error results.
+ */
+export class McpToolCallError_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS extends Error {
+  constructor(
+    message: string,
+    telemetryMessage: string,
+    readonly mcpMeta?: { _meta?: Record<string, unknown> },
+  ) {
+    super(message)
+    this.name = 'McpToolCallError'
+  }
+}
 /**
  * Generates the cache key for a server connection
  * @param name Server name
@@ -548,7 +611,7 @@ async function callMCPTool({
 
     // Use Promise.race with our own timeout to handle cases where SDK's
     // internal timeout doesn't work (e.g., SSE stream breaks mid-request)
-    const timeoutMs = getMcpToolTimeoutMs()
+    const timeoutMs = getMcpToolTimeoutMs()//默认MCP调用工具时间
     let timeoutId: NodeJS.Timeout | undefined
 
     const timeoutPromise = new Promise<never>((_, reject) => {
@@ -567,7 +630,7 @@ async function callMCPTool({
     })
 
     const result = await Promise.race([
-      client.callTool(
+      client.callTool(//调用工具
         {
           name: tool,
           arguments: args,
@@ -636,10 +699,10 @@ async function callMCPTool({
     logMCPDebug(name, `Tool '${tool}' completed successfully in ${duration}`)
 
     // Log code indexing tool usage
-    const codeIndexingTool = detectCodeIndexingFromMcpServerName(name)
-    if (codeIndexingTool) {
+    // const codeIndexingTool = detectCodeIndexingFromMcpServerName(name)
+    // if (codeIndexingTool) {
       
-    }
+    // }
 
     const content = await processMCPResult(result, tool, name)
     return {
@@ -692,7 +755,7 @@ async function callMCPTool({
         'code' in e &&
         (e as Error & { code?: number }).code === -32000 &&
         e.message.includes('Connection closed') &&
-        (config.type === 'http' || config.type === 'claudeai-proxy')
+        (config.type === 'http' )
       if (isSessionExpired || isConnectionClosedOnHttp) {
         logMCPDebug(
           name,
@@ -715,4 +778,119 @@ async function callMCPTool({
       clearInterval(progressInterval)
     }
   }
+}
+export async function processMCPResult(
+  result: unknown,
+  tool: string, // Tool name for validation (e.g., "search")
+  name: string, // Server name for IDE check and transformation (e.g., "slack")
+): Promise<MCPToolResult> {
+  const { content, type, schema } = await transformMCPResult(result, tool, name)
+
+  // IDE tools are not going to the model directly, so we don't need to
+  // handle large output.
+  if (name === 'ide') {//ide不用处理大结果
+    return content
+  }
+
+  // Check if content needs truncation (i.e., is too large)
+  if (!(await mcpContentNeedsTruncation(content))) {
+    return content
+  }
+
+  const sizeEstimateTokens = getContentSizeEstimate(content)
+
+  // If large output files feature is disabled, fall back to old truncation behavior
+  if (isEnvDefinedFalsy(process.env.ENABLE_MCP_LARGE_OUTPUT_FILES)) {
+    return await truncateMcpContentIfNeeded(content)
+  }
+
+  // Save large output to file and return instructions for reading it
+  // Content is guaranteed to exist at this point (we checked mcpContentNeedsTruncation)
+  if (!content) {
+    return content
+  }
+
+  // If content contains images, fall back to truncation - persisting images as JSON
+  // defeats the image compression logic and makes them non-viewable
+  if (contentContainsImages(content)) {
+    return await truncateMcpContentIfNeeded(content)
+  }
+
+  // Generate a unique ID for the persisted file (server__tool-timestamp)
+  const timestamp = Date.now()
+  const persistId = `mcp-${normalizeNameForMCP(name)}-${normalizeNameForMCP(tool)}-${timestamp}`
+  // Convert to string for persistence (persistToolResult expects string or specific block types)
+  const contentStr =
+    typeof content === 'string' ? content : JSON.stringify(content, null, 2)
+  const persistResult = await persistToolResult(contentStr, persistId)
+
+  if (isPersistError(persistResult)) {
+    // If file save failed, fall back to returning truncated content info
+    const contentLength = contentStr.length
+    return `Error: result (${contentLength.toLocaleString()} characters) exceeds maximum allowed tokens. Failed to save output to file: ${persistResult.error}. If this MCP server provides pagination or filtering tools, use them to retrieve specific portions of the data.`
+  }
+
+
+  const formatDescription = getFormatDescription(type, schema)
+  return getLargeOutputInstructions(
+    persistResult.filepath,
+    persistResult.originalSize,
+    formatDescription,
+  )
+}
+/**
+ * Processes MCP tool result into a normalized format.
+ */
+export type MCPResultType = 'toolResult' | 'structuredContent' | 'contentArray'
+
+export type TransformedMCPResult = {
+  content: MCPToolResult
+  type: MCPResultType
+  schema?: string
+}
+
+export async function transformMCPResult(
+  result: unknown,
+  tool: string, // Tool name for validation (e.g., "search")
+  name: string, // Server name for transformation (e.g., "slack")
+): Promise<TransformedMCPResult> {
+  if (result && typeof result === 'object') {
+    if ('toolResult' in result) {
+      return {
+        content: String(result.toolResult),
+        type: 'toolResult',
+      }
+    }
+
+    if (
+      'structuredContent' in result &&
+      result.structuredContent !== undefined
+    ) {
+      return {
+        content: JSON.stringify(result.structuredContent),
+        type: 'structuredContent',
+        schema: inferCompactSchema(result.structuredContent),
+      }
+    }
+
+    if ('content' in result && Array.isArray(result.content)) {
+      const transformedContent = (
+        await Promise.all(
+          result.content.map(item => transformResultContent(item, name)),
+        )
+      ).flat()
+      return {
+        content: transformedContent,
+        type: 'contentArray',
+        schema: inferCompactSchema(transformedContent),
+      }
+    }
+  }
+
+  const errorMessage = `MCP server "${name}" tool "${tool}": unexpected response format`
+  logMCPError(name, errorMessage)
+  throw new TelemetrySafeError_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS(
+    errorMessage,
+    'MCP tool unexpected response format',
+  )
 }

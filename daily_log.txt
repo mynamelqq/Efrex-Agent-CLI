@@ -345,4 +345,5 @@ customTitle、最新的branch、tag等，接着在logFullLog中加载全部文�
 6.11-6.14
 最初是想加一个claude获取IDE显示在右下角比如vscode当前所在的文件以及所选的文本以及选择的位置的功能
 最终竟然涉及到了MCP，插件等等陌生的领域，那只能一起研究了
-首先大概流程是claude在vscode上安装一个插件，并插件上
+首先大概流程是claude在vscode上安装一个插件，并在插件上启动一个MCP服务器通过SSE transport作为传输层，与客户端的Claude进行通信，vscode插件监听用户选区或者文件变化，主动推送给
+selection_change消息给客户端，然后实时接收到右下角显示，最后通过附件消息的形式发送AI

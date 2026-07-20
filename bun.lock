@@ -8,6 +8,7 @@
         "@alcalzone/ansi-tokenize": "^0.3.0",
         "@anthropic-ai/sdk": "^0.81.0",
         "@anthropic/ink": "workspace:*",
+        "@commander-js/extra-typings": "^15.0.0",
         "@inkjs/ui": "^2.0.0",
         "@modelcontextprotocol/sdk": "^1.29.0",
         "@types/proper-lockfile": "^4.1.4",
@@ -162,6 +163,8 @@
     "@claude-code-best/mcp-client": ["@claude-code-best/mcp-client@workspace:packages/mcp-client"],
 
     "@colors/colors": ["@colors/colors@1.5.0", "https://registry.npmmirror.com/@colors/colors/-/colors-1.5.0.tgz", {}, "sha512-ooWCrlZP11i8GImSjTHYHLkvFDP48nS4+204nGb1RiX/WXYHmJA2III9/e2DWVabCESdW7hBAEzHRqUn9OUVvQ=="],
+
+    "@commander-js/extra-typings": ["@commander-js/extra-typings@15.0.0", "https://registry.npmmirror.com/@commander-js/extra-typings/-/extra-typings-15.0.0.tgz", { "peerDependencies": { "commander": "~15.0.0" } }, "sha512-yeJlba62xqmkgELUsn7356MEnzLLu/fw2x4lofFqGnXh6YysRdEs2BaLeLtg1+KU0AXvMeqQvTTp+3hBEBK+EA=="],
 
     "@crosscopy/clipboard": ["@crosscopy/clipboard@0.2.8", "https://registry.npmmirror.com/@crosscopy/clipboard/-/clipboard-0.2.8.tgz", { "optionalDependencies": { "@crosscopy/clipboard-darwin-arm64": "0.2.8", "@crosscopy/clipboard-darwin-universal": "0.2.8", "@crosscopy/clipboard-darwin-x64": "0.2.8", "@crosscopy/clipboard-linux-arm64-gnu": "0.2.8", "@crosscopy/clipboard-linux-riscv64-gnu": "0.2.8", "@crosscopy/clipboard-linux-x64-gnu": "0.2.8", "@crosscopy/clipboard-win32-arm64-msvc": "0.2.8", "@crosscopy/clipboard-win32-x64-msvc": "0.2.8" } }, "sha512-0qRWscafAHzQ+DdfXX+YgPN2KDTIzWBNfN5Q6z1CgCWsRxtkwK8HfQUc00xIejfRWSGWPIxcCTg82hvg06bodg=="],
 
@@ -575,7 +578,7 @@
 
     "command-code": ["command-code@0.26.7", "https://registry.npmmirror.com/command-code/-/command-code-0.26.7.tgz", { "dependencies": { "@ai-sdk/anthropic": "^3.0.77", "@ai-sdk/openai": "^3.0.41", "@ai-sdk/openai-compatible": "^2.0.35", "@ai-sdk/provider": "^3.0.8", "@ai-sdk/provider-utils": "^4.0.19", "@clack/prompts": "^1.0.1", "@crosscopy/clipboard": "^0.2.8", "@opentelemetry/api": "^1.9.0", "@opentelemetry/exporter-trace-otlp-http": "^0.200.0", "@opentelemetry/resources": "^2.0.0", "@opentelemetry/sdk-node": "^0.200.0", "@opentelemetry/sdk-trace-node": "^2.0.0", "@opentelemetry/semantic-conventions": "^1.30.0", "@sindresorhus/slugify": "^2.2.1", "ai": "^6.0.116", "ansi-escapes": "^7.3.0", "chalk": "^5.5.0", "commander": "^14.0.0", "dedent": "^1.6.0", "diff": "^8.0.2", "dotenv": "^17.2.1", "fast-wrap-ansi": "^0.2.0", "figures": "^6.1.0", "giget": "^3.1.2", "glob": "^13.0.5", "gray-matter": "^4.0.3", "ignore": "^7.0.5", "ink": "6.6.0", "ink-select-input": "^6.2.0", "ink-spinner": "^5.0.0", "ink-text-input": "^6.0.0", "is-unicode-supported": "^2.1.0", "log-symbols": "^7.0.1", "marked": "^15.0.12", "marked-terminal": "^7.3.0", "minimatch": "^10.0.3", "open": "^10.2.0", "open-editor": "^5.1.0", "ora": "^8.2.0", "picocolors": "^1.1.1", "react": "^19.1.7", "semver": "^7.7.2", "sharp": "^0.34.3", "shell-quote": "^1.8.3", "string-width": "^8.1.0", "strip-ansi": "^7.1.0", "strip-json-comments": "^5.0.3", "terminal-link": "^5.0.0", "uuid": "^14.0.0", "zod": "^4.0.17" }, "bin": { "cmd": "dist/index.mjs", "cmdc": "dist/index.mjs", "command-code": "dist/index.mjs", "commandcode": "dist/index.mjs" } }, "sha512-elbn771FhKk1/jo8usce7HkmrD7RIfjn0bQqcGDVYc2aGZarbIJe3pzEuRr9X4E/UXrMEKWIpsKsuRpYUuxiuA=="],
 
-    "commander": ["commander@4.1.1", "https://registry.npmmirror.com/commander/-/commander-4.1.1.tgz", {}, "sha512-NOKm8xhkzAjzFx8B2v5OAHT+u5pRQc2UCa2Vq9jYL/31o2wi9mxBA7LIFs3sV5VSC49z6pEhfbMULvShKj26WA=="],
+    "commander": ["commander@14.0.3", "https://registry.npmmirror.com/commander/-/commander-14.0.3.tgz", {}, "sha512-H+y0Jo/T1RZ9qPP4Eh1pkcQcLRglraJaSLoyOtHxu6AapkjWVCy2Sit1QQ4x3Dng8qDlSsZEet7g5Pq06MvTgw=="],
 
     "confbox": ["confbox@0.1.8", "https://registry.npmmirror.com/confbox/-/confbox-0.1.8.tgz", {}, "sha512-RMtmw0iFkeR4YV+fUOSucriAQNb9g8zFR52MWCtl+cCZOFRNL6zeB395vPzFhEjjn4fMxXudmELnl/KF/WrK6w=="],
 
@@ -1207,8 +1210,6 @@
 
     "cliui/wrap-ansi": ["wrap-ansi@7.0.0", "https://registry.npmmirror.com/wrap-ansi/-/wrap-ansi-7.0.0.tgz", { "dependencies": { "ansi-styles": "^4.0.0", "string-width": "^4.1.0", "strip-ansi": "^6.0.0" } }, "sha512-YVGIj2kamLSTxw6NsZjoBxfSwsn0ycdesmc4p+Q21c5zPuZ1pl+NfxVdxPtdHvmNVOQ6XSYG4AUtyt/Fi7D16Q=="],
 
-    "command-code/commander": ["commander@14.0.3", "https://registry.npmmirror.com/commander/-/commander-14.0.3.tgz", {}, "sha512-H+y0Jo/T1RZ9qPP4Eh1pkcQcLRglraJaSLoyOtHxu6AapkjWVCy2Sit1QQ4x3Dng8qDlSsZEet7g5Pq06MvTgw=="],
-
     "command-code/diff": ["diff@8.0.4", "https://registry.npmmirror.com/diff/-/diff-8.0.4.tgz", {}, "sha512-DPi0FmjiSU5EvQV0++GFDOJ9ASQUVFh5kD+OzOnYdi7n3Wpm9hWWGfB/O2blfHcMVTL5WkQXSnRiK9makhrcnw=="],
 
     "command-code/ink": ["ink@6.6.0", "https://registry.npmmirror.com/ink/-/ink-6.6.0.tgz", { "dependencies": { "@alcalzone/ansi-tokenize": "^0.2.1", "ansi-escapes": "^7.2.0", "ansi-styles": "^6.2.1", "auto-bind": "^5.0.1", "chalk": "^5.6.0", "cli-boxes": "^3.0.0", "cli-cursor": "^4.0.0", "cli-truncate": "^5.1.1", "code-excerpt": "^4.0.0", "es-toolkit": "^1.39.10", "indent-string": "^5.0.0", "is-in-ci": "^2.0.0", "patch-console": "^2.0.0", "react-reconciler": "^0.33.0", "signal-exit": "^3.0.7", "slice-ansi": "^7.1.0", "stack-utils": "^2.0.6", "string-width": "^8.1.0", "type-fest": "^4.27.0", "widest-line": "^5.0.0", "wrap-ansi": "^9.0.0", "ws": "^8.18.0", "yoga-layout": "~3.2.1" }, "peerDependencies": { "@types/react": ">=19.0.0", "react": ">=19.0.0", "react-devtools-core": "^6.1.2" }, "optionalPeers": ["@types/react", "react-devtools-core"] }, "sha512-QDt6FgJxgmSxAelcOvOHUvFxbIUjVpCH5bx+Slvc5m7IEcpGt3dYwbz/L+oRnqEGeRvwy1tineKK4ect3nW1vQ=="],
@@ -1256,6 +1257,8 @@
     "proper-lockfile/signal-exit": ["signal-exit@3.0.7", "https://registry.npmmirror.com/signal-exit/-/signal-exit-3.0.7.tgz", {}, "sha512-wnD2ZE+l+SPC/uoS0vXeE9L1+0wuaMqKlfz9AMUo38JsyLSBWSFcHR1Rri62LZc12vLr1gb3jl7iwQhgwpAbGQ=="],
 
     "restore-cursor/signal-exit": ["signal-exit@3.0.7", "https://registry.npmmirror.com/signal-exit/-/signal-exit-3.0.7.tgz", {}, "sha512-wnD2ZE+l+SPC/uoS0vXeE9L1+0wuaMqKlfz9AMUo38JsyLSBWSFcHR1Rri62LZc12vLr1gb3jl7iwQhgwpAbGQ=="],
+
+    "sucrase/commander": ["commander@4.1.1", "https://registry.npmmirror.com/commander/-/commander-4.1.1.tgz", {}, "sha512-NOKm8xhkzAjzFx8B2v5OAHT+u5pRQc2UCa2Vq9jYL/31o2wi9mxBA7LIFs3sV5VSC49z6pEhfbMULvShKj26WA=="],
 
     "tsup/chokidar": ["chokidar@4.0.3", "https://registry.npmmirror.com/chokidar/-/chokidar-4.0.3.tgz", { "dependencies": { "readdirp": "^4.0.1" } }, "sha512-Qgzu8kfBvo+cA4962jnP1KkS6Dop5NS6g7R5LFYJr4b8Ub94PPQXUksCw9PvXoeXPRRddRNC5C1JQUR2SMGtnA=="],
 

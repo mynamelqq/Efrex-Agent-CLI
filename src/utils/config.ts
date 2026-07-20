@@ -24,6 +24,7 @@ import { ThemeSetting } from 'packages/@ant/ink/src/theme/types.js'
 import { getGlobalEfrexFile } from './env.js'
 import { writeFileSyncAndFlush_DEPRECATED } from './file.js'
 import * as lockfile from './lockfile.js'
+import { McpServerConfig } from 'src/services/mcp/types.js'
 
 
 
@@ -66,6 +67,7 @@ export type ReleaseChannel = 'stable' | 'latest'
 export type ProjectConfig = {
   allowedTools: string[]
   mcpContextUris: string[]
+  mcpServers?: Record<string, McpServerConfig>
   lastAPIDuration?: number
   lastAPIDurationWithoutRetries?: number
   lastToolDuration?: number
@@ -127,6 +129,7 @@ export type ProjectConfig = {
 const DEFAULT_PROJECT_CONFIG: ProjectConfig = {
   allowedTools: [],
   mcpContextUris: [],
+  mcpServers: {},
   enabledMcpjsonServers: [],
   disabledMcpjsonServers: [],
   hasTrustDialogAccepted: false,
@@ -134,6 +137,7 @@ const DEFAULT_PROJECT_CONFIG: ProjectConfig = {
   hasClaudeMdExternalIncludesApproved: false,
   hasClaudeMdExternalIncludesWarningShown: false,
 }
+
 
 export type InstallMethod = 'local' | 'native' | 'global' | 'unknown'
 
@@ -166,6 +170,7 @@ export type GlobalConfig = {
   numStartups: number
   installMethod?: InstallMethod
   autoUpdates?: boolean
+  mcpServers?: Record<string, McpServerConfig>
   // Flag to distinguish protection-based disabling from user preference
   autoUpdatesProtectedForNative?: boolean
   // Session count when Doctor was last shown
@@ -577,7 +582,7 @@ export function createDefaultGlobalConfig(): GlobalConfig {
     todoFeatureEnabled: true,
     showExpandedTodos: false,
     messageIdleNotifThresholdMs: 60000,
-    autoConnectIde: false,
+    autoConnectIde: true,
     autoInstallIdeExtension: true,
     fileCheckpointingEnabled: true,
     terminalProgressBarEnabled: true,
@@ -588,6 +593,28 @@ export function createDefaultGlobalConfig(): GlobalConfig {
     copyFullResponse: false,
   }
 }
+
+/**
+ * Detect whether writing `fresh` would lose auth/onboarding state that the
+ * in-memory cache still has. This happens when `getConfig` hits a corrupted
+ * or truncated file mid-write (from another process or a non-atomic fallback)
+ * and returns DEFAULT_GLOBAL_CONFIG. Writing that back would permanently
+ * wipe auth. See GH #3117.
+ */
+function wouldLoseAuthState(fresh: {
+  oauthAccount?: unknown
+  hasCompletedOnboarding?: boolean
+}): boolean {
+  const cached = globalConfigCache.config
+  if (!cached) return false
+  const lostOauth =
+    cached.oauthAccount !== undefined && fresh.oauthAccount === undefined
+  const lostOnboarding =
+    cached.hasCompletedOnboarding === true &&
+    fresh.hasCompletedOnboarding !== true
+  return lostOauth || lostOnboarding
+}
+
 export function saveGlobalConfig(//保存全局配置
   updater: (currentConfig: GlobalConfig) => GlobalConfig,
 ): void {
@@ -748,8 +775,8 @@ export function saveConfig<A extends object>(
     globalConfigWriteCount++
   }
 }
-export function getCurrentProjectConfig(): ProjectConfig {
-  const absolutePath = getProjectPathForConfig()
+export function getCurrentProjectConfig(): ProjectConfig {//从全局配置中读取对应的projects配置
+  const absolutePath = getProjectPathForConfig()//获取项目路径的绝对路径
   const config = getGlobalConfig()
 
   if (!config.projects) {
@@ -1182,5 +1209,69 @@ function getConfig<A>(//读取文件获取配置 然后跟默认配置合并
     }
 
     return createDefault()
+  }
+}
+export function saveCurrentProjectConfig(
+  updater: (currentConfig: ProjectConfig) => ProjectConfig,
+): void {
+  const absolutePath = getProjectPathForConfig()
+
+  let written: GlobalConfig | null = null
+  try {
+    const didWrite = saveConfigWithLock(
+      getGlobalEfrexFile(),
+      createDefaultGlobalConfig,
+      current => {
+        const currentProjectConfig =
+          current.projects?.[absolutePath] ?? DEFAULT_PROJECT_CONFIG
+        const newProjectConfig = updater(currentProjectConfig)
+        // Skip if no changes (same reference returned)
+        if (newProjectConfig === currentProjectConfig) {
+          return current
+        }
+        written = {
+          ...current,
+          projects: {
+            ...current.projects,
+            [absolutePath]: newProjectConfig,
+          },
+        }
+        return written
+      },
+    )
+    if (didWrite && written) {
+      writeThroughGlobalConfigCache(written)
+    }
+  } catch (error) {
+    logForDebugging(`Failed to save config with lock: ${error}`, {
+      level: 'error',
+    })
+
+    // Same race window as saveGlobalConfig's fallback -- refuse to write
+    // defaults over good cached config. See GH #3117.
+    const config = getConfig(getGlobalEfrexFile(), createDefaultGlobalConfig)
+    if (wouldLoseAuthState(config)) {
+      logForDebugging(
+        'saveCurrentProjectConfig fallback: re-read config is missing auth that cache has; refusing to write. See GH #3117.',
+        { level: 'error' },
+      )
+      return
+    }
+    const currentProjectConfig =
+      config.projects?.[absolutePath] ?? DEFAULT_PROJECT_CONFIG
+    const newProjectConfig = updater(currentProjectConfig)
+    // Skip if no changes (same reference returned)
+    if (newProjectConfig === currentProjectConfig) {
+      return
+    }
+    written = {
+      ...config,
+      projects: {
+        ...config.projects,
+        [absolutePath]: newProjectConfig,
+      },
+    }
+    saveConfig(getGlobalEfrexFile(), written, DEFAULT_GLOBAL_CONFIG)
+    writeThroughGlobalConfigCache(written)
   }
 }

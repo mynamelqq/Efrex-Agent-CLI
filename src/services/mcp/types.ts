@@ -124,10 +124,16 @@ export const McpServerConfigSchema = lazySchema(() =>
     McpHTTPServerConfigSchema(),
     McpWebSocketServerConfigSchema(),
     McpSdkServerConfigSchema(),
-    McpClaudeAIProxyServerConfigSchema(),
+
   ]),
 )
 
+export const McpJsonConfigSchema = lazySchema(() =>
+  z.object({
+    mcpServers: z.record(z.string(), McpServerConfigSchema()),
+  }),
+)
+export type McpJsonConfig = z.infer<ReturnType<typeof McpJsonConfigSchema>>
 export type McpServerConfig = z.infer<ReturnType<typeof McpServerConfigSchema>>
 
 export type ScopedMcpServerConfig = McpServerConfig & {
@@ -207,4 +213,22 @@ export type McpStdioServerConfig = z.infer<
 >
 export type McpSSEServerConfig = z.infer<
   ReturnType<typeof McpSSEServerConfigSchema>
+>
+export type McpSSEIDEServerConfig = z.infer<
+  ReturnType<typeof McpSSEIDEServerConfigSchema>
+>
+export type McpWebSocketIDEServerConfig = z.infer<
+  ReturnType<typeof McpWebSocketIDEServerConfigSchema>
+>
+export type McpHTTPServerConfig = z.infer<
+  ReturnType<typeof McpHTTPServerConfigSchema>
+>
+export type McpWebSocketServerConfig = z.infer<
+  ReturnType<typeof McpWebSocketServerConfigSchema>
+>
+export type McpSdkServerConfig = z.infer<
+  ReturnType<typeof McpSdkServerConfigSchema>
+>
+export type McpClaudeAIProxyServerConfig = z.infer<
+  ReturnType<typeof McpClaudeAIProxyServerConfigSchema>
 >

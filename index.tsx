@@ -53,6 +53,7 @@ function StartupGate({
 }
 
 (async () => {
+	process.title='efrex'
 	const rawArgs = process.argv.slice(2);
 	const args = rawArgs.filter(arg => arg !== '--');
 	const hasContinue =

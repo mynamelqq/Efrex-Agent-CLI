@@ -42,6 +42,7 @@
 		"@alcalzone/ansi-tokenize": "^0.3.0",
 		"@anthropic-ai/sdk": "^0.81.0",
 		"@anthropic/ink": "workspace:*",
+		"@commander-js/extra-typings": "^15.0.0",
 		"@inkjs/ui": "^2.0.0",
 		"@modelcontextprotocol/sdk": "^1.29.0",
 		"@types/proper-lockfile": "^4.1.4",

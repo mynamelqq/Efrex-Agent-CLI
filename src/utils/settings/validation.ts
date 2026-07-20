@@ -5,6 +5,7 @@ import { SettingsSchema } from './types.js'
 import { getValidationTip } from './validationTips.js'
 import { generateSettingsJSONSchema } from './schemaOutput.js'
 import { plural } from '../stringUtils.js'
+import { ConfigScope } from 'packages/mcp-client/src/types.js'
 /**
  * Helper type guards for specific Zod v4 issue types
  * In v4, issue types have different structures than v3
@@ -42,7 +43,7 @@ function isTooSmallIssue(issue: ZodIssue): issue is ZodIssue & {
 /** Field path in dot notation (e.g., "permissions.defaultMode", "env.DEBUG") */
 export type FieldPath = string
 
-export type ValidationError = {
+export type ValidationError = {//json读取验证数据错误
   /** Relative file path */
   file?: string
   /** Field path in dot notation */
@@ -58,6 +59,15 @@ export type ValidationError = {
   /** Link to relevant documentation */
   docLink?: string
   /** MCP-specific metadata - only present for MCP configuration errors */
+    /** MCP-specific metadata - only present for MCP configuration errors */
+  mcpErrorMetadata?: {
+    /** Which configuration scope this error came from */
+    scope: ConfigScope
+    /** The server name if error is specific to a server */
+    serverName?: string
+    /** Severity of the error */
+    severity?: 'fatal' | 'warning'
+  }
 }
 
 export type SettingsWithErrors = {

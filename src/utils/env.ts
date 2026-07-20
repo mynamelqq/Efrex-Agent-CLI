@@ -140,6 +140,8 @@ export const getGlobalEfrexFile = memoize((): string => {//缓存
     )
   ) {
     return join(getEfrexConfigHomeDir(), '.config.json')
+    //如果存在/.efrex/.config.json就用
+    //否则用home/.efrex.json
   }
 
   const filename = `.efrex.json`
