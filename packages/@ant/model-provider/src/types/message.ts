@@ -35,7 +35,7 @@ export interface TextBlock {
 export type ContentItem = ContentBlockParam | ContentBlock
 
 export type MessageContent = string | ContentBlockParam[] | ContentBlock[]
-export {ContentBlockParam, ContentBlock} from '@anthropic-ai/sdk/resources/index.mjs'
+export type { ContentBlockParam, ContentBlock } from '@anthropic-ai/sdk/resources/index.mjs'
 /**
  * Typed content array — used in narrowed message subtypes so that
  * `message.content[0]` resolves to `ContentItem` instead of

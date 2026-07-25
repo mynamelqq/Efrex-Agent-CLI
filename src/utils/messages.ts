@@ -10,7 +10,7 @@ import type { BetaContentBlock } from '@anthropic-ai/sdk/resources/beta/messages
 import { Tools } from 'src/Tool'
 import { findToolByName } from 'src/Tool'
 import { safeParseJSON } from './json'
-import { ToolUseBlock,ToolUseBlockParam } from '@anthropic-ai/sdk/resources'
+import { RedactedThinkingBlock, RedactedThinkingBlockParam, ThinkingBlock, ThinkingBlockParam, ToolUseBlock,ToolUseBlockParam } from '@anthropic-ai/sdk/resources'
 import { Attachment } from './attachments'
 import {normalizeToolInput} from "src/utils/api"
 import {
@@ -59,7 +59,7 @@ import type {
   ToolUseSummaryMessage,
   UserMessage,
 } from '../package/message'
-import { BetaUsage } from 'src/types/message'
+import { BetaRedactedThinkingBlock, BetaThinkingBlock, BetaUsage } from 'src/types/message'
 export const NO_CONTENT_MESSAGE = '(no content)'
 export const INTERRUPT_MESSAGE_FOR_TOOL_USE =
   '[Request interrupted by user for tool use]'
@@ -1473,4 +1473,56 @@ export function textForResubmit(
     return { text: `${cmd} ${args}`, mode: 'prompt' }
   }
   return { text: content, mode: 'prompt' }
+}
+
+type ThinkingBlockType =
+  | ThinkingBlock
+  | RedactedThinkingBlock
+  | ThinkingBlockParam
+  | RedactedThinkingBlockParam
+  | BetaThinkingBlock
+  | BetaRedactedThinkingBlock
+
+function isThinkingBlock(
+  block: ContentBlockParam | ContentBlock | BetaContentBlock,
+): block is ThinkingBlockType {
+  return block.type === 'thinking' || block.type === 'redacted_thinking'
+}
+
+/**
+ * Strip signature-bearing blocks (thinking, redacted_thinking, connector_text)
+ * from all assistant messages. Their signatures are bound to the API key that
+ * generated them; after a credential change (e.g. /login) they're invalid and
+ * the API rejects them with a 400.
+ */
+export function stripSignatureBlocks(messages: Message[]): Message[] {
+  let changed = false
+  const result = messages.map(msg => {
+    if (msg.type !== 'assistant') return msg
+
+    const content = (msg as AssistantMessage).message.content
+    if (!Array.isArray(content)) return msg
+
+    const filtered = content.filter(block => {
+      if (isThinkingBlock(block)) return false
+      return true
+    })
+    if (filtered.length === content.length) return msg
+
+    // Strip to [] even for thinking-only messages. Streaming yields each
+    // content block as a separate same-id AssistantMessage (claude.ts:2150),
+    // so a thinking-only singleton here is usually a split sibling that
+    // mergeAssistantMessages (2232) rejoins with its text/tool_use partner.
+    // If we returned the original message, the stale signature would survive
+    // the merge. Empty content is absorbed by merge; true orphans are handled
+    // by the empty-content placeholder path in normalizeMessagesForAPI.
+
+    changed = true
+    return {
+      ...msg,
+      message: { ...msg.message, content: filtered },
+    } as typeof msg
+  })
+
+  return changed ? result : messages
 }

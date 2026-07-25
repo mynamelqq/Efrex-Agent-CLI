@@ -144,6 +144,6 @@ export const getGlobalEfrexFile = memoize((): string => {//缓存
     //否则用home/.efrex.json
   }
 
-  const filename = `.efrex.json`
+  const filename = `.efrex.json`//一般都走这里，用户不会主动去配置 
   return join(process.env.CONFIG_DIR || homedir(), filename)
 })

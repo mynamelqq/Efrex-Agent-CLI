@@ -1,7 +1,7 @@
 
 import { feature } from 'bun:bundle'
 import { randomBytes } from 'crypto'
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, unwatchFile, watchFile } from 'fs'
+import { copyFileSync, mkdirSync, readdirSync, readFile, readFileSync, statSync, unlinkSync, unwatchFile, watchFile } from 'fs'
 import { getManagedFilePath } from './settings/mdm/managedPath.js'
 import memoize from 'lodash/memoize.js'
 
@@ -721,28 +721,97 @@ function removeProjectHistory(
 
   return needsCleaning ? cleanedProjects : projects
 }
+
+/**
+ * Migrates old autoUpdaterStatus to new installMethod and autoUpdates fields
+ * @internal
+ */
+function migrateConfigFields(config: GlobalConfig): GlobalConfig {
+  // Already migrated
+  if (config.installMethod !== undefined) {
+    return config
+  }
+
+  // autoUpdaterStatus is removed from the type but may exist in old configs
+  const legacy = config as GlobalConfig & {
+    autoUpdaterStatus?:
+      | 'migrated'
+      | 'installed'
+      | 'disabled'
+      | 'enabled'
+      | 'no_permissions'
+      | 'not_configured'
+  }
+
+  // Determine install method and auto-update preference from old field
+  let installMethod: InstallMethod = 'unknown'
+  let autoUpdates = config.autoUpdates ?? true // Default to enabled unless explicitly disabled
+
+  switch (legacy.autoUpdaterStatus) {
+    case 'migrated':
+      installMethod = 'local'
+      break
+    case 'installed':
+      installMethod = 'native'
+      break
+    case 'disabled':
+      // When disabled, we don't know the install method
+      autoUpdates = false
+      break
+    case 'enabled':
+    case 'no_permissions':
+    case 'not_configured':
+      // These imply global installation
+      installMethod = 'global'
+      break
+    case undefined:
+      // No old status, keep defaults
+      break
+  }
+
+  return {
+    ...config,
+    installMethod,
+    autoUpdates,
+  }
+}
 export function getGlobalConfig(): GlobalConfig {
-  if (globalConfigCache.config) {//缓存命中加1
+  // Fast path: pure memory read. After startup, this always hits — our own
+  // writes go write-through and other instances' writes are picked up by the
+  // background freshness watcher (never blocks this path).
+  if (globalConfigCache.config) {
     configCacheHits++
     return globalConfigCache.config
   }
+
   // Slow path: startup load. Sync I/O here is acceptable because it runs
   // exactly once, before any UI is rendered. Stat before read so any race
   // self-corrects (old mtime + new content → watcher re-reads next tick).
   configCacheMisses++
   try {
-    let stats: { mtimeMs: number; size: number } | null = null
-
-    const config = createDefaultGlobalConfig()
+    let stats= null
+    try {
+      stats = statSync(getGlobalEfrexFile(), { throwIfNoEntry: false })
+    } catch {
+      // File doesn't exist
+    }
+    const config = migrateConfigFields(
+      getConfig(getGlobalEfrexFile(), createDefaultGlobalConfig),
+    )
     globalConfigCache = {
       config,
-      mtime:  Date.now(),
+      mtime: stats?.mtimeMs ?? Date.now(),
     }
-    lastReadFileStats = null
+    lastReadFileStats = stats
+      ? { mtime: stats.mtimeMs, size: stats.size }
+      : null
+    // startGlobalConfigFreshnessWatcher()
     return config
   } catch {
     // If anything goes wrong, fall back to uncached behavior
-    return createDefaultGlobalConfig()
+    return migrateConfigFields(
+      getConfig(getGlobalEfrexFile(), createDefaultGlobalConfig),
+    )
   }
 }
 
@@ -754,7 +823,7 @@ export function saveConfig<A extends object>(
   // Ensure the directory exists before writing the config file
   const dir = dirname(file)
   // mkdirSync is already recursive in FsOperations implementation
-  mkdirSync(dir)
+  mkdirSync(dir,{recursive:true})
 
   // Filter out any values that match the defaults
   const filteredConfig = pickBy(//挑选出符合默认配置的选项
@@ -991,6 +1060,19 @@ function saveConfigWithLock<A extends object>(//保存配置
 }
 // Flag to track if config reading is allowed
 let configReadingAllowed = false
+
+export function enableConfigs(): void {
+  if (configReadingAllowed) {
+    return
+  }
+
+  configReadingAllowed = true
+  getConfig(
+    getGlobalEfrexFile(),
+    createDefaultGlobalConfig,
+    true,
+  )
+}
 
 /**
  * Returns the directory where config backup files are stored.

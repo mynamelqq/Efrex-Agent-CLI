@@ -7,6 +7,12 @@ import { formatLogMetadata } from '../utils/format.js';
 import { getLogDisplayTitle } from '../utils/log.js';
 import { truncateToWidth } from '../utils/truncate.js';
 
+const CARD_BORDER_COLOR = '#8758d8';
+const CARD_ACCENT_COLOR = '#bd7cff';
+const SESSION_TITLE_COLOR = '#c4cad3';
+const SESSION_METADATA_COLOR = '#7f8999';
+const MAX_VISIBLE_SESSIONS = 5;
+
 export type LogSelectorProps = {
 	logs: LogOption[];
 	maxHeight?: number;
@@ -33,12 +39,16 @@ export function LogSelector({
 		);
 	}, [logs]);
 
-	const reservedRows = logs.length > 0 ? 7 : 5;
+	// The card stays at a stable height while its contents change. This lets Ink
+	// update the selector in place instead of leaving old rows in scrollback.
+	const reservedRows = 7;
+	const cardHeight = Math.min(maxHeight, reservedRows + MAX_VISIBLE_SESSIONS);
 	const visibleCount = Math.max(
 		1,
 		Math.min(
 			logs.length,
-			Math.floor((maxHeight - reservedRows) / 2) || logs.length
+			MAX_VISIBLE_SESSIONS,
+			Math.floor(cardHeight - reservedRows)
 		)
 	);
 	const windowStart = Math.max(
@@ -50,9 +60,7 @@ export function LogSelector({
 	);
 	const visibleLogs = logs.slice(windowStart, windowStart + visibleCount);
 	const selectedLog = logs[selectedIndex];
-	const contentWidth = Math.max(32, columns - 4);
-	const rowWidth = Math.max(20, contentWidth - 1);
-	const dividerWidth = Math.max(1, Math.min(columns, 100));
+	const contentWidth = Math.max(20, columns - 6);
 
 	useInput((input, key) => {
 		if (key.upArrow) {
@@ -87,36 +95,24 @@ export function LogSelector({
 	});
 
 	return (
-		<Box flexDirection="column" height={maxHeight}>
+		<Box
+			borderColor={CARD_BORDER_COLOR}
+			borderStyle="round"
+			flexDirection="column"
+			height={cardHeight}
+			paddingX={2}
+			paddingY={1}
+			width="100%"
+		>
 			<Box flexShrink={0}>
-				<Text color="ansi:blackBright">{'─'.repeat(dividerWidth)}</Text>
-			</Box>
-			<Box flexShrink={0}>
-				<Text> </Text>
-			</Box>
-
-			<Box flexShrink={0}>
-				<Text bold color="cyanBright">
-					Resume Session
+				<Text bold color={CARD_ACCENT_COLOR}>
+					◷  Recent Sessions
 					{logs.length > visibleCount ? (
-						<Text color="ansi:blackBright">
+						<Text color={SESSION_METADATA_COLOR}>
 							{' '}
 							({selectedIndex + 1} of {logs.length})
 						</Text>
 					) : null}
-				</Text>
-			</Box>
-
-			<Box flexShrink={0} paddingLeft={2}>
-				<Text color="ansi:blackBright">scope </Text>
-				<Text color={showAllProjects ? 'yellowBright' : 'greenBright'}>
-					{showAllProjects ? 'all projects' : 'current project'}
-				</Text>
-				<Text color="ansi:blackBright"> · </Text>
-				<Text color="cyanBright">{logs.length}</Text>
-				<Text color="ansi:blackBright">
-					{' '}
-					resumable {logs.length === 1 ? 'session' : 'sessions'}
 				</Text>
 			</Box>
 
@@ -135,27 +131,20 @@ export function LogSelector({
 							title={getLogDisplayTitle(log)}
 							metadata={formatLogMetadata(log)}
 							isSelected={isSelected}
-							index={absoluteIndex}
-							width={rowWidth}
+							width={contentWidth}
 						/>
 					);
 				})}
 			</Box>
 
-			{logs.length > visibleCount ? (
-				<Box flexShrink={0} paddingLeft={2}>
-					<Text color="ansi:blackBright">
-						Showing {windowStart + 1}-{windowStart + visibleLogs.length}
-					</Text>
-				</Box>
-			) : null}
+			<Box flexGrow={1} />
 
-			<Box paddingLeft={2} flexShrink={0}>
-				<Text color="ansi:blackBright">
-					<Text color="cyanBright">↑/↓</Text> navigate ·{' '}
-					<Text color="greenBright">Enter</Text> resume
+			<Box flexShrink={0}>
+				<Text color={SESSION_METADATA_COLOR}>
+					<Text color={CARD_ACCENT_COLOR}>↑/↓</Text> navigate ·{' '}
+					<Text color={CARD_ACCENT_COLOR}>Enter</Text> resume
 					{onToggleAllProjects
-						? ` · Ctrl+A show ${
+						? ` · Ctrl+A ${
 								showAllProjects ? 'current project' : 'all projects'
 							}`
 						: ''}
@@ -170,47 +159,32 @@ function SessionRow({
 	title,
 	metadata,
 	isSelected,
-	index,
 	width,
 }: {
 	title: string;
 	metadata: string;
 	isSelected: boolean;
-	index: number;
 	width: number;
 }): React.ReactNode {
-	const marker = isSelected ? figures.pointer : ' ';
-	const number = String(index + 1);
-	const numberPrefix = `${number}. `;
-	const titleColor = isSelected ? 'cyanBright' : undefined;
-	const metadataColor = isSelected ? 'ansi:cyan' : 'ansi:blackBright';
-	const titlePrefixWidth = stringWidth(`${marker} ${numberPrefix}`);
-	const titleWidth = Math.max(1, width - titlePrefixWidth);
-	const metadataPrefixWidth = 4;
-	const metadataWidth = Math.max(1, width - metadataPrefixWidth);
-	const titleLine = padToWidth(
-		`${marker} ${numberPrefix}${truncateToWidth(title, titleWidth)}`,
-		width
+	const marker = isSelected ? figures.pointer : '•';
+	const metadataWidth = Math.min(
+		Math.max(8, Math.floor(width * 0.4)),
+		stringWidth(metadata)
 	);
-	const metadataLine = padToWidth(
-		`${' '.repeat(metadataPrefixWidth)}${truncateToWidth(
-			metadata,
-			metadataWidth
-		)}`,
-		width
-	);
+	const titleWidth = Math.max(1, width - metadataWidth - 4);
 
 	return (
-		<Box flexDirection="column" paddingLeft={1} width={width + 1}>
-			<Text bold={isSelected} color={titleColor}>
-				{titleLine}
+		<Box flexShrink={0} justifyContent="space-between" width={width}>
+			<Text
+				bold={isSelected}
+				color={isSelected ? CARD_ACCENT_COLOR : SESSION_TITLE_COLOR}
+			>
+				<Text color={CARD_ACCENT_COLOR}>{marker}</Text>{'  '}
+				{truncateToWidth(title, titleWidth)}
 			</Text>
-			<Text color={metadataColor}>{metadataLine}</Text>
+			<Text color={SESSION_METADATA_COLOR}>
+				{truncateToWidth(metadata, metadataWidth)}
+			</Text>
 		</Box>
 	);
-}
-
-function padToWidth(text: string, width: number): string {
-	const padding = Math.max(0, width - stringWidth(text));
-	return padding === 0 ? text : `${text}${' '.repeat(padding)}`;
 }

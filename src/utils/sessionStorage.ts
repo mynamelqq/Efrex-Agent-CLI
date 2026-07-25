@@ -9,7 +9,7 @@ import { FileHistorySnapshotMessage, Entry } from 'src/types/logs.js'
 import { SerializedMessage } from 'src/types/logs.js'
 import type { FileHistorySnapshot } from './fileHistory.js'
 import { readdir } from 'fs/promises'
-import { openSync,closeSync,fstatSync,readSync,appendFileSync,mkdirSync } from 'fs'
+import { openSync,closeSync,fstatSync,readSync,appendFileSync,mkdirSync, statSync } from 'fs'
 import { registerCleanup } from './cleanupRegistry.js'
 import { COMMAND_NAME_TAG } from 'src/constants/xml.js'
 import { Dirent } from 'fs'
@@ -43,6 +43,7 @@ import { parseJSONL } from './json.js'
 
 import { getOriginalCwd, getSessionId } from '../bootstrap/state.js'
 import { getEfrexConfigHomeDir } from './envUtils.js'
+import { SessionId } from 'src/types/ids.js'
 type Transcript = (
   | UserMessage
   | AssistantMessage
@@ -2884,4 +2885,24 @@ async function getStatOnlyLogsForWorktrees(
   // Deduplicate by sessionId — the same session can appear in multiple
   // worktree project dirs. Keep the entry with the newest modified time.
   return deduplicateLogsBySessionId(allLogs)
+}
+export function sessionIdExists(sessionId: string): boolean {
+  const projectDir = getProjectDir(getOriginalCwd())
+  const sessionFile = join(projectDir, `${sessionId}.jsonl`)
+
+  try {
+    statSync(sessionFile)
+    return true
+  } catch {
+    return false
+  }
+}
+export function getCurrentSessionTitle(
+  sessionId: SessionId,
+): string | undefined {
+  // Only returns title for current session (the only one we cache)
+  if (sessionId === getSessionId()) {
+    return getProject().currentSessionTitle
+  }
+  return undefined
 }

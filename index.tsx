@@ -6,9 +6,13 @@
  *
  * @author Yaqi Li <github.com/mynamelqq>
  */
-import { AppState, getDefaultAppState } from 'src/state/AppState.js';
-
-import { getCwd } from 'src/utils/cwd.js';
+import { AppState, getDefaultAppState } from './src/state/AppState.js';
+import {
+	exitWithError,
+	getRenderContext,
+  showSetupScreens
+} from './src/interactiveHelpers.js';
+import { getCwd } from './src/utils/cwd.js';
 import { loadConversationForResume } from 'src/utils/conservationRecovery.js';
 import React from 'react';
 import { processResumedConversation } from 'src/utils/sessionRestore.js';
@@ -17,12 +21,14 @@ import path from 'node:path';
 import Launcher from './src/launcher.js';
 import { init } from 'src/entrypoints/init.js';
 import { homedir } from 'node:os';
-import { render } from './src/ink.js';
+import { createRoot, Root } from './src/ink.js';
 import { existsSync, mkdirSync } from 'node:fs';
 import { getSettingsWithErrors } from 'src/utils/settings/settings.js';
+import { enableConfigs } from './src/utils/config.js';
 import { InvalidSettingsDialog } from './src/components/InvalidSettingsDialog.js';
 import { getCommands } from 'src/commands.js';
 import type { Props as LauncherProps } from './src/QueryApp.js';
+import { gracefulShutdown } from 'src/utils/gracefulShutdown.js';
 
 function gracefulShutdownSync(exitCode: number): never {
 	process.exit(exitCode);
@@ -54,6 +60,10 @@ function StartupGate({
 
 (async () => {
 	process.title='efrex'
+    // Ink root is only needed for interactive sessions — patchConsole in the
+	// Ink constructor would swallow console output in headless mode.
+	let root!: Root;
+	
 	const rawArgs = process.argv.slice(2);
 	const args = rawArgs.filter(arg => arg !== '--');
 	const hasContinue =
@@ -85,7 +95,11 @@ function StartupGate({
 	) {
 		return;
 	}
+	const ctx = getRenderContext(false);
+	root = await createRoot(ctx.renderOptions);
 
+	enableConfigs();
+	const onboardingShown = await showSetupScreens(root);
 	const { initSinks } = await import('src/utils/sinks.js');
     initSinks();
 
@@ -148,6 +162,25 @@ function StartupGate({
 			process.exit(1);
 		}
 	}
+	// const { checkAndRefreshOAuthTokenIfNeeded} = await import('src/utils/auth.js');
+	// const {getClaudeAIOAuthTokens}=await import('src/cli/auth.js');
+	// await checkAndRefreshOAuthTokenIfNeeded();
+	// let apiCreds;
+	// try {
+    //        const accessToken = getClaudeAIOAuthTokens()?.accessToken
+	// 		if (accessToken === undefined) {
+	// 			throw new Error(
+	// 			'Claude Code web sessions require authentication with a Claude.ai account. API key authentication is not sufficient. Please run /login to authenticate, or check your authentication status with /status.',
+	// 			)
+	// 		}
+	// 		apiCreds = { accessToken };
+    //     } catch (e) {
+    //       return await exitWithError(root, `Error: ${e instanceof Error ? e.message : 'Failed to authenticate'}`, () =>
+    //         gracefulShutdown(1),
+    //       );
+	// }
+	// const getAccessToken = (): string => getClaudeAIOAuthTokens()?.accessToken ?? apiCreds?.accessToken;
+	
 
 	const launcherProps: React.ComponentProps<typeof Launcher> = {
 		initialState,
@@ -159,12 +192,9 @@ function StartupGate({
 	};
 
 	const { errors } = getSettingsWithErrors();
-	const app = await render(
+	root.render(
 		<StartupGate settingsErrors={errors} launcherProps={launcherProps} />,
-		{
-			exitOnCtrlC: false,
-		},
 	);
-	await app.waitUntilExit();
+	await root.waitUntilExit();
 	gracefulShutdownSync(0);
 })();

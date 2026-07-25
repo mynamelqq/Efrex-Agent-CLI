@@ -24,6 +24,11 @@ import {
 import { isEnvTruthy } from '../../utils/envUtils.js'
 import { formatFileSize } from '../../utils/format.js'
 import { ImageResizeError } from '../../utils/imageResizer.js'
+import { formatAPIError } from 'packages/@ant/model-provider/src/index.js'
+import { getAPIProvider } from 'src/utils/model/provider.js'
+import { isClaudeAISubscriber } from 'src/utils/auth.js'
+import { getClaudeAIOAuthTokens } from 'src/cli/auth.js'
+import { ImageSizeError } from 'src/utils/imageValidation.js'
 
 
 
@@ -72,6 +77,12 @@ export function parsePromptTooLongTokenCounts(rawMessage: string): {
     actualTokens: match ? parseInt(match[1]!, 10) : undefined,
     limitTokens: match ? parseInt(match[2]!, 10) : undefined,
   }
+}
+export function getOauthOrgNotAllowedErrorMessage(): string {
+  return OAUTH_ORG_NOT_ALLOWED_ERROR_MESSAGE
+}
+export function getTokenRevokedErrorMessage(): string {
+  return TOKEN_REVOKED_ERROR_MESSAGE
 }
 
 /**
@@ -356,4 +367,160 @@ export function extractUnknownErrorFormat(value: unknown): string | undefined {
 
 
 
+
+export function getAssistantMessageFromError(//这个函数负责把各种 API error 转成 UI 里显示的 assistant error message。
+  error: unknown,
+  model: string,
+  options?: {
+    messages?: Message[]
+    messagesForAPI?: (UserMessage | AssistantMessage)[]
+  },
+): AssistantMessage {
+
+  if (
+    error instanceof APIConnectionTimeoutError ||
+    (error instanceof APIConnectionError &&
+      error.message.toLowerCase().includes('timeout'))
+  ) {
+    return createAssistantAPIErrorMessage({
+      content: API_TIMEOUT_ERROR_MESSAGE,
+      error: 'unknown',
+    })
+  }
+
+  // Check for image size/resize errors (thrown before API call during validation)
+  // Use getImageTooLargeErrorMessage() to show "esc esc" hint for CLI users
+  // but a generic message for SDK users (non-interactive mode)
+  if (error instanceof ImageSizeError || error instanceof ImageResizeError) {
+    return createAssistantAPIErrorMessage({
+      content: getImageTooLargeErrorMessage(),
+    })
+  }
+
+  // Check for emergency capacity off switch for Opus PAYG users
+  if (
+    error instanceof Error &&
+    error.message.includes(CUSTOM_OFF_SWITCH_MESSAGE)
+  ) {
+    return createAssistantAPIErrorMessage({
+      content: CUSTOM_OFF_SWITCH_MESSAGE,
+      error: 'rate_limit',
+    })
+  }
+
+
+  // Handle prompt too long errors (Vertex returns 413, direct API returns 400)
+  // Use case-insensitive check since Vertex returns "Prompt is too long" (capitalized)
+  if (
+    error instanceof Error &&
+    error.message.toLowerCase().includes('prompt is too long')
+  ) {
+    // Content stays generic (UI matches on exact string). The raw error with
+    // token counts goes into errorDetails — reactive compact's retry loop
+    // parses the gap from there via getPromptTooLongTokenGap.
+    return createAssistantAPIErrorMessage({
+      content: PROMPT_TOO_LONG_ERROR_MESSAGE,
+      error: 'invalid_request',
+      errorDetails: error.message,
+    })
+  }
+
+
+  // Check for image size errors (e.g., "image exceeds 5 MB maximum: 5316852 bytes > 5242880 bytes")
+  if (
+    error instanceof APIError &&
+    error.status === 400 &&
+    error.message.includes('image exceeds') &&
+    error.message.includes('maximum')
+  ) {
+    return createAssistantAPIErrorMessage({
+      content: getImageTooLargeErrorMessage(),
+      errorDetails: error.message,
+    })
+  }
+
+
+  // Check for tool_use/tool_result concurrency error
+  if (
+    error instanceof APIError &&
+    error.status === 400 &&
+    error.message.includes(
+      '`tool_use` ids were found without `tool_result` blocks immediately after',
+    )
+  ) {
+    // Log to Statsig if we have the message context
+    if (options?.messages && options?.messagesForAPI) {
+      const toolUseIdMatch = error.message.match(/toolu_[a-zA-Z0-9]+/)
+      const toolUseId = toolUseIdMatch ? toolUseIdMatch[0] : null
+      if (toolUseId) {
+        logToolUseToolResultMismatch(
+          toolUseId,
+          options.messages,
+          options.messagesForAPI,
+        )
+      }
+    }
+  }
+
+
+
+
+  if (
+    error instanceof Error &&
+    error.message.includes('Your credit balance is too low')
+  ) {
+    return createAssistantAPIErrorMessage({
+      content: CREDIT_BALANCE_TOO_LOW_ERROR_MESSAGE,
+      error: 'billing_error',
+    })
+  }
+  // Check for OAuth token revocation error
+  if (
+    error instanceof APIError &&
+    error.status === 403 &&
+    error.message.includes('OAuth token has been revoked')
+  ) {
+    return createAssistantAPIErrorMessage({
+      error: 'authentication_failed',
+      content: getTokenRevokedErrorMessage(),
+    })
+  }
+
+  // Check for OAuth organization not allowed error
+  if (
+    error instanceof APIError &&
+    (error.status === 401 || error.status === 403) &&
+    error.message.includes(
+      'OAuth authentication is currently not allowed for this organization',
+    )
+  ) {
+    return createAssistantAPIErrorMessage({
+      error: 'authentication_failed',
+      content: getOauthOrgNotAllowedErrorMessage(),
+    })
+  }
+
+  // Connection errors (non-timeout) — use formatAPIError for detailed messages
+  if (error instanceof APIConnectionError) {
+    return createAssistantAPIErrorMessage({
+      content: `${API_ERROR_MESSAGE_PREFIX}: ${formatAPIError(error)}`,
+      error: 'unknown',
+    })
+  }
+
+  if (error instanceof Error) {
+    return createAssistantAPIErrorMessage({
+      content: `${API_ERROR_MESSAGE_PREFIX}: ${error.message}`,
+      error: 'unknown',
+    })
+  }
+  return createAssistantAPIErrorMessage({
+    content: API_ERROR_MESSAGE_PREFIX,
+    error: 'unknown',
+  })
+  return createAssistantAPIErrorMessage({
+    content: API_ERROR_MESSAGE_PREFIX,
+    error: 'unknown',
+  })
+}
 

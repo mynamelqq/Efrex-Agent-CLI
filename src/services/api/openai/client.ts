@@ -1,8 +1,12 @@
 import OpenAI from 'openai'
+import { getSessionId } from 'src/bootstrap/state'
 import { openaiAdapter } from 'src/services/providerUsage/adapters/openai.js'
 import { updateProviderBuckets } from 'src/services/providerUsage/store.js'
+import { checkAndRefreshOAuthTokenIfNeeded } from 'src/utils/auth'
 // import { getProxyFetchOptions } from 'src/utils/proxy.js'
 import { isEnvTruthy } from 'src/utils/envUtils.js'
+import { getUserAgent } from 'src/utils/http'
+import { getCustomHeaders } from '../anthropic'
 
 /**
  * Environment variables:
@@ -45,10 +49,8 @@ export async function getOpenAIClient(options?: {
 }): Promise<OpenAI> {
   if (testClient) return testClient
   if (cachedClient) return cachedClient
-
   const apiKey = process.env.AUTH_TOKEN || ''
   const baseURL = process.env.BASE_URL
-
   if (!apiKey.trim()) {
     throw new Error(
       'Missing OPENAI_API_KEY. Configure it in the shell environment, user settings env, or the project .env file.',

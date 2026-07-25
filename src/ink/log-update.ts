@@ -231,6 +231,17 @@ export class LogUpdate {
     // previous frame scrolled 1 row into scrollback. Use >= to catch this.
     const prevHadScrollback =
       cursorAtBottom && prev.screen.height >= prev.viewport.height
+    const isShrinking = next.screen.height < prev.screen.height
+    const nextFitsViewport = next.screen.height <= prev.viewport.height
+
+    // If the previous frame overflowed into terminal scrollback and the next
+    // frame shrinks back into the viewport, the old scrollback rows cannot be
+    // brought back into view with relative cursor movement.  Repaint from a
+    // stable viewport position instead of taking the normal shrink path.
+    // This is the common spinner/status -> completed-prompt transition.
+    if (prevHadScrollback && nextFitsViewport && isShrinking) {
+      return fullResetSequence_CAUSES_FLICKER(next, 'offscreen', stylePool)
+    }
 
     if (
       prev.screen.height >= prev.viewport.height &&
@@ -529,8 +540,113 @@ function fullResetSequence_CAUSES_FLICKER(
 ): Diff {
   // After clearTerminal, cursor is at (0, 0)
   const screen = new VirtualScreen({ x: 0, y: 0 }, frame.viewport.width)
-  renderFrame(screen, frame, stylePool)
+  // On the main screen, rows above the viewport are already in terminal
+  // scrollback. Replaying the complete frame with LF would append those rows
+  // a second time, which is visible as a duplicated/residual conversation.
+  if (frame.screen.height <= frame.viewport.height) {
+    renderFrameInViewport(screen, frame, stylePool)
+  } else {
+    renderVisibleFrameViewport(screen, frame, stylePool)
+  }
   return [{ type: 'clearTerminal', reason, debug }, ...screen.diff]
+}
+
+/** Paint only the visible tail of an overflowing main-screen frame. */
+function renderVisibleFrameViewport(
+  screen: VirtualScreen,
+  frame: Frame,
+  stylePool: StylePool,
+): void {
+  const visibleContentRows = Math.max(0, frame.viewport.height - 1)
+  const startY = Math.max(0, frame.screen.height - visibleContentRows)
+  renderFrameSliceAtViewportTop(
+    screen,
+    frame,
+    startY,
+    frame.screen.height,
+    stylePool,
+  )
+  parkAfterViewportPaint(screen, frame, startY)
+}
+
+function renderFrameSliceAtViewportTop(
+  screen: VirtualScreen,
+  frame: Frame,
+  startY: number,
+  endY: number,
+  stylePool: StylePool,
+): void {
+  let currentStyleId = stylePool.none
+  let currentHyperlink: Hyperlink
+  let lastRenderedStyleId = -1
+
+  const { width: screenWidth, cells, charPool, hyperlinkPool } = frame.screen
+  let index = startY * screenWidth
+
+  for (let sourceY = startY; sourceY < endY; sourceY += 1) {
+    const viewportY = sourceY - startY
+    lastRenderedStyleId = -1
+
+    for (let x = 0; x < screenWidth; x += 1, index += 1) {
+      const cell = visibleCellAtIndex(
+        cells,
+        charPool,
+        hyperlinkPool,
+        index,
+        lastRenderedStyleId,
+      )
+      if (!cell) continue
+
+      moveCursorTo(screen, x, viewportY)
+      currentHyperlink = transitionHyperlink(
+        screen.diff,
+        currentHyperlink,
+        cell.hyperlink,
+      )
+      const styleStr = stylePool.transition(currentStyleId, cell.styleId)
+      if (writeCellWithStyleStr(screen, cell, styleStr)) {
+        currentStyleId = cell.styleId
+        lastRenderedStyleId = cell.styleId
+      }
+    }
+
+    currentStyleId = transitionStyle(
+      screen.diff,
+      stylePool,
+      currentStyleId,
+      stylePool.none,
+    )
+    currentHyperlink = transitionHyperlink(
+      screen.diff,
+      currentHyperlink,
+      undefined,
+    )
+  }
+
+  transitionStyle(screen.diff, stylePool, currentStyleId, stylePool.none)
+  transitionHyperlink(screen.diff, currentHyperlink, undefined)
+}
+
+function renderFrameInViewport(
+  screen: VirtualScreen,
+  frame: Frame,
+  stylePool: StylePool,
+): void {
+  renderFrameSliceAtViewportTop(screen, frame, 0, frame.screen.height, stylePool)
+  parkAfterViewportPaint(screen, frame, 0)
+}
+
+function parkAfterViewportPaint(
+  screen: VirtualScreen,
+  frame: Frame,
+  sourceStartY: number,
+): void {
+  const physicalY = Math.max(
+    0,
+    Math.min(frame.viewport.height - 1, frame.cursor.y - sourceStartY),
+  )
+  moveCursorTo(screen, frame.cursor.x, physicalY)
+  screen.cursor = { ...frame.cursor }
 }
 
 function renderFrame(

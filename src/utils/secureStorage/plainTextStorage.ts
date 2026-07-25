@@ -43,7 +43,7 @@ export const plainTextStorage = {
     try {
       const { storageDir, storagePath } = getStoragePath()
       try {
-        mkdirSync(storageDir)
+        mkdirSync(storageDir,{recursive:true})
       } catch (e: unknown) {
         const code = getErrnoCode(e)
         if (code !== 'EEXIST') {

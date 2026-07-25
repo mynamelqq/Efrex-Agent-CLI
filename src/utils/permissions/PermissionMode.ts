@@ -7,7 +7,7 @@ import {
   PERMISSION_MODES,
   type PermissionMode,
 } from '../../types/permissions.js'
-import type { Color } from '../theme.js'
+import type { Color } from 'packages/@ant/ink/src/index.js'
 import { lazySchema } from '../lazySchema.js'
 
 // Re-export for backwards compatibility

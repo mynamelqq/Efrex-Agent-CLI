@@ -60,6 +60,7 @@ import { getAllBaseTools } from './tools.js';
 import { query } from './query.js';
 import { handlePromptSubmit } from './utils/handlePromptSubmit.js';
 import { getAnthropicModel } from './utils/anthropicConfig.js';
+import { getInitialSettings } from './utils/settings/settings.js';
 import { FileStateCache } from './utils/fileStateCache.js';
 import { getSystemPrompt } from './constants/prompts.js';
 import { getUserContext, getSystemContext } from './context.js';
@@ -2708,7 +2709,17 @@ const getToolUseContext = useCallback(
 			},
 			setConversationId,
 			readFileState: readFileState.current,
-			onChangeAPIKey: () => {}
+			onChangeAPIKey: () => {
+				const settings = getInitialSettings();
+				setAppState(prev => ({
+					...prev,
+					settings,
+					mainLoopModel:
+						typeof settings.model === 'string'
+							? settings.model
+							: prev.mainLoopModel,
+				}));
+			}
 			};
 		},
 		[

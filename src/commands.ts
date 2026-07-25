@@ -10,10 +10,17 @@ import { CommandResult } from './types/command.js';
 import { getCommandName } from './types/command.js';
 import resume from './commands/resume/index.js';
 import clear from './commands/clear/index.js';
+import login from './commands/login/index.js';
+import { isUsing3PServices } from './utils/auth.js';
+import logout from './commands/logout/index.js';
+import exit from './commands/exit/index.js';
 export const COMMANDS = memoize((): Command[] => [
   model,
   effort,
-  clear,resume
+  clear,
+  resume,
+  exit,
+  ...(!isUsing3PServices() ? [logout, login()] : []),
 ].filter(Boolean))
 /**
  * Loads all command sources (skills, plugins, workflows). Memoized by cwd

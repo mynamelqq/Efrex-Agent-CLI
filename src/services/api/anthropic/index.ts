@@ -22,8 +22,12 @@ import { normalizeMessagesForAPI, toolToAPISchema } from 'src/utils/api.js';
 import { strip1mContextSuffix } from 'src/utils/model/modelName.js';
 import type { ThinkingConfig } from 'src/utils/effort.js';
 import type { Options } from '../efrex.js';
+import { getUserAgent } from 'src/utils/http.js';
+import { getSessionId } from 'src/bootstrap/state.js';
+import { checkAndRefreshOAuthTokenIfNeeded, isClaudeAISubscriber } from 'src/utils/auth.js';
+import { ClientOptions } from 'openai/client';
 
-function getAnthropicClient(): Anthropic {
+async function getAnthropicClient(): Promise<Anthropic> {
 	const apiKey = getAnthropicApiKey();
 	if (!apiKey?.trim()) {
 		throw new Error(
@@ -38,7 +42,31 @@ function getAnthropicClient(): Anthropic {
 		maxRetries: 0,
 	});
 }
+export function getCustomHeaders(): Record<string, string> {
+  const customHeaders: Record<string, string> = {}
+  const customHeadersEnv = process.env.ANTHROPIC_CUSTOM_HEADERS
 
+  if (!customHeadersEnv) return customHeaders
+
+  // Split by newlines to support multiple headers
+  const headerStrings = customHeadersEnv.split(/\n|\r\n/)
+
+  for (const headerString of headerStrings) {
+    if (!headerString.trim()) continue
+
+    // Parse header in format "Name: Value" (curl style). Split on first `:`
+    // then trim — avoids regex backtracking on malformed long header lines.
+    const colonIdx = headerString.indexOf(':')
+    if (colonIdx === -1) continue
+    const name = headerString.slice(0, colonIdx).trim()
+    const value = headerString.slice(colonIdx + 1).trim()
+    if (name) {
+      customHeaders[name] = value
+    }
+  }
+
+  return customHeaders
+}
 function toAnthropicMessages(messages: Message[], tools: Tools): BetaMessageParam[] {
 	return normalizeMessagesForAPI(messages, tools).map(message => ({
 		role: message.type,
@@ -97,7 +125,7 @@ export async function* queryModelAnthropic(
 	void
 > {
 	try {
-		const client = getAnthropicClient();
+		const client = await getAnthropicClient();
 		const apiModel = strip1mContextSuffix(options.model);
 		const anthropicMessages = toAnthropicMessages(messages, tools);
 		const anthropicTools: BetaToolUnion[] = await Promise.all(
