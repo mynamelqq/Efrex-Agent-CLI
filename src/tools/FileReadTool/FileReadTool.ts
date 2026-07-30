@@ -327,6 +327,7 @@ export const FileReadTool = buildTool({
   },
   renderToolResultMessage,
   renderToolUseMessage,
+  isEnabled(){return true},
   renderToolUseErrorMessage,
   get inputSchema(): InputSchema {
     return inputSchema()

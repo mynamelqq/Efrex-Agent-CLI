@@ -66,6 +66,7 @@ export async function toolToAPISchema(
     }
   },
 ): Promise<BetaToolUnion> {
+  
   const cacheKey =
   'inputJSONSchema' in tool && tool.inputJSONSchema
     ? `${tool.name}:${JSON.stringify(tool.inputJSONSchema)}`

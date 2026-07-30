@@ -6,6 +6,7 @@ import { Props as queryAppProps } from './QueryApp.js'
 import { EBP, DBP } from './ink/termio/dec.js'
 import { AppStateProvider } from './state/AppState.js'
 import { AppState } from './state/AppState.js'
+import { ThemeProvider } from '@anthropic/ink'
 function TrustPrompt({ onTrust }: { onTrust: () => void }) {
   const { exit } = useApp()
   const [selectedIndex, setSelectedIndex] = React.useState(0)
@@ -77,15 +78,19 @@ export default function Launcher(props: LauncherProps) {
       process.stdout.write(DBP)
     }
   }, [])
-  if (!trusted) {
-    return <TrustPrompt onTrust={() => setTrusted(true)} />
-  }
-
+  // ThemeProvider seeds from the saved theme via the callbacks wired up in
+  // initThemeConfig(), and owns the live preview used by /theme.
   return (
-    <AppStateProvider initialState={initialState}>
-      <QueryApp
-        {...replProps}  >
-      </QueryApp>    
-    </AppStateProvider>
+    <ThemeProvider>
+      {!trusted ? (
+        <TrustPrompt onTrust={() => setTrusted(true)} />
+      ) : (
+        <AppStateProvider initialState={initialState}>
+          <QueryApp
+            {...replProps}  >
+          </QueryApp>
+        </AppStateProvider>
+      )}
+    </ThemeProvider>
   )
 }

@@ -9,7 +9,7 @@ import { countLinesChanged } from 'src/utils/diff.js'
 import { writeTextContent } from 'src/utils/file.js'
 import { fileHistoryTrackEdit } from 'src/utils/fileHistory.js'
 import { fileHistoryEnabled } from 'src/utils/fileHistory.js'
-import { mkdir } from 'fs'
+import { mkdir } from 'fs/promises'
 import { findActualString,preserveQuoteStyle,getPatchForEdit} from './utils.js'
 import { readFileSyncWithMetadata } from 'src/utils/fileRead.js'
 import { isEnvTruthy } from 'src/utils/envUtils.js'
@@ -55,6 +55,7 @@ export const FileEditTool = buildTool({
   async description() {
     return 'A tool for editing files'
   },
+  isEnabled(){return true},
   userFacingName,
   getToolUseSummary,
   get inputSchema() {
@@ -265,15 +266,15 @@ export const FileEditTool = buildTool({
     // Ensure parent directory exists before the atomic read-modify-write section.
     // These awaits must stay OUTSIDE the critical section below — a yield between
     // the staleness check and writeTextContent lets concurrent edits interleave.
-    await mkdir(dirname(absoluteFilePath),()=>{})
-    if (fileHistoryEnabled()) {
+    await mkdir(dirname(absoluteFilePath), { recursive: true })
+    if (fileHistoryEnabled() && assistantMessage?.uuid) {
       // Backup captures pre-edit content — safe to call before the staleness
       // check (idempotent v1 backup keyed on content hash; if staleness fails
       // later we just have an unused backup, not corrupt state).
       await fileHistoryTrackEdit(
         updateFileHistoryState,
         absoluteFilePath,
-        assistantMessage?.uuid,
+        assistantMessage.uuid,
       )
     }
 

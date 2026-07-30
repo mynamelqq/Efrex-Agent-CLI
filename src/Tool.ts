@@ -2,9 +2,14 @@ import { z } from 'zod/v4';
 import type { ReactNode } from 'react';
 import { Theme } from './utils/theme';
 import { AppState } from './state/AppStateStore';
+import { MCPServerConnection } from './services/mcp/types';
 import type { FileStateCache } from './utils/fileStateCache';
 import type { FileHistoryState } from './utils/fileHistory';
 import { ProgressMessage } from 'src/package/message';
+import type {
+  ElicitRequestURLParams,
+  ElicitResult,
+} from '@modelcontextprotocol/sdk/types.js'
 import {UUID}from "crypto";
 import type {
 	UserMessage,
@@ -25,7 +30,13 @@ import {
 	ToolPermissionRulesBySource
 } from './types/permissions';
 import { PermissionDecision, PermissionResult } from './types/permissions';
-import { MCPServerConnection } from 'packages/mcp-client/src';
+export type ToolInputJSONSchema = {
+  [x: string]: unknown
+  type: 'object'
+  properties?: {
+    [x: string]: unknown
+  }
+}
 export type ValidationResult =
 	| { result: true }
 	| {
@@ -85,7 +96,13 @@ export type ToolResult<T> = {
 		| SystemMessage
 	)[];
 	contextModifier?: (context: ToolUseContext) => ToolUseContext;
+	/** MCP 协议元数据（structedContent、_meta）传递给 SDK 使用者 */
+	mcpMeta?: {
+		_meta?: Record<string, unknown>
+		structuredContent?: Record<string, unknown>
+	}
 };
+
 /**
  * Finds a tool by name or alias from a list of tools.
  */
@@ -106,13 +123,26 @@ export type ToolUseContext = {
 		tools: Tools;
 		isNonInteractiveSession: boolean;
 		mcpClients: MCPServerConnection[]
+		/** 用于获取最新工具的可选回调（例如，在 MCP 服务器连接查询中后） */
+    	refreshTools?: () => Tools
 	};
 	readFileState: FileStateCache;
 	// addNotification?: (notif: Notification) => void
 	abortController: AbortController;
+
 	/** Custom system prompt that replaces the default system prompt */
 	contentReplacementState?: ContentReplacementState;
 	userModified?: boolean;
+	  /**
+	 * 由工具调用错误触发的 URL 引发的可选处理程序 (-32042)。
+	 * 在打印/SDK 模式下，这委托给 StructuredIO.handleElicitation。
+	 * 在 REPL 模式下，这是未定义的，并且使用基于队列的 UI 路径。
+	 */
+	handleElicitation?: (
+		serverName: string,
+		params: ElicitRequestURLParams,
+		signal: AbortSignal,
+	) => Promise<ElicitResult>
   	toolUseId?: string
 	updateFileHistoryState: (
 		updater: (prev: FileHistoryState) => FileHistoryState
@@ -143,9 +173,15 @@ export type Tool<
 	P extends ToolProgressData = ToolProgressData
 > = {
 	name: string;
-	searchHint: string; //搜索提示
+	searchHint?: string; //搜索提示
 	inputsEquivalent?(a: z.infer<Input>, b: z.infer<Input>): boolean;
 	maxResultSizeChars: number; //工具结果在持久化到磁盘之前允许的最大字符数
+	  /**
+* 当此工具为真时，它永远不会被延迟——即使启用了 ToolSearch，
+* 其完整架构仍会显示在初始提示中。
+* 对于MCP工具，请通过 `_meta['anthropic/alwaysLoad']` 设置。适用于模型必须在第一轮就看到、无需 ToolSearch 循环访问的工具。
+	 */
+	readonly alwaysLoad?: boolean
 	description(
 		input: z.infer<Input>,
 		options: {
@@ -159,8 +195,18 @@ export type Tool<
 		context: ToolUseContext
 	): Promise<PermissionResult>;
 	readonly inputSchema: Input;
+	  // Type for MCP tools that can specify their input schema directly in JSON Schema format
+	// rather than converting from Zod schema
+	readonly inputJSONSchema?: ToolInputJSONSchema
+
 	// Optional method for tools that operate on a file path
 	getPath?(input: z.infer<Input>): string;
+	  /**
+* 对于MCP工具：从MCP服务器接收到的服务器和工具名称（未标准化）。
+*  * 无论`name`是否带有前缀（mcp__server__tool）或无前缀（CLAUDE_AGENT_SDK_MCP_NO_PREFIX模式），所有MCP工具均包含此信息。
+	 */
+	mcpInfo?: { serverName: string; toolName: string }
+	isMcp?: boolean
 	outputSchema?: z.ZodType<unknown>;
 	/**
 	 * Determines if this tool is allowed to run with this input in the current context.

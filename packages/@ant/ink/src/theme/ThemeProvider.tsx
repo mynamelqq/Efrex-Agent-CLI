@@ -34,6 +34,16 @@ type ThemeContextValue = {
 // Non-'auto' default so useTheme() works without a provider (tests, tooling).
 const DEFAULT_THEME: ThemeName = 'dark';
 
+// Mirror of the resolved theme for code that renders outside the React tree
+// (plain render helpers that can't call hooks). Kept in sync from the provider
+// render body so readers see the new value in the same commit as the UI.
+let activeThemeName: ThemeName = DEFAULT_THEME;
+
+/** The theme currently in effect. Prefer useTheme() inside components. */
+export function getActiveThemeName(): ThemeName {
+  return activeThemeName;
+}
+
 const ThemeContext = createContext<ThemeContextValue>({
   themeSetting: DEFAULT_THEME,
   setThemeSetting: () => {},
@@ -92,6 +102,7 @@ export function ThemeProvider({ children, initialState, onThemeSave = defaultSav
   }, [activeSetting, internal_querier]);
 
   const currentTheme: ThemeName = activeSetting === 'auto' ? systemTheme : activeSetting;
+  activeThemeName = currentTheme;
 
   const value = useMemo<ThemeContextValue>(
     () => ({

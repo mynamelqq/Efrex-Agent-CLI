@@ -11,6 +11,9 @@ import type {
 } from '../services/mcp/types.js'
 import { Command } from 'src/types/command'
 import { ToolPermissionContext,getEmptyToolPermissionContext,Tool} from 'src/Tool'
+import { getGlobalConfig } from 'src/utils/config'
+import { ElicitationRequestEvent } from 'src/utils/elicitionHandler'
+import { LoadedPlugin, PluginError } from 'src/types/plugin'
 export type FooterItem =
   | 'tasks'
   | 'tmux'
@@ -54,14 +57,62 @@ export type AppState = DeepImmutable<{
     // Effort value
     effortValue?: EffortValue,
     fileHistory: FileHistoryState,
-    toolPermissionContext: ToolPermissionContext
+    toolPermissionContext: ToolPermissionContext,
+    elicitation: {
+    queue: ElicitationRequestEvent[]
+    },
+      plugins: {
+    enabled: LoadedPlugin[]
+    disabled: LoadedPlugin[]
+    commands: Command[]
+    /**
+     * Plugin system errors collected during loading and initialization.
+     * See {@link PluginError} type documentation for complete details on error
+     * structure, context fields, and display format.
+     */
+    errors: PluginError[]
+    // Installation status for background plugin/marketplace installation
+    installationStatus: {
+      marketplaces: Array<{
+        name: string
+        status: 'pending' | 'installing' | 'installed' | 'failed'
+        error?: string
+      }>
+      plugins: Array<{
+        id: string
+        name: string
+        status: 'pending' | 'installing' | 'installed' | 'failed'
+        error?: string
+      }>
+    }
+    /**
+     * Set to true when plugin state on disk has changed (background reconcile,
+     * /plugin menu install, external settings edit) and active components are
+     * stale. In interactive mode, user runs /reload-plugins to consume. In
+     * headless mode, refreshPluginState() auto-consumes via refreshActivePlugins().
+     */
+    needsRefresh: boolean
+  }
 }>
 
 export type AppStateStore = Store<AppState>
+
+function getInitialModel(): string {
+  const account = getGlobalConfig().oauthAccount
+  const availableModels = account?.availableModels
+  if (Array.isArray(availableModels) && availableModels.length > 0) {
+    if (account?.selectedModel && availableModels.includes(account.selectedModel)) {
+      return account.selectedModel
+    }
+    return availableModels[0]
+  }
+  return process.env.MODEL?.trim() || (getInitialSettings().model as string)
+}
+
 export function getDefaultAppState(): AppState {
   const initialMode: PermissionMode ='default'
    return {
-    mainLoopModel: getInitialSettings().model as string,
+    mainLoopModel: getInitialModel(),
     settings: getInitialSettings(),
     verbose:false,
     inbox: {
@@ -84,6 +135,20 @@ export function getDefaultAppState(): AppState {
     toolPermissionContext: {
       ...getEmptyToolPermissionContext(),
       mode: initialMode,
+    },
+    elicitation: {
+      queue: [],
+    },
+    plugins: {
+      enabled: [],
+      disabled: [],
+      commands: [],
+      errors: [],
+      installationStatus: {
+        marketplaces: [],
+        plugins: [],
+      },
+      needsRefresh: false,
     },
    }
 }

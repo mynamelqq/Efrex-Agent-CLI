@@ -4,6 +4,7 @@ import { getGlobalConfig } from '../utils/config.js';
 import { isEnvDefinedFalsy, isEnvTruthy } from '../utils/envUtils.js';
 import type { DetectedIDEInfo } from '../utils/ide.js';
 import {
+  detectIDEs,
   type IDEExtensionInstallationStatus,
   type IdeType,
   initializeIdeIntegration,
@@ -67,6 +68,13 @@ export function useIDEIntegration({
         };
       });
     }
+
+    // Do an immediate scan as well as the existing 30-second discovery flow.
+    // The latter can be cancelled by a concurrent search; without this scan a
+    // bridge that is already running may never be added to dynamic MCP config.
+    void detectIDEs(false).then(ides => {
+      addIde(ides.length === 1 ? ides[0]! : null);
+    });
 
     // Use the new utility function
     void initializeIdeIntegration(//读取ide lock配置 加入到appstate中，安装插件

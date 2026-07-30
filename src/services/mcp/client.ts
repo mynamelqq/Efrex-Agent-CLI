@@ -3,6 +3,7 @@ import type {
   ContentBlockParam,
   MessageParam,
 } from '@anthropic-ai/sdk/resources/index.mjs'
+import { ToolCallProgress } from 'src/Tool.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import {
   SSEClientTransport,
@@ -12,7 +13,8 @@ import { memoize } from 'lodash'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { createAbortController } from 'src/utils/abortController'
 import { logMCPDebug,logMCPError } from 'src/utils/log.js'
-import { normalizeNameForMCP, Transport } from 'packages/mcp-client/src'
+import pMap from 'p-map'
+import { buildMcpToolName, normalizeNameForMCP, recursivelySanitizeUnicode, Transport } from 'packages/mcp-client/src'
 import { errorMessage } from 'src/utils/errors.js'
 import { sleep } from 'bun'
 import { getOriginalCwd } from 'src/bootstrap/state.js'
@@ -56,8 +58,25 @@ import {
 import { maybeNotifyIDEConnected } from '../../utils/ide.js'
 import { registerCleanup } from 'src/utils/cleanupRegistry.js'
 import { MCPProgress } from '../compact/querySource.js'
-import { MCPToolResult } from 'src/utils/mcpValidation.js'
+import { getContentSizeEstimate, mcpContentNeedsTruncation, MCPToolResult, truncateMcpContentIfNeeded } from 'src/utils/mcpValidation.js'
 import { isPersistError, persistToolResult } from 'src/utils/toolResultStorage.js'
+import { subprocessEnv } from 'src/utils/subprocessEnv.js'
+import zipObject from 'lodash/zipObject.js'
+import { Tool } from 'src/Tool.js'
+import { Command } from 'src/types/command.js'
+import { getAllMcpConfigs } from './config.js'
+import { count } from 'src/utils/array.js'
+import { getBinaryBlobSavedMessage, getFormatDescription, getLargeOutputInstructions, persistBinaryContent } from 'src/utils/mcpOutputStorage.js'
+import { maybeResizeAndDownsampleImageBuffer } from 'src/utils/imageResizer.js'
+import { memoizeWithLRU } from 'src/utils/memoize.js'
+import { isEnvTruthy } from 'src/utils/envUtils.js'
+import { AssistantMessage } from 'src/package/message.js'
+import { MCPTool } from 'src/tools/MCPTool/MCPTool.js'
+import { AppState } from 'src/state/AppState.js'
+import { ElicitationWaitingState } from 'src/utils/elicitionHandler.js'
+// fetch*缓存的最大缓存大小。按服务器名称键入（跨域稳定）
+// 重新连接），有限制以防止许多 MCP 服务器的无限制增长。
+const MCP_FETCH_CACHE_SIZE = 20
 /**
  * Custom error class to indicate that an MCP tool call failed due to
  * authentication issues (e.g., expired OAuth token returning 401).
@@ -95,6 +114,12 @@ function getConnectionTimeoutMs(): number {
  * Default timeout for MCP tool calls (effectively infinite - ~27.8 hours).
  */
 const DEFAULT_MCP_TOOL_TIMEOUT_MS = 100_000_000
+const IMAGE_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+])
 
 /**
  * Cap on MCP tool descriptions and server instructions sent to the model.
@@ -102,6 +127,8 @@ const DEFAULT_MCP_TOOL_TIMEOUT_MS = 100_000_000
  * docs into tool.description; this caps the p95 tail without losing the intent.
  */
 const MAX_MCP_DESCRIPTION_LENGTH = PKG_MAX_MCP_DESCRIPTION_LENGTH
+const applicationVersion =
+  typeof MACRO !== 'undefined' ? MACRO.VERSION : '0.0.1'
 /**
  * Gets the timeout for MCP tool calls in milliseconds.
  * Uses MCP_TOOL_TIMEOUT environment variable if set, otherwise defaults to ~27.8 hours.
@@ -112,6 +139,23 @@ function getMcpToolTimeoutMs(): number {
     DEFAULT_MCP_TOOL_TIMEOUT_MS
   )
 }
+export function getMcpServerConnectionBatchSize(): number {
+  return parseInt(process.env.MCP_SERVER_CONNECTION_BATCH_SIZE || '', 10) || 3
+}
+function getRemoteMcpServerConnectionBatchSize(): number {
+  return (
+    parseInt(process.env.MCP_REMOTE_SERVER_CONNECTION_BATCH_SIZE || '', 10) ||
+    20
+  )
+}
+// For the IDE MCP servers, we only include specific tools
+const ALLOWED_IDE_TOOLS = ['mcp__ide__executeCode', 'mcp__ide__getDiagnostics']
+function isIncludedMcpTool(tool: Tool): boolean {
+  return (
+    !tool.name.startsWith('mcp__ide__') || ALLOWED_IDE_TOOLS.includes(tool.name)
+  )
+}
+
 /**
  * Thrown when an MCP tool returns `isError: true`. Carries the result's `_meta`
  * so SDK consumers can still receive it — per the MCP spec, `_meta` is on the
@@ -165,11 +209,11 @@ export const connectToServer = memoize(
       | undefined
     try {
         let transport:any
-        if (serverRef.type === 'sse-ide') {
+        if (serverRef.type === 'sse-ide') {//ide插件  目前只支持sse-ide
             logMCPDebug(name, `Setting up SSE-IDE transport to ${serverRef.url}`)
             // IDE servers don't need authentication
             
-            const transportOptions: SSEClientTransportOptions = {}//无代理
+            const transportOptions: SSEClientTransportOptions = {}//无代理 
 
             transport = new SSEClientTransport(
             new URL(serverRef.url),
@@ -178,18 +222,66 @@ export const connectToServer = memoize(
                 : undefined,
             )
         }
+        else if (
+        (serverRef as ScopedMcpServerConfig).type === 'stdio' ||
+        !(serverRef as ScopedMcpServerConfig).type
+      ) 
+        {
+          const stdioRef = serverRef as McpStdioServerConfig
+          // type: z.literal('stdio').optional(), // Optional for backwards compatibility
+          //     command: z.string().min(1, 'Command cannot be empty'),
+          //     args: z.array(z.string()).default([]),
+          //     env: z.record(z.string(), z.string()).optional(),
+          const finalCommand =
+          process.env.CLAUDE_CODE_SHELL_PREFIX || stdioRef.command
+          const finalArgs = process.env.CLAUDE_CODE_SHELL_PREFIX
+            ? [[stdioRef.command, ...stdioRef.args].join(' ')]
+            : stdioRef.args
+           transport = new StdioClientTransport({
+            command: finalCommand,
+            args: finalArgs,
+            env: {
+              ...subprocessEnv(),
+              ...stdioRef.env,
+            } as Record<string, string>,
+            stderr: 'pipe', // prevents error output from the MCP server from printing to the UI
+          })
 
-      // Set up stderr logging for stdio transport before connecting in case there are any stderr
-      // outputs emitted during the connection start (this can be useful for debugging failed connections).
-      // Store handler reference for cleanup to prevent memory leaks
+        }
+        else {
+          throw new Error(
+            `Unsupported server type: ${(serverRef as ScopedMcpServerConfig).type}`,
+          )
+      }
+
+      // 在连接之前为 stdio 传输设置 stderr 日志记录，以防出现任何 stderr
+      // 连接启动期间发出的输出（这对于调试失败的连接很有用）。
+      // 存储处理程序引用以进行清理以防止内存泄漏
       let stderrHandler: ((data: Buffer) => void) | undefined
       let stderrOutput = ''
 
+     
+      if (serverRef.type === 'stdio' || !serverRef.type) {//如果是stdio或者未设置
+        const stdioTransport = transport as StdioClientTransport
+        if (stdioTransport.stderr) {
+          stderrHandler = (data: Buffer) => {
+            // Cap stderr accumulation to prevent unbounded memory growth
+            if (stderrOutput.length < 64 * 1024 * 1024) {
+              try {
+                stderrOutput += data.toString()
+              } catch {
+                // Ignore errors from exceeding max string length
+              }
+            }
+          }
+          stdioTransport.stderr.on('data', stderrHandler)
+        }
+      }
       const client = new Client(
         {
           name: 'efrex-code',
           title: 'Efrex Code',
-          version: MACRO.VERSION ?? 'unknown',
+          version: applicationVersion,
           description: "Anthropic's agentic coding tool",
         },
         {
@@ -203,9 +295,8 @@ export const connectToServer = memoize(
         },
       )
 
-
-
       client.setRequestHandler(ListRootsRequestSchema, async () => {
+        logMCPDebug(name, `Received ListRoots request from server`)
         return {
           roots: [
             {
@@ -223,8 +314,8 @@ export const connectToServer = memoize(
 
 
 
-      const connectPromise = client.connect(transport)
-      const timeoutPromise = new Promise<never>((_, reject) => {
+      const connectPromise = client.connect(transport)//客户端连接transport
+      const timeoutPromise = new Promise<never>((_, reject) => {//设置计时器
         const timeoutId = setTimeout(() => {
           const elapsed = Date.now() - connectStartTime
 
@@ -249,7 +340,7 @@ export const connectToServer = memoize(
       })
 
       try {
-        await Promise.race([connectPromise, timeoutPromise])
+        await Promise.race([connectPromise, timeoutPromise])//看哪一个先完成
         logMCPDebug(
           name,
           `Transport connect promise resolved for ${serverRef.type || 'stdio'}`,
@@ -459,7 +550,149 @@ export const connectToServer = memoize(
           }
           return
         }
+        // Remove stderr event listener to prevent memory leaks
+        if (stderrHandler && (serverRef.type === 'stdio' || !serverRef.type)) {
+          const stdioTransport = transport as StdioClientTransport
+          stdioTransport.stderr?.off('data', stderrHandler)//取消防止内存泄漏
+        }
+        // 对于 stdio 传输，使用适当的信号显式终止子进程
+        // 注意：StdioClientTransport.close() 仅发送中止信号，但许多 MCP 服务器
+        // （特别是 Docker 容器）需要显式的 SIGINT/SIGTERM 信号来触发正常关闭
+        if (serverRef.type === 'stdio') {
+          try {
+            const stdioTransport = transport as StdioClientTransport
+            const childPid = stdioTransport.pid
 
+            if (childPid) {
+              logMCPDebug(name, 'Sending SIGINT to MCP server process')
+
+              // First try SIGINT (like Ctrl+C)
+              try {
+                process.kill(childPid, 'SIGINT')
+              } catch (error) {
+                logMCPDebug(name, `Error sending SIGINT: ${error}`)
+                return
+              }
+
+              // Wait for graceful shutdown with rapid escalation (total 500ms to keep CLI responsive)
+              // biome-ignore lint/suspicious/noAsyncPromiseExecutor: async needed for sequential await inside executor
+              await new Promise<void>(async resolve => {
+                let resolved = false
+
+                // Set up a timer to check if process still exists
+                const checkInterval = setInterval(() => {
+                  try {
+                    // process.kill(pid, 0) checks if process exists without killing it
+                    process.kill(childPid, 0)
+                  } catch {
+                    // Process no longer exists
+                    if (!resolved) {
+                      resolved = true
+                      clearInterval(checkInterval)
+                      clearTimeout(failsafeTimeout)
+                      logMCPDebug(name, 'MCP server process exited cleanly')
+                      resolve()
+                    }
+                  }
+                }, 50)
+
+                // Absolute failsafe: clear interval after 600ms no matter what
+                const failsafeTimeout = setTimeout(() => {
+                  if (!resolved) {
+                    resolved = true
+                    clearInterval(checkInterval)
+                    logMCPDebug(
+                      name,
+                      'Cleanup timeout reached, stopping process monitoring',
+                    )
+                    resolve()
+                  }
+                }, 600)
+
+                try {
+                  // Wait 100ms for SIGINT to work (usually much faster)
+                  await sleep(100)
+
+                  if (!resolved) {
+                    // Check if process still exists
+                    try {
+                      process.kill(childPid, 0)
+                      // Process still exists, SIGINT failed, try SIGTERM
+                      logMCPDebug(
+                        name,
+                        'SIGINT failed, sending SIGTERM to MCP server process',
+                      )
+                      try {
+                        process.kill(childPid, 'SIGTERM')
+                      } catch (termError) {
+                        logMCPDebug(name, `Error sending SIGTERM: ${termError}`)
+                        resolved = true
+                        clearInterval(checkInterval)
+                        clearTimeout(failsafeTimeout)
+                        resolve()
+                        return
+                      }
+                    } catch {
+                      // Process already exited
+                      resolved = true
+                      clearInterval(checkInterval)
+                      clearTimeout(failsafeTimeout)
+                      resolve()
+                      return
+                    }
+
+                    // Wait 400ms for SIGTERM to work (slower than SIGINT, often used for cleanup)
+                    await sleep(400)
+
+                    if (!resolved) {
+                      // Check if process still exists
+                      try {
+                        process.kill(childPid, 0)
+                        // Process still exists, SIGTERM failed, force kill with SIGKILL
+                        logMCPDebug(
+                          name,
+                          'SIGTERM failed, sending SIGKILL to MCP server process',
+                        )
+                        try {
+                          process.kill(childPid, 'SIGKILL')
+                        } catch (killError) {
+                          logMCPDebug(
+                            name,
+                            `Error sending SIGKILL: ${killError}`,
+                          )
+                        }
+                      } catch {
+                        // Process already exited
+                        resolved = true
+                        clearInterval(checkInterval)
+                        clearTimeout(failsafeTimeout)
+                        resolve()
+                      }
+                    }
+                  }
+
+                  // Final timeout - always resolve after 500ms max (total cleanup time)
+                  if (!resolved) {
+                    resolved = true
+                    clearInterval(checkInterval)
+                    clearTimeout(failsafeTimeout)
+                    resolve()
+                  }
+                } catch {
+                  // Handle any errors in the escalation sequence
+                  if (!resolved) {
+                    resolved = true
+                    clearInterval(checkInterval)
+                    clearTimeout(failsafeTimeout)
+                    resolve()
+                  }
+                }
+              })
+            }
+          } catch (processError) {
+            logMCPDebug(name, `Error terminating process: ${processError}`)
+          }
+        }
         // Close the client connection (which also closes the transport)
         try {
           await client.close()
@@ -507,6 +740,71 @@ export const connectToServer = memoize(
   },
   getServerCacheKey,
 )
+// 未记忆：在启动/重新配置时仅调用 2-3 次。内在的工作
+// (connectToServer, fetch*ForClient) 已被缓存。在此记忆
+// mcpConfigs 对象引用泄漏 — main.tsx 每次调用都会创建新的配置对象。
+export function prefetchAllMcpResources(//作用主要是提前预热连接和缓存：
+  mcpConfigs: Record<string, ScopedMcpServerConfig>,
+): Promise<{
+  clients: MCPServerConnection[]
+  tools: Tool[]
+  commands: Command[]
+}> {
+  return new Promise(resolve => {
+    let pendingCount = 0
+    let completedCount = 0
+
+    pendingCount = Object.keys(mcpConfigs).length
+
+    if (pendingCount === 0) {
+      void resolve({
+        clients: [],
+        tools: [],
+        commands: [],
+      })
+      return
+    }
+
+    const clients: MCPServerConnection[] = []
+    const tools: Tool[] = []
+    const commands: Command[] = []
+
+    getMcpToolsCommandsAndResources(result => {
+      clients.push(result.client)
+      tools.push(...result.tools)
+      commands.push(...result.commands)
+
+      completedCount++
+      if (completedCount >= pendingCount) {
+        const commandsMetadataLength = commands.reduce((sum, command) => {
+          const commandMetadataLength =
+            command.name.length +
+            (command.description ?? '').length +
+            (command.argumentHint ?? '').length
+          return sum + commandMetadataLength
+        }, 0)
+
+
+        void resolve({
+          clients,
+          tools,
+          commands,
+        })
+      }
+    }, mcpConfigs).catch(error => {
+      logMCPError(
+        'prefetchAllMcpResources',
+        `Failed to get MCP resources: ${errorMessage(error)}`,
+      )
+      // Still resolve with empty results
+      void resolve({
+        clients: [],
+        tools: [],
+        commands: [],
+      })
+    })
+  })
+}
 /**
  * Clears the memoize cache for a specific server
  * @param name Server name
@@ -536,7 +834,9 @@ export async function clearServerCache(
 //   fetchCommandsForClient.cache.delete(name)
 }
 
-
+function isLocalMcpServer(config: ScopedMcpServerConfig): boolean {
+  return !config.type || config.type === 'stdio' || config.type === 'sdk'//sdk和stdio和无
+}
 /**
  * Call an IDE tool directly as an RPC
  * @param toolName The name of the tool to call
@@ -779,12 +1079,12 @@ async function callMCPTool({
     }
   }
 }
-export async function processMCPResult(
+export async function processMCPResult(//cg==处理mcp结果
   result: unknown,
   tool: string, // Tool name for validation (e.g., "search")
   name: string, // Server name for IDE check and transformation (e.g., "slack")
 ): Promise<MCPToolResult> {
-  const { content, type, schema } = await transformMCPResult(result, tool, name)
+  const { content, type, schema } = await transformMCPResult(result, tool, name)//转化mcp结果 返回内容字符串或数组
 
   // IDE tools are not going to the model directly, so we don't need to
   // handle large output.
@@ -792,17 +1092,17 @@ export async function processMCPResult(
     return content
   }
 
-  // Check if content needs truncation (i.e., is too large)
+  // Check if content needs truncation (i.e., is too large)是否需要裁剪
   if (!(await mcpContentNeedsTruncation(content))) {
     return content
   }
 
   const sizeEstimateTokens = getContentSizeEstimate(content)
 
-  // If large output files feature is disabled, fall back to old truncation behavior
-  if (isEnvDefinedFalsy(process.env.ENABLE_MCP_LARGE_OUTPUT_FILES)) {
-    return await truncateMcpContentIfNeeded(content)
-  }
+  // 如果禁用大输出文件功能，则回退到旧的截断行为
+  // if (isEnvDefinedFalsy(process.env.ENABLE_MCP_LARGE_OUTPUT_FILES)) {
+  //   return await truncateMcpContentIfNeeded(content)
+  // }
 
   // Save large output to file and return instructions for reading it
   // Content is guaranteed to exist at this point (we checked mcpContentNeedsTruncation)
@@ -839,23 +1139,54 @@ export async function processMCPResult(
   )
 }
 /**
+ * Check if MCP content contains any image blocks.
+ * Used to decide whether to persist to file (images should use truncation instead
+ * to preserve image compression and viewability).
+ */
+function contentContainsImages(content: MCPToolResult): boolean {
+  if (!content || typeof content === 'string') {
+    return false
+  }
+  return content.some(block => block.type === 'image')
+}
+/**
  * Processes MCP tool result into a normalized format.
  */
-export type MCPResultType = 'toolResult' | 'structuredContent' | 'contentArray'
+export type MCPResultType = 'toolResult' | 'structuredContent' | 'contentArray'//三种结果类型，工具结果、结构化输出、数组
 
 export type TransformedMCPResult = {
   content: MCPToolResult
   type: MCPResultType
   schema?: string
 }
-
+/**
+ * 为值生成紧凑的、jq 友好的类型签名。
+ * 例如“{标题：字符串，项目：[{id：数字，名称：字符串}]}”
+ */
+export function inferCompactSchema(value: unknown, depth = 2): string {//用于推断并生成一个数据值的"紧凑类型签名"。
+  if (value === null) return 'null'
+  if (Array.isArray(value)) {//数组
+    if (value.length === 0) return '[]'
+    return `[${inferCompactSchema(value[0], depth - 1)}]`
+  }
+  if (typeof value === 'object') {
+    if (depth <= 0) return '{...}'
+    const entries = Object.entries(value).slice(0, 10)//遍历实体
+    const props = entries.map(
+      ([k, v]) => `${k}: ${inferCompactSchema(v, depth - 1)}`,
+    )
+    const suffix = Object.keys(value).length > 10 ? ', ...' : ''
+    return `{${props.join(', ')}${suffix}}`
+  }
+  return typeof value
+}
 export async function transformMCPResult(
   result: unknown,
   tool: string, // Tool name for validation (e.g., "search")
   name: string, // Server name for transformation (e.g., "slack")
 ): Promise<TransformedMCPResult> {
   if (result && typeof result === 'object') {
-    if ('toolResult' in result) {
+    if ('toolResult' in result) {//如果有工具执行结果 直接返回结果
       return {
         content: String(result.toolResult),
         type: 'toolResult',
@@ -865,7 +1196,7 @@ export async function transformMCPResult(
     if (
       'structuredContent' in result &&
       result.structuredContent !== undefined
-    ) {
+    ) {//结构化输出文本  那就推断这个类型的字段值
       return {
         content: JSON.stringify(result.structuredContent),
         type: 'structuredContent',
@@ -873,7 +1204,7 @@ export async function transformMCPResult(
       }
     }
 
-    if ('content' in result && Array.isArray(result.content)) {
+    if ('content' in result && Array.isArray(result.content)) {//如果有content文本content是数组
       const transformedContent = (
         await Promise.all(
           result.content.map(item => transformResultContent(item, name)),
@@ -889,8 +1220,927 @@ export async function transformMCPResult(
 
   const errorMessage = `MCP server "${name}" tool "${tool}": unexpected response format`
   logMCPError(name, errorMessage)
-  throw new TelemetrySafeError_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS(
-    errorMessage,
-    'MCP tool unexpected response format',
+  throw new Error(errorMessage)
+}
+
+/**
+ * Transform result content from an MCP tool or MCP prompt into message blocks
+ */
+export async function transformResultContent(
+  resultContent: PromptMessage['content'],
+  serverName: string,
+): Promise<Array<ContentBlockParam>> {
+  switch (resultContent.type) {
+    case 'text':
+      return [
+        {
+          type: 'text',
+          text: resultContent.text,
+        },
+      ]
+    case 'audio': {//音频
+      const audioData = resultContent as {
+        type: 'audio'
+        data: string
+        mimeType?: string
+      }
+      return await persistBlobToTextBlock(
+        Buffer.from(audioData.data, 'base64'),
+        audioData.mimeType,
+        serverName,
+        `[Audio from ${serverName}] `,
+      )
+    }
+    case 'image': {
+      // Resize and compress image data, enforcing API dimension limits
+      const imageBuffer = Buffer.from(String(resultContent.data), 'base64')
+      const ext = resultContent.mimeType?.split('/')[1] || 'png'
+      const resized = await maybeResizeAndDownsampleImageBuffer(
+        imageBuffer,
+        imageBuffer.length,
+        ext,
+      )
+      return [
+        {
+          type: 'image',
+          source: {
+            data: resized.buffer.toString('base64'),
+            media_type:
+              `image/${resized.mediaType}` as Base64ImageSource['media_type'],
+            type: 'base64',
+          },
+        },
+      ]
+    }
+    case 'resource': {//资源
+      const resource = resultContent.resource
+      const prefix = `[Resource from ${serverName} at ${resource.uri}] `
+
+      if ('text' in resource) {
+        return [
+          {
+            type: 'text',
+            text: `${prefix}${resource.text}`,
+          },
+        ]
+      } else if ('blob' in resource) {
+        const isImage = IMAGE_MIME_TYPES.has(resource.mimeType ?? '')
+
+        if (isImage) {
+          // Resize and compress image blob, enforcing API dimension limits
+          const imageBuffer = Buffer.from(resource.blob, 'base64')
+          const ext = resource.mimeType?.split('/')[1] || 'png'
+          const resized = await maybeResizeAndDownsampleImageBuffer(
+            imageBuffer,
+            imageBuffer.length,
+            ext,
+          )
+          const content: MessageParam['content'] = []
+          if (prefix) {
+            content.push({
+              type: 'text',
+              text: prefix,
+            })
+          }
+          content.push({
+            type: 'image',
+            source: {
+              data: resized.buffer.toString('base64'),
+              media_type:
+                `image/${resized.mediaType}` as Base64ImageSource['media_type'],
+              type: 'base64',
+            },
+          })
+          return content
+        } else {
+          return await persistBlobToTextBlock(
+            Buffer.from(resource.blob, 'base64'),
+            resource.mimeType,
+            serverName,
+            prefix,
+          )
+        }
+      }
+      return []
+    }
+    case 'resource_link': {//资源链接
+      const resourceLink = resultContent as ResourceLink
+      let text = `[Resource link: ${resourceLink.name}] ${resourceLink.uri}`
+      if (resourceLink.description) {
+        text += ` (${resourceLink.description})`
+      }
+      return [
+        {
+          type: 'text',
+          text,
+        },
+      ]
+    }
+    default:
+      return []
+  }
+}
+
+/**
+ * Decode base64 binary content, write it to disk with the proper extension,
+ * and return a small text block with the file path. Replaces the old behavior
+ * of dumping raw base64 into the context.
+ */
+async function persistBlobToTextBlock(//持久化二进制的文本块
+  bytes: Buffer,
+  mimeType: string | undefined,
+  serverName: string,
+  sourceDescription: string,
+): Promise<Array<ContentBlockParam>> {
+  const persistId = `mcp-${normalizeNameForMCP(serverName)}-blob-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const result = await persistBinaryContent(bytes, mimeType, persistId)//保存到路径下
+
+  if ('error' in result) {
+    return [
+      {
+        type: 'text',
+        text: `${sourceDescription}Binary content (${mimeType || 'unknown type'}, ${bytes.length} bytes) could not be saved to disk: ${result.error}`,
+      },
+    ]
+  }
+
+  return [
+    {
+      type: 'text',
+      text: getBinaryBlobSavedMessage(//封装消息 就说已经保存
+        result.filepath,
+        mimeType,
+        result.size,
+        sourceDescription,
+      ),
+    },
+  ]
+}
+
+export async function getMcpToolsCommandsAndResources(
+  onConnectionAttempt: (params: {
+    client: MCPServerConnection
+    tools: Tool[]
+    commands: Command[]
+    resources?: ServerResource[]
+  }) => void,
+  mcpConfigs?: Record<string, ScopedMcpServerConfig>,
+): Promise<void> {
+  let resourceToolsAdded = false
+
+  const allConfigEntries = Object.entries(
+    mcpConfigs ?? (await getAllMcpConfigs()).servers,//获取所有配置实体
   )
+
+  // Partition into disabled and active entries — disabled servers should
+  // never generate HTTP connections or flow through batch processing
+  const configEntries: typeof allConfigEntries = []
+  for (const entry of allConfigEntries) {
+    // if (isMcpServerDisabled(entry[0])) {
+    //   onConnectionAttempt({
+    //     client: { name: entry[0], type: 'disabled', config: entry[1] },
+    //     tools: [],
+    //     commands: [],
+    //   })
+    // } else {
+      configEntries.push(entry)
+    // }
+  }
+
+  // Calculate transport counts for logging
+  const totalServers = configEntries.length
+  const stdioCount = count(configEntries, ([_, c]) => c.type === 'stdio')
+  const sseCount = count(configEntries, ([_, c]) => c.type === 'sse')
+  const httpCount = count(configEntries, ([_, c]) => c.type === 'http')
+  const sseIdeCount = count(configEntries, ([_, c]) => c.type === 'sse-ide')
+  const wsIdeCount = count(configEntries, ([_, c]) => c.type === 'ws-ide')
+
+  // Split servers by type: local (stdio/sdk) need lower concurrency due to
+  // process spawning, remote servers can connect with higher concurrency
+  const localServers = configEntries.filter(([_, config]) =>
+    isLocalMcpServer(config),
+  )
+  const remoteServers = configEntries.filter(
+    ([_, config]) => !isLocalMcpServer(config),
+  )
+
+  const serverStats = {
+    totalServers,
+    stdioCount,
+    sseCount,
+    httpCount,
+    sseIdeCount,
+    wsIdeCount,
+  }
+
+  const processServer = async ([name, config]: [
+    string,
+    ScopedMcpServerConfig,
+  ]): Promise<void> => {
+    try {
+      // Check if server is disabled - if so, just add it to state without connecting
+      // if (isMcpServerDisabled(name)) {
+      //   onConnectionAttempt({
+      //     client: {
+      //       name,
+      //       type: 'disabled',
+      //       config,
+      //     },
+      //     tools: [],
+      //     commands: [],
+      //   })
+      //   return
+      // }
+
+      // Skip connection for servers that recently returned 401 (15min TTL),
+      // or that we have probed before but hold no token for. The second
+      // check closes the gap the TTL leaves open: without it, every 15min
+      // we re-probe servers that cannot succeed until the user runs /mcp.
+      // Each probe is a network round-trip for connect-401 plus OAuth
+      // discovery, and print mode awaits the whole batch (main.tsx:3503).
+      // if (
+      //   (
+      //     config.type === 'http' ||
+      //     config.type === 'sse') &&
+      //   ((await isMcpAuthCached(name)) ||
+      //     ((config.type === 'http' || config.type === 'sse') &&
+      //       hasMcpDiscoveryButNoToken(name, config)))
+      // ) {
+      //   logMCPDebug(name, `Skipping connection (cached needs-auth)`)
+      //   onConnectionAttempt({
+      //     client: { name, type: 'needs-auth' as const, config },
+      //     tools: [createMcpAuthTool(name, config)],
+      //     commands: [],
+      //   })
+      //   return
+      // }
+
+      const client = await connectToServer(name, config, serverStats)
+
+      if (client.type !== 'connected') {
+        // onConnectionAttempt({
+        //   client,
+        //   tools:
+        //     client.type === 'needs-auth'
+        //       ? [createMcpAuthTool(name, config)]
+        //       : [],
+        //   commands: [],
+        // })
+        return
+      }
+
+      const supportsResources = !!client.capabilities?.resources
+
+      const [tools, mcpCommands, mcpSkills, resources] = await Promise.all([
+        fetchToolsForClient(client),
+        fetchCommandsForClient(client),
+        // Discover skills from skill:// resources
+         Promise.resolve([]),
+        // Fetch resources if supported
+        supportsResources
+          ? fetchResourcesForClient(client)
+          : Promise.resolve([]),
+      ])
+      const commands = [...mcpCommands, ...mcpSkills]
+
+      // If this server resources and we haven't added resource tools yet,
+      // include our resource tools with this client's tools
+      const resourceTools: Tool[] = []
+      if (supportsResources && !resourceToolsAdded) {
+        resourceToolsAdded = true
+        // resourceTools.push(ListMcpResourcesTool, ReadMcpResourceTool)
+      }
+
+      onConnectionAttempt({
+        client,
+        tools: [...tools, ...resourceTools],
+        commands,
+        resources: resources.length > 0 ? resources : undefined,
+      })
+    } catch (error) {
+      // Handle errors gracefully - connection might have closed during fetch
+      logMCPError(
+        name,
+        `Error fetching tools/commands/resources: ${errorMessage(error)}`,
+      )
+
+      // Still update with the client but no tools/commands
+      onConnectionAttempt({
+        client: { name, type: 'failed' as const, config },
+        tools: [],
+        commands: [],
+      })
+    }
+  }
+
+  // Process both groups concurrently, each with their own concurrency limits:
+  // - Local servers (stdio/sdk): lower concurrency to avoid process spawning resource contention
+  // - Remote servers: higher concurrency since they're just network connections
+  await Promise.all([
+    processBatched(
+      localServers,
+      getMcpServerConnectionBatchSize(),
+      processServer,
+    ),
+    processBatched(
+      remoteServers,
+      getRemoteMcpServerConnectionBatchSize(),
+      processServer,
+    ),
+  ])
+}
+// Replaced 2026-03: previous implementation ran fixed-size sequential batches
+// (await batch 1 fully, then start batch 2). That meant one slow server in
+// batch N held up ALL servers in batch N+1, even if the other 19 slots were
+// idle. pMap frees each slot as soon as its server completes, so a single
+// slow server only occupies one slot instead of blocking an entire batch
+// boundary. Same concurrency ceiling, same results, better scheduling.
+async function processBatched<T>(
+  items: T[],
+  concurrency: number,
+  processor: (item: T) => Promise<void>,
+): Promise<void> {
+  await pMap(items, processor, { concurrency })//同时处理的最大任务数（并发控制）并发池执行p-map
+}
+export const fetchToolsForClient = memoizeWithLRU(//客户端抓取工具
+  async (client: MCPServerConnection): Promise<Tool[]> => {
+    if (client.type !== 'connected') return []
+
+    try {
+      if (!client.capabilities?.tools) {
+        logMCPDebug(
+          client.name,
+          `MCP tools/list skipped: server did not advertise tools capability (capabilities: ${JSON.stringify(client.capabilities ?? {})})`,
+        )
+        return []
+      }
+
+      const result = (await client.client.request(
+        { method: 'tools/list' },//请求tools/list
+        ListToolsResultSchema,
+      )) as ListToolsResult
+
+      logMCPDebug(
+        client.name,
+        `MCP tools/list returned ${result.tools?.length ?? 0} tool(s): ${JSON.stringify((result.tools ?? []).map(tool => tool.name))}`,
+      )
+
+      // Sanitize tool data from MCP server
+      const toolsToProcess = recursivelySanitizeUnicode(result.tools)
+
+      // Check if we should skip the mcp__ prefix for SDK MCP servers
+      const skipPrefix =
+        client.config.type === 'sdk' &&
+        isEnvTruthy(process.env.CLAUDE_AGENT_SDK_MCP_NO_PREFIX)
+
+      // Convert MCP tools to our Tool format
+      return toolsToProcess
+        .map((tool): Tool => {
+          const fullyQualifiedName = buildMcpToolName(client.name, tool.name)
+          return {
+            ...MCPTool,
+            maxResultSizeChars: 100_000,
+            // In skip-prefix mode, use the original name for model invocation so MCP tools
+            // can override builtins by name. mcpInfo is used for permission checking.
+            name: skipPrefix ? tool.name : fullyQualifiedName,
+            mcpInfo: { serverName: client.name, toolName: tool.name },
+            isMcp: true,
+            // Collapse whitespace: _meta is open to external MCP servers, and
+            // a newline here would inject orphan lines into the deferred-tool
+            // list (formatDeferredToolLine joins on '\n').
+            // searchHint:
+            //   typeof tool._meta?.['anthropic/searchHint'] === 'string'
+            //     ? tool._meta['anthropic/searchHint']
+            //         .replace(/\s+/g, ' ')
+            //         .trim() || undefined
+            //     : undefined,
+            alwaysLoad: tool._meta?.['anthropic/alwaysLoad'] === true,
+            async description() {
+              return tool.description ?? ''
+            },
+            // async prompt() {
+            //   const desc = tool.description ?? ''
+            //   return desc.length > MAX_MCP_DESCRIPTION_LENGTH
+            //     ? desc.slice(0, MAX_MCP_DESCRIPTION_LENGTH) + '… [truncated]'
+            //     : desc
+            // },
+            isConcurrencySafe() {
+              return tool.annotations?.readOnlyHint ?? false
+            },
+            isReadOnly() {
+              return tool.annotations?.readOnlyHint ?? false
+            },
+            // toAutoClassifierInput(input) {
+            //   return mcpToolInputToAutoClassifierInput(input, tool.name)
+            // },
+            // isDestructive() {
+            //   return tool.annotations?.destructiveHint ?? false
+            // },
+            // isOpenWorld() {
+            //   return tool.annotations?.openWorldHint ?? false
+            // },
+            // isSearchOrReadCommand() {
+            //   return classifyMcpToolForCollapse(client.name, tool.name)
+            // },
+            inputJSONSchema: tool.inputSchema as Tool['inputJSONSchema'],
+            async checkPermissions() {
+              return {
+                behavior: 'passthrough' as const,
+                message: 'MCPTool requires permission.',
+                suggestions: [
+                  {
+                    type: 'addRules' as const,
+                    rules: [
+                      {
+                        toolName: fullyQualifiedName,
+                        ruleContent: undefined,
+                      },
+                    ],
+                    behavior: 'allow' as const,
+                    destination: 'localSettings' as const,
+                  },
+                ],
+              }
+            },
+            async call(
+              args: Record<string, unknown>,
+              context,
+              _canUseTool,
+              parentMessage,
+              onProgress?: ToolCallProgress<MCPProgress>,
+            ) {
+              const toolUseId = extractToolUseId(parentMessage)
+              const meta = toolUseId
+                ? { 'claudecode/toolUseId': toolUseId }
+                : {}
+
+              // Emit progress when tool starts
+              if (onProgress && toolUseId) {
+                onProgress({
+                  toolUseID: toolUseId,
+                  data: {
+                    type: 'mcp_progress',
+                    status: 'started',
+                    serverName: client.name,
+                    toolName: tool.name,
+                  },
+                })
+              }
+
+              const startTime = Date.now()
+              const MAX_SESSION_RETRIES = 1
+              for (let attempt = 0; ; attempt++) {//附加重试
+                try {
+                  const connectedClient = await ensureConnectedClient(client)
+                  const mcpResult = await callMCPToolWithUrlElicitationRetry({
+                    client: connectedClient,
+                    clientConnection: client,
+                    tool: tool.name,
+                    args,
+                    meta,
+                    signal: context.abortController.signal,
+                    setAppState: context.setAppState,
+                    onProgress:
+                      onProgress && toolUseId
+                        ? progressData => {
+                            onProgress({
+                              toolUseID: toolUseId,
+                              data: progressData,
+                            })
+                          }
+                        : undefined,
+                    handleElicitation: context.handleElicitation,
+                  })
+
+                  // Emit progress when tool completes successfully
+                  if (onProgress && toolUseId) {
+                    onProgress({
+                      toolUseID: toolUseId,
+                      data: {
+                        type: 'mcp_progress',
+                        status: 'completed',
+                        serverName: client.name,
+                        toolName: tool.name,
+                        elapsedTimeMs: Date.now() - startTime,
+                      },
+                    })
+                  }
+
+                  return {
+                    data: mcpResult.content,
+                    ...((mcpResult._meta || mcpResult.structuredContent) && {
+                      mcpMeta: {
+                        ...(mcpResult._meta && {
+                          _meta: mcpResult._meta,
+                        }),
+                        ...(mcpResult.structuredContent && {
+                          structuredContent: mcpResult.structuredContent,
+                        }),
+                      },
+                    }),
+                  }
+                } catch (error) {
+                  // Session expired — the connection cache has been
+                  // cleared, so retry with a fresh client.
+                  if (
+                    error instanceof McpSessionExpiredError &&
+                    attempt < MAX_SESSION_RETRIES
+                  ) {
+                    logMCPDebug(
+                      client.name,
+                      `Retrying tool '${tool.name}' after session recovery`,
+                    )
+                    continue
+                  }
+
+                  // Emit progress when tool fails
+                  if (onProgress && toolUseId) {
+                    onProgress({
+                      toolUseID: toolUseId,
+                      data: {
+                        type: 'mcp_progress',
+                        status: 'failed',
+                        serverName: client.name,
+                        toolName: tool.name,
+                        elapsedTimeMs: Date.now() - startTime,
+                      },
+                    })
+                  }
+                  // Wrap MCP SDK errors so telemetry gets useful context
+                  // instead of just "Error" or "McpError" (the constructor
+                  // name). MCP SDK errors are protocol-level messages and
+                  // don't contain user file paths or code.
+
+                  throw error
+                }
+              }
+            },
+            userFacingName() {
+              // Prefer title annotation if available, otherwise use tool name
+              const displayName = tool.annotations?.title || tool.name
+              return `${client.name} - ${displayName} (MCP)`
+            },
+          }
+        })
+        .filter(isIncludedMcpTool)
+    } catch (error) {
+      logMCPError(client.name, `Failed to fetch tools: ${errorMessage(error)}`)
+      return []
+    }
+  },
+  (client: MCPServerConnection) => client.name,
+  MCP_FETCH_CACHE_SIZE,
+)
+
+export const fetchResourcesForClient = memoizeWithLRU(//拉取资源
+  async (client: MCPServerConnection): Promise<ServerResource[]> => {
+    if (client.type !== 'connected') return []
+
+    try {
+      if (!client.capabilities?.resources) {
+        return []
+      }
+
+      const result = await client.client.request(
+        { method: 'resources/list' },
+        ListResourcesResultSchema,
+      )
+
+      if (!result.resources) return []
+
+      // Add server name to each resource
+      return result.resources.map(resource => ({
+        ...resource,
+        server: client.name,
+      }))
+    } catch (error) {
+      logMCPError(
+        client.name,
+        `Failed to fetch resources: ${errorMessage(error)}`,
+      )
+      return []
+    }
+  },
+  (client: MCPServerConnection) => client.name,
+  MCP_FETCH_CACHE_SIZE,
+)
+export const fetchCommandsForClient = memoizeWithLRU(
+  async (client: MCPServerConnection): Promise<Command[]> => {
+    if (client.type !== 'connected') return []
+
+    try {
+      if (!client.capabilities?.prompts) {//然后调用 prompts/list 拿到 prompt 列表
+        return []
+      }
+
+      // 向客户请求提示列表
+      const result = (await client.client.request(//每个 prompt 会被转换成一个本地 Command，名字长这样： 
+        { method: 'prompts/list' },
+        ListPromptsResultSchema,
+      )) as ListPromptsResult
+
+      if (!result.prompts) return []
+
+      // Sanitize prompt data from MCP server
+      const promptsToProcess = recursivelySanitizeUnicode(result.prompts)// 真正执行时，再调用 client.getPrompt({ name, arguments })，拿回一个 messages 数组：
+
+      // 将 MCP 提示转换为我们的命令格式
+      return promptsToProcess.map(prompt => {
+        const argNames = Object.values(prompt.arguments ?? {}).map(k => k.name)
+        return {
+          type: 'prompt' as const,
+          name: 'mcp__' + normalizeNameForMCP(client.name) + '__' + prompt.name,
+          description: prompt.description ?? '',
+          hasUserSpecifiedDescription: !!prompt.description,
+          contentLength: 0, // Dynamic MCP content
+          isEnabled: () => true,
+          isHidden: false,
+          isMcp: true,
+          progressMessage: 'running',
+          userFacingName() {
+            // Use prompt.name (programmatic identifier) not prompt.title (display name)
+            // to avoid spaces breaking slash command parsing
+            return `${client.name}:${prompt.name} (MCP)`
+          },
+          argNames,
+          source: 'mcp',
+          async getPromptForCommand(args: string) {
+            const argsArray = args.split(' ')
+            try {
+              const connectedClient = await ensureConnectedClient(client)
+              const result = await connectedClient.client.getPrompt({
+                name: prompt.name,
+                arguments: zipObject(argNames, argsArray),
+              })
+              const transformed = await Promise.all(
+                result.messages.map(message =>
+                  transformResultContent(message.content, connectedClient.name),
+                ),
+              )
+              return transformed.flat()
+            } catch (error) {
+              logMCPError(
+                client.name,
+                `Error running command '${prompt.name}': ${errorMessage(error)}`,
+              )
+              throw error
+            }
+          },
+        }
+      })
+    } catch (error) {
+      logMCPError(
+        client.name,
+        `Failed to fetch commands: ${errorMessage(error)}`,
+      )
+      return []
+    }
+  },
+  (client: MCPServerConnection) => client.name,
+  MCP_FETCH_CACHE_SIZE,
+)
+
+
+
+function extractToolUseId(message: AssistantMessage): string | undefined {
+  const firstBlock = (
+    message.message.content as ContentBlockParam[] | undefined
+  )?.[0]
+  if (
+    !firstBlock ||
+    typeof firstBlock === 'string' ||
+    firstBlock.type !== 'tool_use'
+  ) {
+    return undefined
+  }
+  return firstBlock.id
+}
+/**
+ * Ensures a valid connected client for an MCP server.
+ * For most server types, uses the memoization cache if available, or reconnects
+ * if the cache was cleared (e.g., after onclose). This ensures tool/resource
+ * calls always use a valid connection.
+ *
+ * SDK MCP servers run in-process and are handled separately via setupSdkMcpClients,
+ * so they are returned as-is without going through connectToServer.
+ *
+ * @param client The connected MCP server client
+ * @returns Connected MCP server client (same or reconnected)
+ * @throws Error if server cannot be connected
+ */
+export async function ensureConnectedClient(
+  client: ConnectedMCPServer,
+): Promise<ConnectedMCPServer> {
+  // SDK MCP servers run in-process and are handled separately via setupSdkMcpClients
+  if (client.config.type === 'sdk') {
+    return client
+  }
+
+  const connectedClient = await connectToServer(client.name, client.config)//再次尝试连接否则抛异常
+  if (connectedClient.type !== 'connected') {
+    throw new Error(
+      `MCP server "${client.name}" is not connected`,
+    )
+  }
+  return connectedClient
+}
+/**
+ * Call an MCP tool, handling UrlElicitationRequiredError (-32042) by
+ * displaying the URL elicitation to the user, waiting for the completion
+ * notification, and retrying the tool call.
+ */
+type MCPToolCallResult = {
+  content: MCPToolResult
+  _meta?: Record<string, unknown>
+  structuredContent?: Record<string, unknown>
+}
+/** @internal Exported for testing. */
+export async function callMCPToolWithUrlElicitationRetry({//处理MCP（Model Context Protocol）工具调用时可能出现的UrlElicitationRequired错误
+  client: connectedClient,
+  clientConnection,
+  tool,
+  args,
+  meta,
+  signal,
+  setAppState,
+  onProgress,
+  callToolFn = callMCPTool,
+  handleElicitation,
+}: {
+  client: ConnectedMCPServer
+  clientConnection: MCPServerConnection
+  tool: string
+  args: Record<string, unknown>
+  meta?: Record<string, unknown>
+  signal: AbortSignal
+  setAppState: (f: (prev: AppState) => AppState) => void
+  onProgress?: (data: MCPProgress) => void
+  /** Injectable for testing. Defaults to callMCPTool. */
+  callToolFn?: (opts: {
+    client: ConnectedMCPServer
+    tool: string
+    args: Record<string, unknown>
+    meta?: Record<string, unknown>
+    signal: AbortSignal
+    onProgress?: (data: MCPProgress) => void
+  }) => Promise<MCPToolCallResult>
+  /** Handler for URL elicitations when no hook handles them.
+   * In print/SDK mode, delegates to structuredIO. In REPL, falls back to queue. */
+  handleElicitation?: (
+    serverName: string,
+    params: ElicitRequestURLParams,
+    signal: AbortSignal,
+  ) => Promise<ElicitResult>
+}): Promise<MCPToolCallResult> {
+  const MAX_URL_ELICITATION_RETRIES = 3
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await callToolFn({
+        client: connectedClient,
+        tool,
+        args,
+        meta,
+        signal,
+        onProgress,
+      })
+    } catch (error) {
+      // The MCP SDK's Protocol creates plain McpError (not UrlElicitationRequiredError)
+      // for error responses, so we check the error code instead of instanceof.
+      if (
+        !(error instanceof McpError) ||
+        error.code !== ErrorCode.UrlElicitationRequired
+      ) {
+        throw error
+      }
+
+      // Limit the number of URL elicitation retries
+      if (attempt >= MAX_URL_ELICITATION_RETRIES) {
+        throw error
+      }
+
+      const errorData = error.data
+      const rawElicitations =
+        errorData != null &&
+        typeof errorData === 'object' &&
+        'elicitations' in errorData &&
+        Array.isArray(errorData.elicitations)
+          ? (errorData.elicitations as unknown[])
+          : []
+
+      // Validate each element has the required fields for ElicitRequestURLParams
+      const elicitations = rawElicitations.filter(
+        (e): e is ElicitRequestURLParams => {
+          if (e == null || typeof e !== 'object') return false
+          const obj = e as Record<string, unknown>
+          return (
+            obj.mode === 'url' &&
+            typeof obj.url === 'string' &&
+            typeof obj.elicitationId === 'string' &&
+            typeof obj.message === 'string'
+          )
+        },
+      )
+
+      const serverName =
+        clientConnection.type === 'connected'
+          ? clientConnection.name
+          : 'unknown'
+
+      if (elicitations.length === 0) {
+        logMCPDebug(
+          serverName,
+          `Tool '${tool}' returned -32042 but no valid elicitations in error data`,
+        )
+        throw error
+      }
+
+      logMCPDebug(
+        serverName,
+        `Tool '${tool}' requires URL elicitation (error -32042, attempt ${attempt + 1}), processing ${elicitations.length} elicitation(s)`,
+      )
+
+      // Process each URL elicitation from the error.
+      // The completion notification handler (in registerElicitationHandler) sets
+      // `completed: true` on the matching queue event; the dialog reacts to this flag.
+      for (const elicitation of elicitations) {
+        const { elicitationId } = elicitation
+
+        // Run elicitation hooks — they can resolve URL elicitations programmatically
+       
+
+        // Resolve the URL elicitation via callback (print/SDK mode) or queue (REPL mode).
+        let userResult: ElicitResult
+        if (handleElicitation) {
+          // Print/SDK mode: delegate to structuredIO which sends a control request
+          userResult = await handleElicitation(serverName, elicitation, signal)
+        } else {
+          // REPL mode: queue for ElicitationDialog with two-phase consent/waiting flow
+          const waitingState: ElicitationWaitingState = {
+            actionLabel: 'Retry now',
+            showCancel: true,
+          }
+          userResult = await new Promise<ElicitResult>(resolve => {
+            const onAbort = () => {
+              void resolve({ action: 'cancel' })
+            }
+            if (signal.aborted) {
+              onAbort()
+              return
+            }
+            signal.addEventListener('abort', onAbort, { once: true })
+
+            setAppState(prev => ({
+              ...prev,
+              elicitation: {
+                queue: [
+                  ...prev.elicitation.queue,
+                  {
+                    serverName,
+                    requestId: `error-elicit-${elicitationId}`,
+                    params: elicitation,
+                    signal,
+                    waitingState,
+                    respond: result => {
+                      // Phase 1 consent: accept is a no-op (doesn't resolve retry Promise)
+                      if (result.action === 'accept') {
+                        return
+                      }
+                      // Decline or cancel: resolve the retry Promise
+                      signal.removeEventListener('abort', onAbort)
+                      void resolve(result)
+                    },
+                    onWaitingDismiss: action => {
+                      signal.removeEventListener('abort', onAbort)
+                      if (action === 'retry') {
+                        void resolve({ action: 'accept' })
+                      } else {
+                        void resolve({ action: 'cancel' })
+                      }
+                    },
+                  },
+                ],
+              },
+            }))
+          })
+        }
+
+        // 运行 EliitationResult 挂钩 -它们可以修改或阻止响应
+        // const finalResult = await runElicitationResultHooks(
+        //   serverName,
+        //   userResult,
+        //   signal,
+        //   'url',
+        //   elicitationId,
+        // )
+
+
+        logMCPDebug(
+          serverName,
+          `Elicitation ${elicitationId} completed, retrying tool call`,
+        )
+      }
+
+      // Loop back to retry the tool call
+    }
+  }
 }

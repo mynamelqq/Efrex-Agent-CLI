@@ -10,6 +10,7 @@ import WelcomeHeader, { type WelcomeHeaderProps } from './WelcomeHeader.js';
 const USER_MESSAGE_BG = '#2e2f30';
 const USER_MESSAGE_FG = '#f0f0ea';
 const ASSISTANT_BRAND = '#23d3b6';
+const API_ERROR_COLOR = 'rgb(255,107,128)';
 
 export type ViewportMessage = {
   id: number;
@@ -20,6 +21,13 @@ export type ViewportMessage = {
   toolDisplayStyle?: 'use' | 'result' | 'progress';
   toolUseId?: string;
   animatePrefix?: 'blink';
+  tone?: 'error';
+  compactMcpLabel?: string;
+  toolName?: string;
+  /** Marks output from local commands; distinguishes slash commands from bash */
+  commandType?: 'slash' | 'bash';
+  /** Stable text representation of the tool call (without progress updates) */
+  baseText?: string;
 };
 
 type Props = {
@@ -274,7 +282,13 @@ function renderMessageNode(
         <Box flexShrink={0} width={3}>
           <Text
             bold={variant !== 'transcript'}
-            color={variant === 'transcript' ? '#4fd1c5' : ASSISTANT_BRAND}
+            color={
+              message.tone === 'error'
+                ? API_ERROR_COLOR
+                : variant === 'transcript'
+                  ? '#4fd1c5'
+                  : ASSISTANT_BRAND
+            }
           >
             {assistantPrefix}
           </Text>
@@ -291,6 +305,9 @@ function renderMessageNode(
   }
 
   const { toolPrefix, prefixColor } = getToolPrefix(message, blinkOn, false, variant);
+  const hasNestedResultPrefix =
+    Boolean(message.content) && message.toolDisplayStyle !== 'use';
+  const toolPrefixWidth = hasNestedResultPrefix ? 1 : 3;
 
   return (
     <Box
@@ -299,10 +316,17 @@ function renderMessageNode(
       flexWrap="nowrap"
       width={width}
     >
-      <Box flexShrink={0} width={3}>
-        <Text color={prefixColor}>{toolPrefix}</Text>
+      <Box flexShrink={0} width={toolPrefixWidth}>
+        <Text color={prefixColor}>
+          {hasNestedResultPrefix ? ' ' : toolPrefix}
+        </Text>
       </Box>
-      <Box flexDirection="column" flexGrow={1} flexShrink={1} width={Math.max(1, width - 3)}>
+      <Box
+        flexDirection="column"
+        flexGrow={1}
+        flexShrink={1}
+        width={Math.max(1, width - toolPrefixWidth)}
+      >
         {message.content ? (
           message.content
         ) : (
@@ -350,9 +374,10 @@ function renderMessage(
         ? chalk.redBright
         : chalk.gray;
     const { toolPrefix } = getToolPrefix(message, blinkOn, true, variant);
+    const prefixWidth = message.toolDisplayStyle === 'use' ? 3 : 6;
 
-    return wrapPlain(message.text, Math.max(1, width - 3)).map((line, index) =>
-      `${index === 0 ? toolPrefix : '   '}${color(line)}`,
+    return wrapPlain(message.text, Math.max(1, width - prefixWidth)).map((line, index) =>
+      `${index === 0 ? toolPrefix : ' '.repeat(prefixWidth)}${color(line)}`,
     );
   }
 
@@ -418,7 +443,7 @@ function getToolPrefix(
   }
 
   return {
-    toolPrefix: gray(variant === 'transcript' ? '·  ' : '↳  '),
+    toolPrefix: gray(variant === 'transcript' ? '   ·  ' : '   ↳  '),
     prefixColor,
   };
 }

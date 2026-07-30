@@ -549,7 +549,47 @@ export async function persistToolResult(//重点：持久化工具结果
     hasMore,
   }
 }
-
+/**
+ * Process a pre-mapped tool result block. Applies persistence for large results
+ * without re-calling mapToolResultToToolResultBlockParam.
+ */
+export async function processPreMappedToolResultBlock(
+  toolResultBlock: ToolResultBlockParam,
+  toolName: string,
+  maxResultSizeChars: number,
+): Promise<ToolResultBlockParam> {
+  return maybePersistLargeToolResult(
+    toolResultBlock,
+    toolName,
+    getPersistenceThreshold(toolName, maxResultSizeChars),
+  )
+}
+/**
+ * Process a tool result for inclusion in a message.
+ * Maps the result to the API format and persists large results to disk.
+ */
+export async function processToolResultBlock<T>(
+  tool: {
+    name: string
+    maxResultSizeChars: number
+    mapToolResultToToolResultBlockParam: (
+      result: T,
+      toolUseID: string,
+    ) => ToolResultBlockParam
+  },
+  toolUseResult: T,
+  toolUseID: string,
+): Promise<ToolResultBlockParam> {
+  const toolResultBlock = tool.mapToolResultToToolResultBlockParam(
+    toolUseResult,
+    toolUseID,
+  )
+  return maybePersistLargeToolResult(
+    toolResultBlock,
+    tool.name,
+    getPersistenceThreshold(tool.name, tool.maxResultSizeChars),
+  )
+}
 /**
  * Ensure the session-specific tool results directory exists
  */

@@ -170,7 +170,7 @@ export function renderToolResultMessage(
           style={style}
           verbose={verbose}
           previewHint={isPlanFile ? '/plan to preview' : undefined}
-          originalFile={originalFile}
+          originalFile={originalFile ?? undefined}
         />
       );
     }

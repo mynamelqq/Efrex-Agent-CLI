@@ -15,6 +15,8 @@ import { clearOAuthTokenCache, installOAuthTokens } from 'src/cli/auth.js';
 import { performLogout } from 'src/commands/logout/logout.js';
 import { clearOpenAIClientCache } from 'src/services/api/openai/client.js';
 import { setClipboard } from '../ink/termio/osc.js';
+import { getGlobalConfig } from '../utils/config.js';
+import { useSetAppState } from '../state/AppState.js';
 
 type Props = {
   onDone(): void;
@@ -209,8 +211,8 @@ export function ConsoleOAuthFlow({
   const settings = getSettings_DEPRECATED() || {};
   const [oAuthState, setOAuthState] = useState<OAuthState>({ state: 'select_method' });
   const [oauthService] = useState(() => new OAuthService());
-  const { stdin } = useStdin();
   const [showPastePrompt, setShowPastePrompt] = useState(false);
+  const setAppState = useSetAppState();
   const [loginWithClaudeAi] = useState(
     () => mode === 'setup-token' || forceLoginMethod === 'claudeai',
   );
@@ -246,6 +248,12 @@ export function ConsoleOAuthFlow({
         });
 
         await installOAuthTokens(result);
+        const account = getGlobalConfig().oauthAccount;
+        const initialModel =
+          account?.selectedModel ?? account?.availableModels?.[0];
+        if (initialModel) {
+          setAppState(prev => ({ ...prev, mainLoopModel: initialModel }));
+        }
         // Reset modelType to anthropic when using OAuth login
         updateSettingsForSource('userSettings', { modelType: 'anthropic' } as any);
 
@@ -262,7 +270,7 @@ export function ConsoleOAuthFlow({
       });
 
     }
-  }, [oauthService, loginWithClaudeAi, mode]);
+  }, [oauthService, loginWithClaudeAi, mode, setAppState]);
   const switchToThirdParty = useCallback(async () => {
     setOAuthState({ state: 'switching_to_third_party' });
     try {
@@ -291,24 +299,6 @@ export function ConsoleOAuthFlow({
       });
     }
   }, [oAuthState.state, startOAuth]);
-  useEffect(() => {
-    if (oAuthState.state !== 'success') {
-      return;
-    }
-
-    const onStdinData = (chunk: Buffer | string) => {
-      const input = chunk.toString();
-      if (input.includes('\r') || input.includes('\n')) {
-        onDone();
-      }
-    };
-
-    stdin.on('data', onStdinData);
-    return () => {
-      stdin.off('data', onStdinData);
-    };
-  }, [oAuthState.state, onDone, stdin]);
-
   const handleSubmitCode = useCallback(
     (value: string, url: string) => {
       const [authorizationCode, state] = value.trim().split('#');
@@ -441,15 +431,13 @@ function WaitingForLoginView({
   }, [url, value]);
 
   return (
-    <Box flexDirection="column" paddingLeft={1} gap={1}>
-      <Text bold color="ansi:cyanBright">
-        Browser didn&apos;t open?
+    <Box flexDirection="column" paddingLeft={1}>
+      <Text dimColor>
+        Browser didn&apos;t open? {copied ? 'Copied.' : 'Press c to copy the login URL.'}
       </Text>
-      <Text dimColor>Use the URL below to sign in {copied ? '(Copied!)' : '(c to copy)'}</Text>
-      <Box flexDirection="column" paddingLeft={2}>
-        <Text color="ansi:blueBright">{url}</Text>
-      </Box>
-
+      <Text color="ansi:blueBright" wrap="truncate-end">
+        {url}
+      </Text>
     </Box>
   );
 }
@@ -695,6 +683,7 @@ function ThirdPartyApiForm({
   onSaved: (message: string) => void;
   onError: (message: string, retry: OAuthState) => void;
 }): React.ReactNode {
+  const setAppState = useSetAppState();
   const provider = PROVIDERS[flow.provider];
   const values = useMemo(
     () => ({
@@ -765,6 +754,10 @@ function ThirdPartyApiForm({
     }
 
     applyThirdPartyEnvironment(env);
+    setAppState(prev => ({
+      ...prev,
+      mainLoopModel: finalValues.model.trim(),
+    }));
     onSaved(`${provider.title} credentials saved.`);
   };
 
@@ -910,8 +903,9 @@ function SuccessView({
   onDone(): void;
 }): React.ReactNode {
   useInput(
-    (input, key) => {
+    (input, key, event) => {
       if (key.return || input === '\r' || input === '\n') {
+        event.stopImmediatePropagation();
         onDone();
       }
     },

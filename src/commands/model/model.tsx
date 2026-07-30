@@ -4,13 +4,15 @@ import { Box, Text, useInput } from '../../ink.js';
 import { COMMON_HELP_ARGS, COMMON_INFO_ARGS } from '../../constants/xml.js';
 import { useAppState, useSetAppState } from '../../state/AppState.js';
 import { getInitialSettings } from '../../utils/settings/settings.js';
+import { getGlobalConfig, saveGlobalConfig } from '../../utils/config.js';
+import { isClaudeAISubscriber } from '../../utils/auth.js';
 import { validateModel } from '../../utils/model/validateModel.js';
 import type {
 	CommandResultDisplay,
 	LocalJSXCommandCall,
 } from '../../types/command.js';
 
-const MODEL_OPTIONS = [
+const DEFAULT_MODEL_OPTIONS = [
 	'kimi-k2.6',
 	'gpt-5.4',
 	'gpt-5.4-mini',
@@ -18,15 +20,15 @@ const MODEL_OPTIONS = [
 	'gpt-4o',
 ] as const;
 
-const MODEL_ACCENTS: Record<(typeof MODEL_OPTIONS)[number], string> = {
-	'kimi-k2.6': 'yellowBright',
-	'gpt-5.4': 'cyanBright',
-	'gpt-5.4-mini': 'greenBright',
-	'gpt-4.1': 'blueBright',
-	'gpt-4o': 'magentaBright',
-};
+const ACCENT_PURPLE = '#B784FF';
+const ACCENT_PURPLE_HI = '#D9A6FF';
+const PRIMARY_GREEN = '#66D9A3';
+const CURRENT_YELLOW = '#FFD166';
+const TEXT_PRIMARY = '#E6EAF2';
+const TEXT_SECONDARY = '#9EA8B8';
+const TEXT_MUTED = '#687184';
 
-const MODEL_SUMMARIES: Record<(typeof MODEL_OPTIONS)[number], string> = {
+const MODEL_SUMMARIES: Record<string, string> = {
 	'kimi-k2.6': 'Kimi line, suitable when you want this provider explicitly.',
 	'gpt-5.4': 'Primary general-purpose model with stronger capability.',
 	'gpt-5.4-mini': 'Faster, lighter-weight GPT-5.4 variant.',
@@ -34,8 +36,96 @@ const MODEL_SUMMARIES: Record<(typeof MODEL_OPTIONS)[number], string> = {
 	'gpt-4o': 'Multimodal GPT-4o line with balanced responsiveness.',
 };
 
+// Keep the local command at a stable height while the focused row changes.
+// Without this, adding/removing the focused model description can make Ink
+// reflow the main screen and leave stale rows in terminal scrollback.
+// Four one-line model rows plus the two header rows and list gap make seven
+// content rows. Together with marginTop this matches the slash menu's frame
+// height, keeping the main screen below the terminal scrollback threshold.
+const MODEL_PICKER_MIN_HEIGHT = 7;
+const MODEL_VISIBLE_COUNT = 4;
+
+
+function getPlatformModelOptions(): string[] {
+	const availableModels = getGlobalConfig().oauthAccount?.availableModels;
+	if (!Array.isArray(availableModels)) {
+		return [];
+	}
+	return [...new Set(availableModels.filter(model => model.trim()))];
+}
+
+function getThirdPartyModel(): string | undefined {
+	const configuredModel = process.env.MODEL?.trim();
+	return configuredModel || (getInitialSettings().model as string | undefined);
+}
+
+function getModelOptions(): string[] {
+	if (isClaudeAISubscriber()) {
+		const platformModels = getPlatformModelOptions();
+		if (platformModels.length > 0) {
+			return platformModels;
+		}
+		return [
+			(getInitialSettings().model as string | undefined) ??
+			DEFAULT_MODEL_OPTIONS[0],
+		];
+	}
+	const thirdPartyModel = getThirdPartyModel();
+	return thirdPartyModel ? [thirdPartyModel] : [...DEFAULT_MODEL_OPTIONS];
+}
+
+function getModelSummary(model: string): string {
+	return MODEL_SUMMARIES[model] ?? 'Available model for the current account.';
+}
+
+function isPrimaryModel(model: string): boolean {
+	return model === 'gpt-5.4';
+}
+
+function getVisibleModelWindow(
+	models: string[],
+	selectedIndex: number
+): { items: string[]; startIndex: number } {
+	if (models.length <= MODEL_VISIBLE_COUNT) {
+		return { items: models, startIndex: 0 };
+	}
+
+	const maxStart = models.length - MODEL_VISIBLE_COUNT;
+	const centeredStart = selectedIndex - Math.floor(MODEL_VISIBLE_COUNT / 2);
+	const startIndex = Math.max(0, Math.min(centeredStart, maxStart));
+	return {
+		items: models.slice(startIndex, startIndex + MODEL_VISIBLE_COUNT),
+		startIndex,
+	};
+}
+
 function getDefaultModel(): string {
-	return getInitialSettings().model as string;
+	if (isClaudeAISubscriber()) {
+		const models = getPlatformModelOptions();
+		const selectedModel = getGlobalConfig().oauthAccount?.selectedModel;
+		return (selectedModel && models.includes(selectedModel)
+			? selectedModel
+			: models[0]) ?? (getInitialSettings().model as string);
+	}
+	return getThirdPartyModel() ?? DEFAULT_MODEL_OPTIONS[0];
+}
+
+function saveSelectedPlatformModel(model: string): void {
+	if (!isClaudeAISubscriber()) {
+		return;
+	}
+	saveGlobalConfig(current => {
+		if (!current.oauthAccount || current.oauthAccount.selectedModel === model) {
+			return current;
+		}
+		return {
+			...current,
+			oauthAccount: {
+				...current.oauthAccount,
+				selectedModel: model,
+			},
+		};
+	});
 }
 
 function renderModelLabel(model: string | null): string {
@@ -62,9 +152,10 @@ function ModelPicker({
 }): React.ReactNode {
 	const mainLoopModel = useAppState(s => s.mainLoopModel);
 	const setAppState = useSetAppState();
+	const modelOptions = getModelOptions();
 	const currentIndex = Math.max(
 		0,
-		MODEL_OPTIONS.findIndex(option => option === mainLoopModel)
+		modelOptions.findIndex(option => option === mainLoopModel)
 	);
 	const [selectedIndex, setSelectedIndex] = React.useState(currentIndex);
 	const [submitted, setSubmitted] = React.useState(false);
@@ -76,28 +167,28 @@ function ModelPicker({
 
 		if (key.leftArrow || key.upArrow) {
 			setSelectedIndex(index =>
-				index <= 0 ? MODEL_OPTIONS.length - 1 : index - 1
+				index <= 0 ? modelOptions.length - 1 : index - 1
 			);
 			return;
 		}
 
 		if (key.rightArrow || key.downArrow || key.tab) {
 			setSelectedIndex(index =>
-				index >= MODEL_OPTIONS.length - 1 ? 0 : index + 1
+				index >= modelOptions.length - 1 ? 0 : index + 1
 			);
 			return;
 		}
 
 		if (key.escape || (key.ctrl && input === 'c')) {
-			onDone(`Kept model as ${chalk.bold(renderModelLabel(mainLoopModel))}`, {
-				display: 'system',
-			});
+			setSubmitted(true);
+			onDone(undefined, { display: 'skip' });
 			return;
 		}
 
 		if (key.return) {
-			const nextModel = MODEL_OPTIONS[selectedIndex] ?? MODEL_OPTIONS[0];
+			const nextModel = modelOptions[selectedIndex] ?? modelOptions[0];
 			setSubmitted(true);
+			saveSelectedPlatformModel(nextModel);
 			setAppState(prev => ({
 				...prev,
 				mainLoopModel: nextModel,
@@ -107,56 +198,95 @@ function ModelPicker({
 		}
 
 		if (input === 'q') {
-			onDone(`Kept model as ${chalk.bold(renderModelLabel(mainLoopModel))}`, {
-				display: 'system',
-			});
+			setSubmitted(true);
+			onDone(undefined, { display: 'skip' });
 		}
 	});
 
-	const selectedModel = MODEL_OPTIONS[selectedIndex] ?? MODEL_OPTIONS[0];
+	const visibleModelWindow = getVisibleModelWindow(modelOptions, selectedIndex);
+	const pickerHeight = Math.max(
+		MODEL_PICKER_MIN_HEIGHT,
+		Math.min(modelOptions.length, MODEL_VISIBLE_COUNT) + 3
+	);
 
 	return (
-		<Box paddingX={1} flexDirection="column" marginTop={1}>
+		<Box
+			paddingX={1}
+			flexDirection="column"
+			minHeight={pickerHeight}
+		>
 			<Box flexDirection="row">
-				<Text color="cyanBright">◉ </Text>
-				<Text bold color="cyanBright">
+				<Text color={ACCENT_PURPLE}>◎ </Text>
+				<Text bold color={TEXT_PRIMARY}>
 					Select model
 				</Text>
 			</Box>
-			<Text dimColor>
-				↑/↓ 选择，Enter 确认，Esc 取消
+			<Text>
+				<Text color={CURRENT_YELLOW}>↑/↓</Text>
+				<Text color={TEXT_SECONDARY}> 选择 · </Text>
+				<Text color={CURRENT_YELLOW}>Enter</Text>
+				<Text color={TEXT_SECONDARY}> 确认 · </Text>
+				<Text color={CURRENT_YELLOW}>Esc</Text>
+				<Text color={TEXT_SECONDARY}> 取消</Text>
 			</Text>
 			<Box flexDirection="column" marginTop={1}>
-				{MODEL_OPTIONS.map((option, index) => {
+				{visibleModelWindow.items.map((option, visibleIndex) => {
+					const index = visibleModelWindow.startIndex + visibleIndex;
 					const isSelected = index === selectedIndex;
 					const isCurrent = option === mainLoopModel;
-					const accent = MODEL_ACCENTS[option];
+					const isPrimary = isPrimaryModel(option);
 					return (
-						<Box key={option} flexDirection="column">
-							<Box>
-								<Text color={isSelected ? accent : 'gray'}>
+						<Box
+							key={option}
+							flexDirection="column"
+							height={1}
+							overflow="hidden"
+						>
+							<Box width="100%" flexWrap="nowrap">
+								<Text color={isSelected ? ACCENT_PURPLE_HI : TEXT_MUTED}>
 									{isSelected ? '› ' : '  '}
 								</Text>
-								<Text color={accent}>● </Text>
-								<Text color={isSelected ? accent : undefined} bold={isSelected}>
+								<Text color={isSelected ? ACCENT_PURPLE : TEXT_MUTED}>●</Text>
+								<Text
+									color={isSelected ? ACCENT_PURPLE_HI : TEXT_PRIMARY}
+									dimColor={!isSelected}
+									bold={isSelected}
+								>
+									{' '}
 									{option}
 								</Text>
-								{isCurrent ? (
-									<Text color="gray">
-										{isSelected ? ' current' : ' · current'}
-									</Text>
+								{isPrimary ? (
+									<>
+										<Text color={TEXT_MUTED}> · </Text>
+										<Text color={PRIMARY_GREEN} bold>
+											Primary
+										</Text>
+									</>
 								) : null}
+								{isCurrent ? (
+									<>
+										<Text color={TEXT_MUTED}> · </Text>
+										<Text color={CURRENT_YELLOW} bold>
+											current
+										</Text>
+									</>
+								) : null}
+								<Text
+									color={TEXT_MUTED}
+									wrap="truncate-end"
+									flexGrow={1}
+									flexShrink={1}
+								>
+									{' · '}
+									<Text color={TEXT_SECONDARY}>
+										{getModelSummary(option)}
+									</Text>
+								</Text>
 							</Box>
-							{isSelected ? (
-								<Text dimColor>{MODEL_SUMMARIES[option]}</Text>
-							) : null}
 						</Box>
 					);
 				})}
 			</Box>
-			<Text dimColor>
-				Selected: {chalk.bold(selectedModel)}
-			</Text>
 		</Box>
 	);
 }
@@ -193,6 +323,7 @@ function SetModelAndClose({
 					...prev,
 					mainLoopModel: defaultModel,
 				}));
+				saveSelectedPlatformModel(defaultModel);
 				setPhase('done');
 				setMessage(`Model switched to ${chalk.bold(renderModelLabel(defaultModel))}`);
 				onDone(`Model switched to ${chalk.bold(renderModelLabel(defaultModel))}`);
@@ -214,6 +345,7 @@ function SetModelAndClose({
 					...prev,
 					mainLoopModel: model,
 				}));
+				saveSelectedPlatformModel(model);
 				setPhase('done');
 				setMessage(`Model switched to ${chalk.bold(model)}`);
 				onDone(`Model switched to ${chalk.bold(model)}`);

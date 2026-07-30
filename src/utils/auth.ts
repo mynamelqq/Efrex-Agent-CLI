@@ -2,7 +2,7 @@ import { logError } from "./log"
 
 import { execa } from 'execa'
 import { clearKeychainCache, getMacOsKeychainStorageServiceName, getUsername } from "./secureStorage/macOsKeychainHelpers"
-import { getGlobalConfig, saveGlobalConfig } from "./config"
+import { AccountInfo, getGlobalConfig, saveGlobalConfig } from "./config"
 import memoize from "lodash/memoize"
 import { join } from 'path'
 import { mkdir, stat } from 'fs/promises'
@@ -350,4 +350,11 @@ export function getAuthTokenSource() {
 }
 export function isClaudeAISubscriber(): boolean {
   return shouldUseClaudeAIAuth(getClaudeAIOAuthTokens()?.scopes)
+}
+/**
+ * Gets OAuth account information when Anthropic auth is enabled.
+ * Returns undefined when using external API keys or third-party services.
+ */
+export function getOauthAccountInfo(): AccountInfo | undefined {
+  return isClaudeAISubscriber() ? getGlobalConfig().oauthAccount : undefined
 }

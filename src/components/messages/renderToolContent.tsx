@@ -1,7 +1,7 @@
 import React from 'react'
 import { Text } from '../../ink.js'
 import type { Tool, ToolProgressData } from '../../Tool.js'
-import { defaultToolRenderTheme } from '../../utils/theme.js'
+import { getActiveThemeName, getTheme } from '@anthropic/ink'
 import { logForDebugging } from '../../utils/debug.js'
 import type { ProgressMessage } from '../../package/message.js'
 
@@ -28,7 +28,7 @@ export function renderToolUseContent(
 
   try {
     return normalizeToolRenderNode(tool.renderToolUseMessage(input, {
-      theme: defaultToolRenderTheme,
+      theme: getActiveThemeName(),
       verbose,
       commands: [],
     }))
@@ -51,7 +51,7 @@ export function renderToolResultContent(
 
   try {
     return normalizeToolRenderNode(tool.renderToolResultMessage(output, [], {
-      theme: defaultToolRenderTheme,
+      theme: getTheme(getActiveThemeName()),
       tools,
       verbose,
       input,

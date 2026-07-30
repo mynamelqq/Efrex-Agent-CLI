@@ -143,17 +143,29 @@ export type InstallMethod = 'local' | 'native' | 'global' | 'unknown'
 
 
 export type AccountInfo = {
-  accountUuid: string
-  emailAddress: string
-  organizationUuid?: string
-  organizationName?: string | null // added 4/23/2025, not populated for existing users
-  organizationRole?: string | null
-  workspaceRole?: string | null
-  // Populated by /api/oauth/profile
-  displayName?: string
+  // The account capability/cache portion of the OAuth /profile response.
+  // User identity fields are exposed through CoreUserData in utils/user.ts.
+  // `id` and `email` remain here temporarily so existing config files and the
+  // OAuth persistence path remain backwards compatible.
+  /** @deprecated Read the user id from CoreUserData instead. */
+  id: string | number
+  /** @deprecated Read the user email from CoreUserData instead. */
+  email: string
+  plan?: {
+    code?: string
+    name?: string
+    monthlyPriceCents?: number
+    monthlyStandardTokens?: number
+    rpmLimit?: number
+    periodStart?: string
+    periodEnd?: string
+  }
+  usedStandardTokens?: number
+  remainingStandardTokens?: number
+  availableModels?: string[]
+  selectedModel?: string
+
   hasExtraUsageEnabled?: boolean
-  accountCreatedAt?: string
-  subscriptionCreatedAt?: string
 }
 
 export const DEFAULT_GLOBAL_CONFIG: GlobalConfig = createDefaultGlobalConfig()
@@ -907,8 +919,10 @@ function saveConfigWithLock<A extends object>(//保存配置
   const defaultConfig = createDefault()
   const dir = dirname(file)
 
-  // Ensure directory exists (mkdirSync is already recursive in FsOperations)
-  mkdirSync(dir)//确保路径存在
+  // The global config normally lives directly under the user's home
+  // directory on Windows. mkdirSync(home) without recursive mode throws
+  // EEXIST there, preventing /logout and login state from being persisted.
+  mkdirSync(dir, { recursive: true })//确保路径存在
 
   let release
   try {

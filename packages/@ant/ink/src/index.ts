@@ -226,6 +226,7 @@ export {
 // ============================================================
 export {
   ThemeProvider,
+  getActiveThemeName,
   setThemeConfigCallbacks,
   usePreviewTheme,
   useTheme,

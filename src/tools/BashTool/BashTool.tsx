@@ -360,6 +360,7 @@ type SimulatedSedEditContext = Pick<ToolUseContext, 'readFileState' | 'updateFil
 export const BashTool = buildTool({
   name: BASH_TOOL_NAME,
   searchHint: 'execute shell commands',
+  isEnabled(){return true},
   // 3万字符——工具结果持久化阈值
   maxResultSizeChars: 30_000,
   async description() {

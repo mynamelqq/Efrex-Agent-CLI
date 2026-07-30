@@ -56,6 +56,7 @@ type State = {
   flagSettingsInline: Record<string, unknown> | null
   sessionIngressToken: string | null | undefined
   oauthTokenFromFd: string | null | undefined
+  
   apiKeyFromFd: string | null | undefined
   // Telemetry state
   statsStore: { observe(name: string, value: number): void } | null
@@ -493,4 +494,33 @@ export function setLastAPIRequestMessages(
   messages: BetaMessageStreamParams['messages'] | null,
 ): void {
   STATE.lastAPIRequestMessages = messages
+}
+export function clearSystemPromptSectionState(): void {
+  STATE.systemPromptSectionCache.clear()
+}
+export function setSystemPromptSectionCacheEntry(
+  name: string,
+  value: string | null,
+): void {
+  if (STATE.systemPromptSectionCache.size >= 100) {
+    const firstKey = STATE.systemPromptSectionCache.keys().next().value
+    if (firstKey !== undefined) {
+      STATE.systemPromptSectionCache.delete(firstKey)
+    }
+  }
+  STATE.systemPromptSectionCache.set(name, value)
+}
+// System prompt section accessors
+
+export function getSystemPromptSectionCache(): Map<string, string | null> {
+  return STATE.systemPromptSectionCache
+}
+/**
+ * Reset beta header latches to null. Called on /clear and /compact so a
+ * fresh conversation gets fresh header evaluation.
+ */
+export function clearBetaHeaderLatches(): void {
+  STATE.afkModeHeaderLatched = null
+  STATE.fastModeHeaderLatched = null
+  STATE.cacheEditingHeaderLatched = null
 }

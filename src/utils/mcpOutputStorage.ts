@@ -3,7 +3,10 @@ import { join } from 'path'
 import { formatFileSize } from './format.js'
 import { logError } from './log.js'
 import { toError } from './errors.js'
-
+import { ensureToolResultsDir } from './toolResultStorage.js'
+import { getToolResultsDir } from './sessionStorage.js'
+import { MCPResultType } from 'src/services/mcp/client.js'
+//
 /**
  * Generates instruction text for Claude to read from a saved output file.
  *
@@ -122,7 +125,7 @@ export type PersistBinaryResult =
  * bytes as-is so the resulting file can be opened with native tools (Read
  * for PDFs, pandas for xlsx, etc.).
  */
-export async function persistBinaryContent(
+export async function persistBinaryContent(//mcp工具保存成二进制文本 保密
   bytes: Buffer,
   mimeType: string | undefined,
   persistId: string,
@@ -151,9 +154,9 @@ export async function persistBinaryContent(
 }
 
 /**
- * Build a short message telling Claude where binary content was saved.
- * Just states the path — no prescriptive hint, since what the model can
- * actually do with the file depends on provider/tooling.
+ * 构建一条短消息，告诉 Claude 二进制内容的保存位置。
+ * 只是说明路径 -没有规定性提示，因为模型可以
+ * 实际上对文件的处理取决于提供者/工具。
  */
 export function getBinaryBlobSavedMessage(
   filepath: string,
@@ -163,4 +166,20 @@ export function getBinaryBlobSavedMessage(
 ): string {
   const mt = mimeType || 'unknown type'
   return `${sourceDescription}Binary content (${mt}, ${formatFileSize(size)}) saved to ${filepath}`
+}
+/**
+ * Generates a format description string based on the MCP result type and schema.
+ */
+export function getFormatDescription(
+  type: MCPResultType,
+  schema?: unknown,
+): string {
+  switch (type) {
+    case 'toolResult':
+      return 'Plain text'
+    case 'structuredContent':
+      return schema ? `JSON with schema: ${schema}` : 'JSON'
+    case 'contentArray':
+      return schema ? `JSON array with schema: ${schema}` : 'JSON array'
+  }
 }

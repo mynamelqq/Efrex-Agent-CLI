@@ -784,15 +784,6 @@ function renderNodeToOutput(
             node.stickyScroll = true
           }
         }
-        const followDelta = (node.scrollTop ?? 0) - scrollTopBeforeFollow
-        if (followDelta > 0) {
-          const vpTop = node.scrollViewportTop ?? 0
-          followScroll = {
-            delta: followDelta,
-            viewportTop: vpTop,
-            viewportBottom: vpTop + innerHeight - 1,
-          }
-        }
         // Drain pendingScrollDelta. Native terminals (proportional burst
         // events) use proportional drain; xterm.js (VS Code, sparse events +
         // app-side accel curve) uses adaptive small-step drain. isXtermJs()
@@ -874,6 +865,17 @@ function renderNodeToOutput(
             const delta = contentCached.y - contentY
             const regionTop = Math.floor(y + contentYoga.getComputedTop())
             const regionBottom = regionTop + innerHeight - 1
+            // Record the scroll only after pendingScrollDelta has drained and
+            // the displayed scrollTop has been clamped. Recording it before
+            // this point covered sticky/streaming follow, but missed wheel,
+            // page-key, and momentum scrolling. The selection overlay would
+            // then remain on fixed terminal rows while different transcript
+            // text moved underneath it.
+            followScroll = {
+              delta,
+              viewportTop: regionTop,
+              viewportBottom: regionBottom,
+            }
             if (
               cached?.y === y &&
               cached.height === height &&

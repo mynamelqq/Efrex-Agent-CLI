@@ -2,6 +2,7 @@ import { OAuthTokens } from "src/services/oauth/types"
 import memoize from "lodash/memoize"
 import { clearAuthRelatedCaches, performLogout } from "src/commands/logout/logout"
 import { createAndStoreApiKey, shouldUseClaudeAIAuth, storeOAuthAccountInfo } from "src/services/oauth/client"
+import { getOauthProfileFromOauthToken } from "src/services/oauth/getOauthProfile"
 import { logForDebugging } from "src/utils/debug"
 import { logError } from "src/utils/log"
 import { getSecureStorage } from "src/utils/secureStorage"
@@ -19,30 +20,34 @@ export async function installOAuthTokens(tokens: OAuthTokens): Promise<void> {
   // Clear old state before saving new credentials
   await performLogout({ clearOnboarding: false })//先保证注销状态重置cache
 
-  // Reuse pre-fetched profile if available, otherwise fetch fresh
-  const profile:any =null
-    // tokens.profile ?? (await getOauthProfileFromOauthToken(tokens.accessToken))
-//   if (profile) {
-//     storeOAuthAccountInfo({
-//       accountUuid: profile.account.uuid,
-//       emailAddress: profile.account.email,
-//       organizationUuid: profile.organization.uuid,
-//       displayName: profile.account.display_name || undefined,
-//       hasExtraUsageEnabled:
-//         profile.organization.has_extra_usage_enabled ?? undefined,
-//       billingType: profile.organization.billing_type ?? undefined,
-//       subscriptionCreatedAt:
-//         profile.organization.subscription_created_at ?? undefined,
-//       accountCreatedAt: profile.account.created_at,
-//     })
-//   } else if (tokens.tokenAccount) {
-//     // Fallback to token exchange account data when profile endpoint fails
-//     storeOAuthAccountInfo({
-//       accountUuid: tokens.tokenAccount.uuid,
-//       emailAddress: tokens.tokenAccount.emailAddress,
-//       organizationUuid: tokens.tokenAccount.organizationUuid,
-//     })
-//   }
+  // Store the account basics returned by the new /profile endpoint.
+  const profile = await getOauthProfileFromOauthToken(tokens.accessToken)
+  if (profile) {
+    storeOAuthAccountInfo({
+      id: profile.id,
+      email: profile.email,
+      plan: profile.plan
+        ? {
+            code: profile.plan.code,
+            name: profile.plan.name,
+            monthlyPriceCents: profile.plan.monthly_price_cents,
+            monthlyStandardTokens: profile.plan.monthly_standard_tokens,
+            rpmLimit: profile.plan.rpm_limit,
+            periodStart: profile.plan.period_start,
+            periodEnd: profile.plan.period_end,
+          }
+        : undefined,
+      usedStandardTokens: profile.used_standard_tokens,
+      remainingStandardTokens: profile.remaining_standard_tokens,
+      availableModels: profile.available_models,
+    })
+  } else if (tokens.tokenAccount) {
+    // Keep the account identifiable if the profile request fails.
+    storeOAuthAccountInfo({
+      id: tokens.tokenAccount.uuid,
+      email: tokens.tokenAccount.emailAddress,
+    })
+  }
 
   const storageResult = saveOAuthTokensIfNeeded(tokens)
   clearOAuthTokenCache()

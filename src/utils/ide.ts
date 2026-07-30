@@ -793,7 +793,7 @@ export async function detectIDEs(//验证 lockfile 的 workspacefolder 是否包
 
 
 function getEfrexVersion() {
-  return MACRO.VERSION
+  return typeof MACRO !== 'undefined' ? MACRO.VERSION : '0.0.1'
 }
 export async function maybeNotifyIDEConnected(client: Client) {
   await client.notification({

@@ -142,6 +142,7 @@ export const GrepTool = buildTool({
   userFacingName() {
     return 'Search'
   },
+  isEnabled(){return true},
   getToolUseSummary,
   get inputSchema(): InputSchema {
     return inputSchema()

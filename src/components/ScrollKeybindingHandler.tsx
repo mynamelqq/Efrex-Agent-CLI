@@ -244,6 +244,24 @@ export function ScrollKeybindingHandler({
 				clearMomentum();
 				handle.scrollToBottom();
 				consumed = true;
+			} else if (
+				!key.ctrl &&
+				!key.meta &&
+				!key.shift &&
+				input === 'j'
+			) {
+				clearMomentum();
+				handle.scrollBy(1);
+				consumed = true;
+			} else if (
+				!key.ctrl &&
+				!key.meta &&
+				!key.shift &&
+				input === 'k'
+			) {
+				clearMomentum();
+				handle.scrollBy(-1);
+				consumed = true;
 			}
 
 			if (!consumed) {

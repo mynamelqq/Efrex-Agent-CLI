@@ -1,4 +1,4 @@
-﻿import type { ToolUseBlock } from 'src/package/message';
+﻿import type { ContentBlockParam, ToolUseBlock } from 'src/package/message';
 import type {
 	AssistantMessage,
 	Message,
@@ -19,11 +19,18 @@ import { PermissionResult } from 'src/types/permissions.js';
 import type { z } from 'zod/v4';
 import {
 	maybePersistLargeToolResult,
-	getPersistenceThreshold
+	getPersistenceThreshold,
+	processPreMappedToolResultBlock,
+	processToolResultBlock
 } from 'src/utils/toolResultStorage.js';
 // import { Stream } from '../../utils/stream.js'
 import { formatZodValidationError } from 'src/utils/toolErrors.js';
 import { randomUUID } from 'node:crypto';
+import { MCPServerConnection } from '../mcp/types.js';
+import { mcpInfoFromString } from 'src/utils/mcpStringUtils.js';
+import { getAllBaseTools } from 'src/tools.js';
+import { getLoggingSafeMcpBaseUrl, isMcpTool } from '../mcp/utils.js';
+import { count } from 'src/utils/array.js';
 export type MessageUpdateLazy<M extends Message = Message> = {
 	message: M;
 	contextModifier?: {
@@ -31,7 +38,67 @@ export type MessageUpdateLazy<M extends Message = Message> = {
 		modifyContext: (context: ToolUseContext) => ToolUseContext;
 	};
 };
-// function streamedCheckPermissionsAndCallTool(
+export type McpServerType =
+  | 'stdio'
+  | 'sse'
+  | 'http'
+  | 'ws'
+  | 'sdk'
+  | 'sse-ide'
+  | 'ws-ide'
+  | undefined
+function findMcpServerConnection(
+  toolName: string,
+  mcpClients: MCPServerConnection[],
+): MCPServerConnection | undefined {
+  if (!toolName.startsWith('mcp__')) {//如果是mcp工具
+    return undefined
+  }
+
+  const mcpInfo = mcpInfoFromString(toolName)
+  if (!mcpInfo) {
+    return undefined
+  }
+
+  // mcpInfo.serverName is normalized (e.g., "claude_ai_Slack"), but client.name
+  // is the original name (e.g., "claude.ai Slack"). Normalize both for comparison.
+  return mcpClients.find(//根据当前的工具名称找到当前连接的mcp客户端，返回连接
+    client => client.name === mcpInfo.serverName,
+  )
+}
+/**
+ * Extracts the MCP server transport type from a tool name.
+ * Returns the server type (stdio, sse, http, ws, sdk, etc.) for MCP tools,
+ * or undefined for built-in tools.
+ */
+function getMcpServerType(
+  toolName: string,
+  mcpClients: MCPServerConnection[],
+): McpServerType {
+  const serverConnection = findMcpServerConnection(toolName, mcpClients)//这里多了一个判定连接状态是不是已连接
+
+  if (serverConnection?.type === 'connected') {
+    // Handle stdio configs where type field is optional (defaults to 'stdio')
+    return serverConnection.config.type ?? 'stdio'
+  }
+  return undefined
+}
+/**
+ * Extracts the MCP server base URL for a tool by looking up its server connection.
+ * Returns undefined for stdio servers, built-in tools, or if the server is not connected.
+ */
+function getMcpServerBaseUrlFromToolName(
+  toolName: string,
+  mcpClients: MCPServerConnection[],
+): string | undefined {
+  const serverConnection = findMcpServerConnection(toolName, mcpClients)
+  if (serverConnection?.type !== 'connected') {
+    return undefined
+  }
+  return getLoggingSafeMcpBaseUrl(serverConnection.config)
+}
+
+  // function streamedCheckPermissionsAndCallTool(
 //   tool: Tool,
 //   toolUseID: string,
 //   input: { [key: string]: boolean | string | number },
@@ -72,9 +139,8 @@ export async function* runToolUse(
 	toolUseContext: ToolUseContext,
 	canUseTool: CanUseToolFn,
 ): AsyncGenerator<MessageUpdateLazy, void> {
-	const tool = findToolByName(toolUseContext.options.tools, toolUse.name);
-	// const messageId = assistantMessage.message.id as string
-	// const requestId = assistantMessage.requestId as string | undefined
+	const toolName = toolUse.name
+	let tool = findToolByName(toolUseContext.options.tools, toolUse.name);
 	if (!tool) {
 		const msg = `Error: No such tool available: ${toolUse.name}`;
 		yield {
@@ -93,6 +159,20 @@ export async function* runToolUse(
 		};
 		return;
 	}
+	const messageId = assistantMessage.message.id as string
+  	const requestId = assistantMessage.requestId as string | undefined
+	const mcpServerType = getMcpServerType(//获取当前工具对应Mcp服务器的类型
+		toolName,
+		toolUseContext.options.mcpClients,
+	)
+	const mcpServerBaseUrl = getMcpServerBaseUrlFromToolName(
+		toolName,
+		toolUseContext.options.mcpClients,
+  	)
+
+	// const messageId = assistantMessage.message.id as string
+	// const requestId = assistantMessage.requestId as string | undefined
+	
 	const toolInput = toolUse.input as { [key: string]: string };
 	// try {
 	//   if (toolUseContext.abortController.signal.aborted) {
@@ -326,26 +406,98 @@ export async function* runToolUse(
 		if (!toolResult) {
 			throw new Error(`Tool ${tool.name} completed without a result.`);
 		}
-
-		const toolResultBlock = await processToolResultBlock(
-			tool,
+		const mappedToolResultBlock = tool.mapToolResultToToolResultBlockParam(
 			toolResult.data,
 			toolUse.id
 		);
+		const mappedContent = mappedToolResultBlock.content
+		const toolResultSizeBytes = !mappedContent
+		? 0
+		: typeof mappedContent === 'string'
+			? mappedContent.length
+			: JSON.stringify(mappedContent).length
+		let toolOutput = toolResult.data
+		const hookResults = []
+		const toolContextModifier = toolResult.contextModifier
+		const mcpMeta = toolResult.mcpMeta
+		async function addToolResult(
+			toolUseResult: unknown,
+			preMappedBlock?: ToolResultBlockParam,
+		) {
+			// Use the pre-mapped block when available (non-MCP tools where hooks
+			// don't modify the output), otherwise map from scratch.
+			const toolResultBlock = preMappedBlock//
+				? await processPreMappedToolResultBlock(//只执行maybePersistLargeToolResult
+					preMappedBlock,
+					tool!.name,
+					tool!.maxResultSizeChars,
+				)
+				: await processToolResultBlock(tool!, toolUseResult, toolUse.id)
 
-		yield {
-			message: createUserMessage({
-				content: [toolResultBlock],
-				toolUseResult: toolResult.data,
-				sourceToolAssistantUUID: assistantMessage.uuid
-			}),
-			contextModifier: toolResult.contextModifier
-				? {
-						toolUseID: toolUse.id,
-						modifyContext: toolResult.contextModifier
-					}
+			// Build content blocks - tool result first, then optional feedback
+			const contentBlocks: ContentBlockParam[] = [toolResultBlock]
+			// Add accept feedback if user provided feedback when approving
+			// (acceptFeedback only exists on PermissionAllowDecision, which is guaranteed here)
+			if (
+				'acceptFeedback' in permissionDecision &&
+				permissionDecision.acceptFeedback
+			) {
+				contentBlocks.push({
+				type: 'text',
+				text: permissionDecision.acceptFeedback,
+				})
+			}
+
+			// Add content blocks (e.g., pasted images) from the permission decision
+			const allowContentBlocks =
+				'contentBlocks' in permissionDecision
+				? permissionDecision.contentBlocks
 				: undefined
-		};
+			if (allowContentBlocks?.length) {
+				contentBlocks.push(...allowContentBlocks)
+			}
+
+			// Generate sequential imagePasteIds so each image renders with a distinct label
+			let allowImageIds: number[] | undefined
+			if (allowContentBlocks?.length) {
+				// const imageCount = count(
+				// allowContentBlocks,
+				// (b: ContentBlockParam) => b.type === 'image',
+				// )
+				// if (imageCount > 0) {
+				// 	const startId = getNextImagePasteId(toolUseContext.messages)
+				// 	allowImageIds = Array.from(
+				// 		{ length: imageCount },
+				// 		(_, i) => startId + i,
+				// 	)
+				// }
+			}
+
+			return {
+				message: createUserMessage({
+				content: contentBlocks,
+				imagePasteIds: allowImageIds,
+				toolUseResult:
+					toolUseResult,
+				mcpMeta: mcpMeta,
+				sourceToolAssistantUUID: assistantMessage.uuid,
+				}),
+				contextModifier: toolContextModifier
+				? {
+					toolUseID: toolUse.id,
+					modifyContext: toolContextModifier,
+					}
+				: undefined,
+			}
+			}
+		// TOOD(hackyon)：重构，以便我们对 MCP 工具没有不同的体验
+		if (!isMcpTool(tool)) {
+			yield await addToolResult(toolOutput, mappedToolResultBlock)
+		}
+		if (isMcpTool(tool)) {
+			yield await addToolResult(toolOutput)
+		}
+
 
 		if (toolResult.newMessages && toolResult.newMessages.length > 0) {
 			for (const message of toolResult.newMessages) {
@@ -371,36 +523,4 @@ export async function* runToolUse(
 		};
 	}
 }
-/**
- * Process a tool result for inclusion in a message.
- * Maps the result to the API format and persists large results to disk.
- */
-export async function processToolResultBlock<T>(
-	tool: {
-		name: string;
-		maxResultSizeChars: number;
-		mapToolResultToToolResultBlockParam: (
-			result: T,
-			toolUseID: string
-		) => ToolResultBlockParam;
-	},
-	toolUseResult: T,
-	toolUseID: string
-): Promise<ToolResultBlockParam> {
-	const mappedToolResultBlock = tool.mapToolResultToToolResultBlockParam(
-		toolUseResult,
-		toolUseID
-	);
-	const mappedContent = mappedToolResultBlock.content
-    const toolResultSizeBytes = !mappedContent
-      ? 0
-      : typeof mappedContent === 'string'
-        ? mappedContent.length
-        : JSON.stringify(mappedContent).length
 
-	return maybePersistLargeToolResult(
-		mappedToolResultBlock,
-		tool.name,
-		getPersistenceThreshold(tool.name, tool.maxResultSizeChars)
-	);
-}

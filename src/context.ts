@@ -33,12 +33,12 @@ export const getUserContext = memoize(
     const shouldDisableEfrexMd =isEnvTruthy(process.env.DISABLE_Efrex_MDS)
     // Await the async I/O (readFile/readdir directory walk) so the event
     // loop yields naturally at the first fs.readFile.
-    const EfrexMd = shouldDisableEfrexMd
-      ? null:getEfrexMds(await getMemoryFiles())//读取并拼装 Efrex / Efrex 的“记忆文件（Memory Files）”，最终生成一个系统 Prompt
-    setCachedEfrexMdContent(EfrexMd || null)
+    // const EfrexMd = shouldDisableEfrexMd
+      // ? null:getEfrexMds(await getMemoryFiles())//读取并拼装 Efrex / Efrex 的“记忆文件（Memory Files）”，最终生成一个系统 Prompt
+    // setCachedEfrexMdContent(EfrexMd || null)
     return {
-      ...(EfrexMd && { EfrexMd }),
-      currentDate: `Today's date is ${getLocalISODate()}.`,
+      // ...(EfrexMd && { EfrexMd }),
+      // currentDate: `Today's date is ${getLocalISODate()}.`,
     }
   },
 )
@@ -73,17 +73,18 @@ export const getSystemContext = memoize(
     const startTime = Date.now()
 
     // Skip git status in CCR (unnecessary overhead on resume) or when git instructions are disabled
-    const gitStatus =
-      isEnvTruthy(process.env.Efrex_CODE_REMOTE)
-        ? null
-        : await getGitStatus()
-    logForDebugging("gitStatus:"+gitStatus!)
+    // const gitStatus =
+    //   isEnvTruthy(process.env.Efrex_CODE_REMOTE)
+    //     ? null
+    //     : await getGitStatus()
+    // logForDebugging("gitStatus:"+gitStatus!)
     return {
-      ...(gitStatus && { gitStatus }),
+      // ...(gitStatus && { gitStatus }),
     }
   },
 )
 export const getGitStatus = memoize(async (): Promise<string | null> => {
+  return "";
   const startTime = Date.now()
   const isGitStart = Date.now()
   const isGit = await getIsGit()//该目录有没有git 没有的话直接退出 

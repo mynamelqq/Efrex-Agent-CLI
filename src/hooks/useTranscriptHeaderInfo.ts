@@ -1,8 +1,5 @@
 import { useAppState } from '../state/AppState.js';
-import {
-	getAnthropicModel,
-	getEffortLevel,
-} from '../utils/anthropicConfig.js';
+import { getEffortLevel } from '../utils/anthropicConfig.js';
 
 function truncate(value: string, maxLen: number): string {
 	if (value.length <= maxLen) return value;
@@ -14,7 +11,7 @@ export function useTranscriptHeaderInfo(maxModelLen = 36, maxEffortLen = 12) {
 	const effort = getEffortLevel();
 
 	return {
-		model: truncate(model ?? getAnthropicModel(), maxModelLen),
+		model: truncate(model, maxModelLen),
 		effort: truncate(effort || 'medium', maxEffortLen),
 	};
 }

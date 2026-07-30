@@ -12,7 +12,7 @@ import {
   prepareUserContent,
 } from '../messages.js';
 import { errorMessage, ShellError } from '../errors.js';
-import { processToolResultBlock } from "src/services/tools/toolExecution.js";
+import { processToolResultBlock } from '../toolResultStorage.js';
 import { escapeXml } from '../xml.js';
 import type { ProcessUserInputContext } from './processUserInput.js';
 import { isPowerShellToolEnabled } from '../shell/shellToolUtils.js';
@@ -95,7 +95,6 @@ export async function processBashCommand(
       /* eslint-enable @typescript-eslint/no-require-imports */
     }
     const shellTool = PowerShellTool ?? BashTool;
-
     const response = PowerShellTool
       ? await PowerShellTool.call(
           { command: inputString },

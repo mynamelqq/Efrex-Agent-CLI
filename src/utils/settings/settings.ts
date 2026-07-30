@@ -122,6 +122,11 @@ export function getSettingsFilePathForSource(
         getSettingsRootPathForSource(source),
         getRelativeSettingsFilePathForSource(source),
       )
+    case 'localSettings':
+      return join(
+        getSettingsRootPathForSource(source),
+        getRelativeSettingsFilePathForSource(source),
+      )
   }
 }
 

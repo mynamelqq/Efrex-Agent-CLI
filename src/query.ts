@@ -155,16 +155,7 @@ async function* queryLoop(
       querySource,
     )
     messagesForQuery = microcompactResult.messages
-    logForDebugging('query: prepared messages before autocompact check', {
-      level: 'debug',
-      querySource,
-      turnCount,
-      messageCount: messagesForQuery.length,
-      estimatedTokens: tokenCountWithEstimation(messagesForQuery),
-      clearedToolUseCount: microcompactResult.clearedToolUseIds?.length ?? 0,
-      priorCompacted: tracking?.compacted ?? false,
-      consecutiveFailures: tracking?.consecutiveFailures ?? 0,
-    })
+
     // 从 contentReplacementState.replacements 中释放那些内容已被替换为清除消息的工具结果所使用的原始字符串。
     if (microcompactResult.clearedToolUseIds?.length) {
       const replacements = toolUseContext?.contentReplacementState?.replacements
@@ -199,15 +190,7 @@ async function* queryLoop(
         truePostCompactTokenCount,
         compactionUsage,
       } = compactionResult
-      logForDebugging('query: autocompact applied before model request', {
-        level: 'info',
-        querySource,
-        turnCount,
-        preCompactTokenCount,
-        postCompactTokenCount,
-        truePostCompactTokenCount,
-        compactionUsage,
-      })
+ 
       // Reset on every compact so turnCounter/turnId reflect the MOST RECENT
       // compact. recompactionInfo (autoCompact.ts:190) already captured the
       // old values for turnsSincePreviousCompact/previousCompactTurnId before
@@ -228,12 +211,7 @@ async function* queryLoop(
       // Continue on with the current query call using the post compact messages
       messagesForQuery = postCompactMessages
     } else if (consecutiveFailures !== undefined) {
-      logForDebugging('query: autocompact returned failure state', {
-        level: 'warn',
-        querySource,
-        turnCount,
-        consecutiveFailures,
-      })
+
       tracking = {
         ...(tracking ?? { compacted: false, turnId: '', turnCounter: 0 }),
         consecutiveFailures,
@@ -271,22 +249,9 @@ async function* queryLoop(
         tokenCountWithEstimation(messagesForQuery),
         toolUseContext.options.mainLoopModel,
       )
-      logForDebugging('query: evaluated blocking limit before model request', {
-        level: 'debug',
-        querySource,
-        turnCount,
-        estimatedTokens: tokenCountWithEstimation(messagesForQuery),
-        isAtBlockingLimit,
-        model: toolUseContext.options.mainLoopModel,
-      })
+
       if (isAtBlockingLimit) {
-        logForDebugging('query: blocked by context limit before model request', {
-          level: 'warn',
-          querySource,
-          turnCount,
-          estimatedTokens: tokenCountWithEstimation(messagesForQuery),
-          model: toolUseContext.options.mainLoopModel,
-        })
+
         yield createAssistantAPIErrorMessage({
           content: PROMPT_TOO_LONG_ERROR_MESSAGE,
           error: 'invalid_request',
@@ -331,6 +296,13 @@ async function* queryLoop(
 //     }
     try {
       const appState = toolUseContext.getAppState()
+      logForDebugging('query: forwarding tools to provider', {
+        level: 'debug',
+        toolCount: toolUseContext.options.tools.length,
+        toolNames: toolUseContext.options.tools.map(tool => tool.name),
+        mcpToolCount: appState.mcp.tools.length,
+        mcpToolNames: appState.mcp.tools.map(tool => tool.name),
+      })
       for await (const message of queryModelWithStreamingImpl({
         messages:prependUserContext(messagesForQuery, userContext),
         systemPrompt: fullSystemPrompt,
@@ -344,6 +316,10 @@ async function* queryLoop(
           },
           model,
           toolChoice: undefined,
+          mcpTools: appState.mcp.tools,
+          hasPendingMcpServers: appState.mcp.clients.some(
+            c => c.type === 'pending',
+          ),
           isNonInteractiveSession: toolUseContext.options.isNonInteractiveSession,
           fallbackModel,
           hasAppendSystemPrompt: !!toolUseContext.options.appendSystemPrompt,
@@ -534,37 +510,48 @@ async function* queryLoop(
       }
       return { reason: 'completed' }
     }
-   
+    let shouldPreventContinuation = false
+    let updatedToolUseContext = toolUseContext
+
     const toolUpdates = streamingToolExecutor
       ? streamingToolExecutor.getRemainingResults()
       : runTools(toolUseBlocks, assistantMessages, toolUseContext)//流式执行器存在，走 StreamingToolExecutor；否则回退到传统的 runTools 批处理执行器。
 
     for await (const update of toolUpdates) {
-      if (toolUseContext.abortController.signal.aborted) {
-        if (toolUseContext.abortController.signal.reason !== 'interrupt') {
-          yield createUserInterruptionMessage({
-            toolUse: true,
-          })
+      if (update.message) {
+        yield update.message
+
+        if (
+          update.message.type === 'attachment' &&
+          update.message.attachment!.type === 'hook_stopped_continuation'
+        ) {
+          shouldPreventContinuation = true
         }
-        const nextTurnCountOnAbort = turnCount + 1
-        if (maxTurns && nextTurnCountOnAbort > maxTurns) {
-          yield createAttachmentMessage({
-            type: 'max_turns_reached',
-            maxTurns,
-            turnCount: nextTurnCountOnAbort,
-          })
-        }
-        return { reason: 'aborted_tools' }
+
+        toolResults.push(
+          ...normalizeMessagesForAPI(
+            [update.message],
+            toolUseContext.options.tools,
+          ).filter(_ => _.type === 'user'),
+        )
       }
-      if (!update.message) continue
-      yield update.message
-      toolResults.push(
-        ...normalizeMessagesForAPI([update.message], toolUseContext.options.tools).filter(
-          m => m.type === 'user',
-        ),
-      )
       if (update.newContext) {
-        toolUseContext = update.newContext
+        updatedToolUseContext = {
+          ...update.newContext,
+        }
+      }
+    }
+    // 在轮次之间刷新工具，以便新连接的 MCP 服务器可用
+    if (updatedToolUseContext.options.refreshTools) {//如果在此期间mcp服务器连接上了，工具有百脑汇
+      const refreshedTools = updatedToolUseContext.options.refreshTools()
+      if (refreshedTools !== updatedToolUseContext.options.tools) {
+        updatedToolUseContext = {
+          ...updatedToolUseContext,
+          options: {
+            ...updatedToolUseContext.options,
+            tools: refreshedTools,
+          },
+        }
       }
     }
     const nextTurnCount = turnCount + 1
@@ -581,7 +568,7 @@ async function* queryLoop(
       ...state,
       autoCompactTracking: tracking,
       messages:messagesForQuery.concat(assistantMessages,toolResults),
-      toolUseContext,
+      toolUseContext:updatedToolUseContext,
       turnCount: nextTurnCount,
     }
   }

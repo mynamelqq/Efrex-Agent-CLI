@@ -41,7 +41,7 @@ import { toolToAPISchema } from 'src/utils/api.js'
 import { messagesToOpenAI } from './openai/convertMessages.js'
 import { toolsToOpenAI, toolChoiceToOpenAI } from './openai/convertTools.js'
 import { adaptOpenAIStream } from './openai/streamAdapter.js'
-import { resolveOpenAIModel } from './openai/modelMapping.js'
+import { normalizeOpenAIModelName } from './openai/modelMapping.js'
 import {
   buildOpenAIRequestBody,
   isOpenAIThinkingEnabled,
@@ -50,6 +50,7 @@ import {
 import { getInitialEffortSetting } from 'src/utils/effort.js'
 import { withRetry } from 'src/utils/withRetry.js'
 import { getAssistantMessageFromError } from './errors.js'
+import { logForDebugging } from 'src/utils/debug.js'
 
 export type Options = {
   maxOutputTokensOverride?: number
@@ -58,6 +59,8 @@ export type Options = {
   isNonInteractiveSession: boolean
   toolChoice?: 'auto' | 'none' | undefined
   fallbackModel?: string
+  mcpTools: Tools
+  hasPendingMcpServers?: boolean
   onStreamingFallback?: () => void
   hasAppendSystemPrompt: boolean
   enablePromptCaching?: boolean
@@ -98,6 +101,12 @@ export async function* queryModelWithStreaming({
   StreamEvent | AssistantMessage | SystemAPIErrorMessage | ApiRetryStatusEvent,
   void
 > {
+  logForDebugging('provider: received tools before filtering', {
+    level: 'debug',
+    toolCount: tools.length,
+    toolNames: tools.map(tool => tool.name),
+    mcpToolCount: options.mcpTools.length,
+  })
   const filteredTools = tools.filter(tool => !toolMatchesName(tool, 'ToolSearch'))
   let messagesForAPI = normalizeMessagesForAPI(messages, filteredTools)
   const provider = (process.env.Provider ?? 'OPENAI').toLowerCase()
@@ -161,11 +170,11 @@ export async function* queryModelWithStreaming({
   // filter(Boolean) works by converting each element to a boolean - empty strings become false and are filtered out.
   systemPrompt = asSystemPrompt(
     [
-      getAttributionHeader(fingerprint),
-      getCLISyspromptPrefix({
-        isNonInteractive: options.isNonInteractiveSession,
-        hasAppendSystemPrompt: options.hasAppendSystemPrompt,
-      }),
+      // getAttributionHeader(fingerprint),
+      // getCLISyspromptPrefix({
+      //   isNonInteractive: options.isNonInteractiveSession,
+      //   hasAppendSystemPrompt: options.hasAppendSystemPrompt,
+      // }),
       ...systemPrompt,
     ].filter(Boolean),
   )
@@ -188,24 +197,10 @@ export async function* queryModelWithStreaming({
       )
     }
 
-    const apiKeyResponse = await fetch(getOauthConfig().API_KEY_URL, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    })
-    if (!apiKeyResponse.ok) {
-      if (apiKeyResponse.status === 401 || apiKeyResponse.status === 403) {
-        throw new Error(
-          'OAuth session expired or is no longer valid. Please run /login.',
-        )
-      }
-      throw new Error(
-        `Failed to obtain Efrex proxy API key: ${apiKeyResponse.status}`,
-      )
-    }
-    const body = (await apiKeyResponse.json()) as { raw_key?: string }
-    if (!body.raw_key) throw new Error('Efrex proxy did not return an API key')
-
     const efrexClient = new OpenAI({
-      apiKey: body.raw_key,
+      // The proxy authenticates the logged-in user with the OAuth access token.
+      // The upstream provider key remains server-side in EfrexCodeServer.
+      apiKey: accessToken,
       baseURL: getOauthConfig().OPENAI_PROXY_URL,
       maxRetries: 0,
       timeout: parseInt(process.env.API_TIMEOUT_MS || String(600 * 1000), 10),
@@ -220,7 +215,10 @@ export async function* queryModelWithStreaming({
     // Efrex is an independent OpenAI-compatible service. Keep this request
     // path local instead of reusing queryModelOpenAI, whose retry/fallback
     // semantics are intended for the default OpenAI provider.
-    const openaiModel = resolveOpenAIModel(options.model)
+    // The /model selection must be authoritative for Efrex. The generic
+    // resolver also honors the global MODEL environment override, which can
+    // silently send a different model than the one shown in the CLI.
+    const openaiModel = normalizeOpenAIModelName(options.model)
     const openaiMessages = messagesToOpenAI(messagesForAPI, systemPrompt)
     const toolSchemas = await Promise.all(
       filteredTools.map(tool =>

@@ -7,14 +7,27 @@ import { formatDuration, formatNumber } from '../utils/format.js';
 type Props = {
 	statusText: string;
 	statusMode: 'requesting' | 'default' | null;
-	statusKind?: 'default' | 'compact';
+	statusKind?: 'default' | 'compact' | 'retry';
 	startedAtMs: number | null;
 	toolCount?: number;
+	retryAtMs?: number;
 };
 
 const GLIMMER_PAD_COLUMNS = 10;
 const GLIMMER_WIDTH_COLUMNS = 8;
 const BREATHING_CYCLE = 24;
+const RETRY_SPINNER_FRAMES = [
+	'⠋',
+	'⠙',
+	'⠹',
+	'⠸',
+	'⠼',
+	'⠴',
+	'⠦',
+	'⠧',
+	'⠇',
+	'⠏'
+];
 
 const statusSegmenter =
 	typeof Intl !== 'undefined' && 'Segmenter' in Intl
@@ -72,9 +85,13 @@ export function StatusAnimationRow({
 	statusMode,
 	statusKind = 'default',
 	startedAtMs,
-	toolCount
+	toolCount,
+	retryAtMs
 }: Props): React.ReactNode {
-	const [viewportRef, time] = useAnimationFrame(startedAtMs === null ? null : 50);
+	const isRetry = statusKind === 'retry';
+	const [viewportRef, time] = useAnimationFrame(
+		startedAtMs === null ? null : isRetry ? 120 : 50
+	);
 
 	// Breathing animation for the prefix dot
 	const tick = Math.floor(time / 50);
@@ -88,12 +105,18 @@ export function StatusAnimationRow({
 
 	// Glimmer/shimmer animation for the status text
 	const statusMessageWidth = stringWidth(statusText);
-	const glimmerSpeed = statusMode === 'requesting' ? 55 : 50;
+	const glimmerSpeed = isRetry
+		? 100
+		: statusMode === 'requesting'
+			? 50
+			: 45;
 	const elapsedMs = startedAtMs === null ? 0 : Math.max(0, Date.now() - startedAtMs);
 	const longRunning = elapsedMs >= 60_000;
 	const veryLongRunning = elapsedMs >= 180_000;
 	const accentColor =
-		statusKind === 'compact'
+		isRetry
+			? 'yellow'
+			: statusKind === 'compact'
 			? veryLongRunning
 				? 'rgb(255,209,102)'
 				: longRunning
@@ -107,7 +130,9 @@ export function StatusAnimationRow({
 						? 'cyanBright'
 						: 'greenBright';
 	const textColor =
-		statusKind === 'compact'
+		isRetry
+			? 'ansi:yellow'
+			: statusKind === 'compact'
 			? accentColor
 			: statusMode === 'requesting'
 				? 'ansi:blueBright'
@@ -125,6 +150,14 @@ export function StatusAnimationRow({
 		toolCount && toolCount > 0
 			? `${formatNumber(toolCount)} ${toolCount === 1 ? 'tool' : 'tools'}`
 			: null;
+	const retrySpinnerFrame =
+		RETRY_SPINNER_FRAMES[
+			Math.floor(time / 120) % RETRY_SPINNER_FRAMES.length
+		];
+	const retryRemainingSeconds =
+		retryAtMs === undefined
+			? null
+			: Math.max(0, Math.ceil((retryAtMs - Date.now()) / 1000));
 
 	return (
 		<Box
@@ -137,31 +170,78 @@ export function StatusAnimationRow({
 			width="100%"
 			overflow="hidden"
 		>
-			<Box flexShrink={0} width={3}>
-				<Text color={accentColor} dim={prefixDim} bold={prefixBold}>
-					{'● '}
-				</Text>
-			</Box>
-			<Box flexDirection="row" flexWrap="nowrap" flexGrow={1} flexShrink={0} overflow="hidden">
-				<Text color={textColor}>{segments.before}</Text>
-				{segments.shimmer ? (
-					<Text color={accentColor} bold>
-						{segments.shimmer}
-					</Text>
-				) : null}
-				<Text color={textColor}>{segments.after}</Text>
-				<Text color="ansi:blackBright">{' ('}</Text>
-				<Text color={veryLongRunning ? 'yellowBright' : longRunning ? 'blueBright' : 'ansi:blackBright'}>
-					{elapsedText}
-				</Text>
-				{toolCountText ? (
-					<>
-						<Text color="ansi:blackBright"> · </Text>
-						<Text color="magentaBright">{toolCountText}</Text>
-					</>
-				) : null}
-				<Text color="ansi:blackBright">{')'}</Text>
-			</Box>
+			{isRetry ? (
+				<>
+					<Box flexShrink={0} width={2}>
+						<Text color="gray">{retrySpinnerFrame}</Text>
+					</Box>
+					<Box
+						flexDirection="row"
+						flexWrap="nowrap"
+						flexGrow={1}
+						flexShrink={0}
+						overflow="hidden"
+					>
+						<Text color="gray">{segments.before}</Text>
+						{segments.shimmer ? (
+							<Text color="white" bold>
+								{segments.shimmer}
+							</Text>
+						) : null}
+						<Text color="gray">{segments.after}</Text>
+						<Text color="ansi:blackBright">
+							{' · '}
+							{retryRemainingSeconds === null
+								? 'waiting to retry'
+								: retryRemainingSeconds > 0
+									? `next attempt in ${retryRemainingSeconds}s`
+									: 'retrying now'}
+						</Text>
+					</Box>
+				</>
+			) : (
+				<>
+					<Box flexShrink={0} width={3}>
+						<Text color={accentColor} dim={prefixDim} bold={prefixBold}>
+							{'● '}
+						</Text>
+					</Box>
+					<Box
+						flexDirection="row"
+						flexWrap="nowrap"
+						flexGrow={1}
+						flexShrink={0}
+						overflow="hidden"
+					>
+						<Text color={textColor}>{segments.before}</Text>
+						{segments.shimmer ? (
+							<Text color={accentColor} bold>
+								{segments.shimmer}
+							</Text>
+						) : null}
+						<Text color={textColor}>{segments.after}</Text>
+						<Text color="ansi:blackBright">{' ('}</Text>
+						<Text
+							color={
+								veryLongRunning
+									? 'yellowBright'
+									: longRunning
+										? 'blueBright'
+										: 'ansi:blackBright'
+							}
+						>
+							{elapsedText}
+						</Text>
+						{toolCountText ? (
+							<>
+								<Text color="ansi:blackBright"> · </Text>
+								<Text color="magentaBright">{toolCountText}</Text>
+							</>
+						) : null}
+						<Text color="ansi:blackBright">{')'}</Text>
+					</Box>
+				</>
+			)}
 		</Box>
 	);
 }

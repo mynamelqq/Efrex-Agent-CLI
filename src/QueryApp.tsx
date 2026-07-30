@@ -11,7 +11,12 @@ import { LogOption } from './types/logs.js';
 import { dirname } from 'path';
 import { ResumeEntrypoint } from './types/command.js';
 import { FileHistoryState } from './utils/fileHistory.js';
-import { isCompactBoundaryMessage,isSyntheticMessage,textForResubmit} from './utils/messages.js';
+import {
+	isCompactBoundaryMessage,
+	isSyntheticMessage,
+	NO_RESPONSE_REQUESTED,
+	textForResubmit
+} from './utils/messages.js';
 import {
 	Box,
 	Text,
@@ -38,6 +43,9 @@ import PromptInput from './components/PromptInput.js';
 import { IdeStatusIndicator } from './components/IdeStatusIndicator.js';
 import { isCommandEnabled } from './types/command.js';
 import MessageViewport from './components/MessageViewport.js';
+import TranscriptViewport, { computeTranscriptStats } from './components/TranscriptViewport.js';
+import { OffscreenFreeze } from './components/OffscreenFreeze.js';
+import WelcomeHeader from './components/WelcomeHeader.js';
 import FullscreenLayout from './components/FullscreenLayout.js';
 import { ScrollKeybindingHandler } from './components/ScrollKeybindingHandler.js';
 import { PastedContent } from './utils/config.js';
@@ -56,7 +64,7 @@ import {
 	type ToolPermissionContext
 } from './Tool.js';
 import { expandPastedTextRefs } from './history.js';
-import { getAllBaseTools } from './tools.js';
+import { assembleToolPool, getAllBaseTools, getTools } from './tools.js';
 import { query } from './query.js';
 import { handlePromptSubmit } from './utils/handlePromptSubmit.js';
 import { getAnthropicModel } from './utils/anthropicConfig.js';
@@ -110,12 +118,15 @@ import { asSessionId } from './types/ids.js';
 import { clearSessionMetadata, resetSessionFilePointer, restoreSessionMetadata } from './utils/sessionStorage.js';
 import { consumeEarlyInput } from './utils/earlyInput.js';
 import { resetMicrocompactState } from './services/compact/mircoCompact.js';
+import { mcpInfoFromString } from './utils/mcpStringUtils.js';
 import { InternalPermissionMode } from './types/permissions.js';
 import { useIDEIntegration } from './hooks/useIDEIntegration.js';
 import { MCPServerConnection, ScopedMcpServerConfig } from "src/services/mcp/types.js"
 import { IDEExtensionInstallationStatus, IdeType } from './utils/ide.js';
 import { MCPConnectionManager } from './services/mcp/MCPConnectionManager.js';
 import { IDESelection, useIdeSelection } from './hooks/useIdeSelection.js';
+import { useMergedTools } from './hooks/useMergedTools.js';
+import { mergeAndFilterTools } from './utils/toolPool.js';
 type ViewportMessage = {
 	id: number;
 	role: 'user' | 'assistant' | 'tool' | 'meta';
@@ -126,6 +137,11 @@ type ViewportMessage = {
 	toolDisplayStyle?: 'use' | 'result' | 'progress';
 	toolUseId?: string;
 	animatePrefix?: 'blink';
+	tone?: 'error';
+	compactMcpLabel?: string;
+	toolName?: string;
+	commandType?: 'slash' | 'bash';
+	baseText?: string;
 };
 
 type ViewportSliceAnchor = { key: string; idx: number } | null;
@@ -218,6 +234,7 @@ type CompactUiState = {
 type ApiRetryUiState = {
 	active: boolean;
 	statusText: string | null;
+	retryAtMs?: number;
 };
 
 type AppScreen = 'prompt' | 'transcript';
@@ -233,11 +250,16 @@ type SlashCommandMatch = {
 };
 
 const MAX_PROMPT_INPUT_ROWS = 6;
-const COMMAND_SELECTOR_VISIBLE_COUNT = 8;
+const COMMAND_SELECTOR_VISIBLE_COUNT = 5;
 const APP_BRAND = 'efrex code';
 const APP_VERSION = CLI_APP_VERSION;
-const COMMAND_ROW_SELECTED_FG = '#7dd3fc';
-const COMMAND_ROW_SELECTED_DESC = '#b7c9d3';
+const COMMAND_ROW_NAME = '#B784FF';
+const COMMAND_ROW_SELECTED_ACCENT = '#D16DFF';
+const COMMAND_ROW_ARG_MARKER = '#8B93A7';
+const COMMAND_ROW_ARG_VALUE = '#E6EAF2';
+const COMMAND_ROW_DESC = '#AAB3C5';
+const COMMAND_ROW_MUTED = '#6E7485';
+const API_ERROR_COLOR = 'rgb(255,107,128)';
 const TURN_META_ID_BASE = 1_000_000_000;
 
 
@@ -408,12 +430,63 @@ function renderHighlightedText(
 		<>
 			{text.slice(0, matchIndex)}
 			<Text
-				color={selected ? COMMAND_ROW_SELECTED_FG : 'cyanBright'}
+				color={COMMAND_ROW_SELECTED_ACCENT}
 				bold
 			>
 				{matched}
 			</Text>
 			{text.slice(matchIndex + query.length)}
+		</>
+	);
+}
+
+function renderCommandArgumentHint(
+	argumentHint: string,
+	query: string,
+	selected: boolean
+): React.ReactNode {
+	return argumentHint.split(/([\[\]|])/g).map((part, index) => {
+		if (part === '[' || part === ']' || part === '|') {
+			return (
+				<Text key={`argument-marker-${index}`} color={COMMAND_ROW_ARG_MARKER}>
+					{part}
+				</Text>
+			);
+		}
+
+		return (
+			<Text
+				key={`argument-value-${index}`}
+				color={COMMAND_ROW_ARG_VALUE}
+				dimColor={!selected}
+			>
+				{renderHighlightedText(part, query, selected)}
+			</Text>
+		);
+	});
+}
+
+function renderCommandDisplayName(
+	command: Command,
+	displayName: string,
+	query: string,
+	selected: boolean
+): React.ReactNode {
+	const commandName = `/${getCommandName(command)}`;
+	const visibleCommandName = displayName.slice(0, commandName.length);
+	const visibleArgumentHint = displayName.slice(commandName.length);
+
+	return (
+		<>
+			<Text color={COMMAND_ROW_SELECTED_ACCENT}>
+				{visibleCommandName.slice(0, 1)}
+			</Text>
+			<Text color={COMMAND_ROW_NAME} bold={selected}>
+				{renderHighlightedText(visibleCommandName.slice(1), query, selected)}
+			</Text>
+			{visibleArgumentHint
+				? renderCommandArgumentHint(visibleArgumentHint, query, selected)
+				: null}
 		</>
 	);
 }
@@ -534,6 +607,74 @@ function extractTextContent(
 		.join('\n');
 }
 
+function hideApiErrorRequestId(text: string): string {
+	return text
+		.replace(
+			/(?:\r?\n)?[ \t]*Request id:\s*[A-Za-z0-9_-]+[ \t]*/gi,
+			''
+		)
+		.trimEnd();
+}
+
+function renderApiErrorContent(text: string): React.ReactNode {
+	const [title, ...details] = hideApiErrorRequestId(text).split(/\r?\n/);
+
+	return (
+		<Box flexDirection="column">
+			<Text color={API_ERROR_COLOR} bold>
+				{title}
+			</Text>
+			{details.length > 0 ? (
+				<Text color={API_ERROR_COLOR}>{details.join('\n')}</Text>
+			) : null}
+		</Box>
+	);
+}
+
+function buildAssistantTextViewport(
+	text: string,
+	id: number,
+	isApiErrorMessage: boolean
+): ViewportMessage {
+	const visibleAssistantText = text.trim();
+	if (!isApiErrorMessage) {
+		return {
+			id,
+			role: 'assistant',
+			text: visibleAssistantText
+		};
+	}
+
+	const visibleText = hideApiErrorRequestId(visibleAssistantText);
+	return {
+		id,
+		role: 'assistant',
+		text: visibleText,
+		content: renderApiErrorContent(visibleText),
+		tone: 'error'
+	};
+}
+
+function isNoResponseRequestedMessage(message: MessageType): boolean {
+	if (message.type !== 'assistant') {
+		return false;
+	}
+
+	const content = message.message?.content;
+	if (content === NO_RESPONSE_REQUESTED) {
+		return true;
+	}
+
+	const firstContentBlock = Array.isArray(content) ? content[0] : null;
+	return Boolean(
+		firstContentBlock &&
+			typeof firstContentBlock === 'object' &&
+			(firstContentBlock as { type?: unknown }).type === 'text' &&
+			(firstContentBlock as { text?: unknown }).text ===
+				NO_RESPONSE_REQUESTED
+	);
+}
+
 function extractAssistantContentSegments(
 	content: unknown,
 	includeThinking = false
@@ -648,7 +789,8 @@ function buildLocalCommandViewport(
 					addMargin={false}
 					param={{ text: content, type: 'text' }}
 				/>
-			)
+			),
+			commandType: 'bash'
 		};
 	}
 
@@ -661,7 +803,8 @@ function buildLocalCommandViewport(
 			text: [bashStdout, bashStderr].filter(Boolean).join('\n'),
 			content: <UserBashOutputMessage content={content} verbose={false} />,
 			toolPhase: bashStderr ? 'error' : 'done',
-			toolDisplayStyle: 'result'
+			toolDisplayStyle: 'result',
+			commandType: 'bash'
 		};
 	}
 
@@ -671,7 +814,9 @@ function buildLocalCommandViewport(
 		return {
 			id: fallbackId,
 			role: 'user',
-			text: args ? `${commandName} ${args}` : commandName
+			text: args ? `${commandName} ${args}` : commandName,
+			commandType: 'slash',
+			toolName: commandName
 		};
 	}
 
@@ -682,7 +827,8 @@ function buildLocalCommandViewport(
 			role: 'tool',
 			text: ` ${stdout}`,
 			toolPhase: 'done',
-			toolDisplayStyle: 'result'
+			toolDisplayStyle: 'result',
+			commandType: 'slash'
 		};
 	}
 
@@ -693,7 +839,8 @@ function buildLocalCommandViewport(
 			role: 'tool',
 			text: ` ${compressStderrLines(stderr, 2)}`,
 			toolPhase: 'error',
-			toolDisplayStyle: 'result'
+			toolDisplayStyle: 'result',
+			commandType: 'slash'
 		};
 	}
 
@@ -749,6 +896,48 @@ function getToolUseFallbackLabel(
 ): string {
 	const { toolName, userFacingToolName } = parseAssistantToolUse(tool, block);
 	return userFacingToolName || toolName;
+}
+
+function getCompactMcpToolLabel(
+	tool: Tool | undefined,
+	rawToolName: string
+): string | null {
+	const mcpInfo =
+		tool?.isMcp
+			? tool.mcpInfo
+			: mcpInfoFromString(rawToolName);
+	if (!mcpInfo) {
+		return null;
+	}
+
+	const serverName = mcpInfo.serverName?.trim();
+	const toolName = mcpInfo.toolName?.trim();
+	if (serverName && toolName) {
+		return `${serverName} - ${toolName}`;
+	}
+
+	return toolName || serverName || tool?.name || rawToolName;
+}
+
+function renderCompactMcpCall(
+	label: string,
+	phase: 'call' | 'done' | 'error'
+): React.ReactNode {
+	const action =
+		phase === 'call'
+			? `Calling ${label}…`
+			: phase === 'error'
+				? `Failed ${label}`
+				: `Called ${label}`;
+
+	return (
+		<Box flexDirection="row" flexWrap="nowrap">
+			<Text>{action}</Text>
+			{phase === 'call' ? (
+				<Text color="ansi:blackBright"> </Text>
+			) : null}
+		</Box>
+	);
 }
 
 function buildAssistantToolUseRenderItem(
@@ -817,17 +1006,28 @@ function getAssistantToolUseViewportMessages(
 			const item = buildAssistantToolUseRenderItem(tool, typedBlock, verbose);
 			const toolUseId =
 				typeof typedBlock.id === 'string' ? typedBlock.id : undefined;
+			const compactMcpLabel = !verbose
+				? getCompactMcpToolLabel(tool, toolName) ?? undefined
+				: undefined;
 
 			return {
 				id: fallbackId * 100 + index + 1,
 				role: 'tool',
-				text: item.text,
-				content: item.content,
-				baseContent: item.content,
+				text: compactMcpLabel
+					? `Calling ${compactMcpLabel}… `
+					: item.text,
+				content: compactMcpLabel
+					? renderCompactMcpCall(compactMcpLabel, 'call')
+					: item.content,
+				baseContent: compactMcpLabel
+					? renderCompactMcpCall(compactMcpLabel, 'call')
+					: item.content,
 				toolPhase: 'call',
 				toolDisplayStyle: 'use',
 				toolUseId,
-				animatePrefix: 'blink'
+				animatePrefix: compactMcpLabel ? undefined : 'blink',
+				compactMcpLabel,
+				toolName
 			};
 		})
 		.filter((value): value is ViewportMessage => value !== null);
@@ -840,15 +1040,14 @@ function getAssistantViewportMessagesInContentOrder(
 	verbose: boolean
 ): ViewportMessage[] {
 	const content = message.message?.content;
+	if (isNoResponseRequestedMessage(message)) {
+		return [];
+	}
+
+	const isApiErrorMessage = message.isApiErrorMessage === true;
 	if (typeof content === 'string') {
-		return content
-			? [
-					{
-						id: fallbackId,
-						role: 'assistant',
-						text: content
-					}
-				]
+		return content.trim()
+			? [buildAssistantTextViewport(content, fallbackId, isApiErrorMessage)]
 			: [];
 	}
 
@@ -866,12 +1065,12 @@ function getAssistantViewportMessagesInContentOrder(
 			const id = fallbackId * 100 + index + 1;
 
 			if (typedBlock.type === 'text' && typeof typedBlock.text === 'string') {
-				return typedBlock.text
-					? {
+				return typedBlock.text.trim()
+					? buildAssistantTextViewport(
+							typedBlock.text,
 							id,
-							role: 'assistant',
-							text: typedBlock.text
-						}
+							isApiErrorMessage
+						)
 					: null;
 			}
 
@@ -922,17 +1121,28 @@ function getAssistantViewportMessagesInContentOrder(
 				typedBlock,
 				verbose
 			);
+			const compactMcpLabel = !verbose
+				? getCompactMcpToolLabel(tool, toolName) ?? undefined
+				: undefined;
 
 			return {
 				id,
 				role: 'tool',
-				text: item.text,
-				content: item.content,
-				baseContent: item.content,
+				text: compactMcpLabel
+					? `Calling ${compactMcpLabel}… `
+					: item.text,
+				content: compactMcpLabel
+					? renderCompactMcpCall(compactMcpLabel, 'call')
+					: item.content,
+				baseContent: compactMcpLabel
+					? renderCompactMcpCall(compactMcpLabel, 'call')
+					: item.content,
 				toolPhase: 'call',
 				toolDisplayStyle: 'use',
 				toolUseId,
-				animatePrefix: 'blink'
+				animatePrefix: compactMcpLabel ? undefined : 'blink',
+				compactMcpLabel,
+				toolName
 			};
 		})
 		.filter((value): value is ViewportMessage => value !== null);
@@ -944,6 +1154,15 @@ function updateAssistantToolUseViewportMessage(
 ): void {
 	message.toolPhase = phase;
 	message.animatePrefix = undefined;
+	if (message.compactMcpLabel) {
+		message.content = renderCompactMcpCall(message.compactMcpLabel, phase);
+		message.baseContent = message.content;
+		message.text =
+			phase === 'error'
+				? `Failed ${message.compactMcpLabel}`
+				: `Called ${message.compactMcpLabel}`;
+		return;
+	}
 	if (message.baseContent) {
 		message.content = message.baseContent;
 		message.text = renderNodeToPlainText(message.content).trim();
@@ -977,6 +1196,15 @@ function attachAssistantToolUseResultViewportMessage(
 ): void {
 	message.toolPhase = phase;
 	message.animatePrefix = undefined;
+	if (message.compactMcpLabel) {
+		message.content = renderCompactMcpCall(message.compactMcpLabel, phase);
+		message.baseContent = message.content;
+		message.text =
+			phase === 'error'
+				? `Failed ${message.compactMcpLabel}`
+				: `Called ${message.compactMcpLabel}`;
+		return;
+	}
 	const baseContent = message.baseContent ?? message.content;
 	message.baseContent = baseContent;
 	message.content = (
@@ -1095,6 +1323,11 @@ function buildViewportMessages(
 
 	messages.forEach((message, index) => {
 		const fallbackId = index + 1;
+
+		if (isNoResponseRequestedMessage(message)) {
+			appendCompletedTurnFooter(fallbackId);
+			return;
+		}
 
 		if (shouldCollapseApiRetryMessage(messages, index)) {
 			appendCompletedTurnFooter(fallbackId);
@@ -1647,7 +1880,8 @@ function messageToViewport(
 						role: 'tool',
 						text: renderNodeToPlainText(renderedContent),
 						content: renderedContent,
-						toolPhase: 'done'
+						toolPhase: 'done',
+						toolName: toolUse?.name
 					};
 				}
 			}
@@ -1666,7 +1900,8 @@ function messageToViewport(
 						role: 'tool',
 						text: renderNodeToPlainText(renderedContent),
 						content: renderedContent,
-						toolPhase: 'error'
+						toolPhase: 'error',
+						toolName: toolUse?.name
 					};
 				}
 			}
@@ -1677,7 +1912,8 @@ function messageToViewport(
 						id: fallbackId,
 						role: 'tool',
 						text,
-						toolPhase: phase
+						toolPhase: phase,
+						toolName: toolUse?.name
 					}
 				: null;
 		}
@@ -1804,6 +2040,16 @@ function messageToViewport(
 		const systemContent =
 			typeof message.content === 'string' ? message.content : null;
 		const text = systemContent ?? extractTextContent(message.message?.content);
+		if (message.subtype === 'api_error' && text) {
+			const visibleText = hideApiErrorRequestId(text);
+			return {
+				id: fallbackId,
+				role: 'assistant',
+				text: visibleText,
+				content: renderApiErrorContent(visibleText),
+				tone: 'error'
+			};
+		}
 		if (isSystemLocalCommandMessage(message) && text) {
 			const localCommandMessage = buildLocalCommandViewport(text, fallbackId);
 			return localCommandMessage === 'hidden' ? null : localCommandMessage;
@@ -1874,7 +2120,7 @@ function buildApiRetryText(summary: ApiRetrySummary): string {
 }
 
 function buildApiRetryStatusText(summary: ApiRetrySummary): string {
-	return `API 请求重试中 (${summary.attempt}/${summary.maxRetries + 1})`;
+	return `Retrying ${summary.attempt}/${summary.maxRetries + 1}`;
 }
 export type Props = {
 	commands: Command[];
@@ -1906,6 +2152,51 @@ export type Props = {
 	taskListId?: string;
 	thinkingConfig: ThinkingConfig;
 };
+
+type MainScrollbackProps = {
+	welcomeHeader: React.ComponentProps<typeof MessageViewport>['welcomeHeader'];
+	messages: ViewportMessage[];
+	width: number;
+	alertMessage: string | null;
+	toolJSX: {
+		jsx: React.ReactNode | null;
+		isLocalJSXCommand?: boolean;
+		isImmediate?: boolean;
+	} | null;
+};
+
+// Keep the complete leading scrollback subtree stable while only the prompt
+// and slash selector change. Freezing individual welcome rows is not enough:
+// a dirty first sibling can invalidate blitting for the whole scrollback.
+const MainScrollback = React.memo(function MainScrollback({
+	welcomeHeader,
+	messages,
+	width,
+	alertMessage,
+	toolJSX,
+}: MainScrollbackProps): React.ReactNode {
+	return (
+		<Box flexDirection="column">
+			<OffscreenFreeze>
+				<WelcomeHeader {...welcomeHeader} />
+			</OffscreenFreeze>
+			<MessageViewport
+				headerLines={[]}
+				messages={messages}
+				width={width}
+				alertMessage={alertMessage}
+				statusLine={null}
+				blinkOn={false}
+			/>
+			{toolJSX && !(toolJSX.isLocalJSXCommand && toolJSX.isImmediate) ? (
+				<Box flexDirection="column" width="100%">
+					{toolJSX.jsx}
+				</Box>
+			) : null}
+		</Box>
+	);
+});
+
 export default function QueryApp({
 	commands:initialCommands,
 	debug,
@@ -1940,6 +2231,7 @@ export default function QueryApp({
 		},
 		[]
 	);
+	const mcp = useAppState(s => s.mcp);
 	const [screen, setScreen] = useState<AppScreen>('prompt');
 	const [cursorSyncKey, setCursorSyncKey] = useState(0);
 	const [pastedContents, setPastedContents] = useState<Record<number, PastedContent>>({});
@@ -1954,16 +2246,44 @@ export default function QueryApp({
 		inputValue,
 		pastedContents,
 	);
+	const localTools = useMemo(
+		() => getTools(toolPermissionContext),
+		[toolPermissionContext,],
+	);
+	  // Memoize the combined initial tools array to prevent reference changes
+	const combinedInitialTools = useMemo(() => {
+		return [...localTools, ...initialTools];
+	}, [localTools, initialTools]);
+	const mergedTools = useMergedTools(
+		combinedInitialTools,
+		mcp.tools,
+		toolPermissionContext,
+	)
+
 	// Local state for commands (hot-reloadable when skill files change)
   	const [localCommands, setLocalCommands] = useState(initialCommands);
-  	const activeTools = initialTools.length > 0 ? initialTools : getAllBaseTools();
+  	// Must keep a stable identity: this feeds the buildViewportMessages memo,
+  	// and getAllBaseTools() returns a fresh array every call. A new array per
+  	// render invalidates that memo, which rebuilds every message's React node,
+  	// which breaks the row-level and MainScrollback memos in turn — so every
+  	// keystroke would repaint the whole transcript and the welcome card.
+  	const activeTools = useMemo(
+  		() => (initialTools.length > 0 ? initialTools : getAllBaseTools()),
+  		[initialTools]
+  	);
   	const mergedCommands = initialCommands
 	const commands = useMemo(() => (disableSlashCommands ? [] : mergedCommands), [disableSlashCommands, mergedCommands]);
 	const handleInputChange = useCallback((nextValue: string) => {
 		const matches = getSlashCommandMatches(nextValue, commands);
+		const trimmed = nextValue.trimStart();
+		const isSlashCommandInput =
+			trimmed.startsWith('/') && !trimmed.slice(1).includes(' ');
 		setInputValue(nextValue);
 		setFilteredCommands(matches.map(match => match.command));
-		setShowCommandSelector(matches.length > 0);
+		// Keep the fixed-height selector mounted even when a query has no
+		// matches (for example `/cles`). Hiding it here makes the main screen
+		// shrink on the same keystroke and can leave the old rows in scrollback.
+		setShowCommandSelector(isSlashCommandInput);
 		setSelectedCommandIndex(0);
 		resetHistory();
 	}, [commands, resetHistory, setInputValue]);
@@ -2044,7 +2364,7 @@ export default function QueryApp({
 	// Ref for the synchronous restore callback — set after restoreMessageSync is
 	// defined, read in the onQuery finally block for auto-restore on interrupt.
 	const restoreMessageSyncRef = useRef<(m: UserMessage) => void>(() => {});
-	const mcp = useAppState(s => s.mcp);
+
 	useIdeSelection(isRemoteSession ? EMPTY_MCP_CLIENTS : mcp.clients, setIDESelection);
 
 	const messagesRef = useRef(messages);
@@ -2385,14 +2705,8 @@ export default function QueryApp({
 				return;
 			}
 
-			if (
-				screen === 'transcript' &&
-				(key.escape || (key.ctrl && input === 'c'))
-			) {
+			if (screen === 'transcript' && key.escape) {
 				event.stopImmediatePropagation();
-				if (key.ctrl && input === 'c') {
-					handleCtrlC();
-				}
 				setScreen('prompt');
 			}
 		},
@@ -2480,7 +2794,8 @@ export default function QueryApp({
 
 				setApiRetryUiState({
 					active: true,
-					statusText: buildApiRetryStatusText(summary)
+					statusText: buildApiRetryStatusText(summary),
+					retryAtMs: Date.now() + retryEvent.retryInMs
 				});
 				return;
 			}
@@ -2597,11 +2912,7 @@ export default function QueryApp({
 		[screen, setMessages]
 	);
 	const handleCompactProgress = useCallback((event: CompactProgressEvent) => {
-		logForDebugging('query-app: received compact progress event', {
-			level: event.type === 'compact_end' ? 'info' : 'debug',
-			eventType: event.type,
-			hookType: 'hookType' in event ? event.hookType : undefined
-		});
+
 		switch (event.type) {
 			case 'hooks_start':
 				setCompactUiState(prev => ({
@@ -2630,13 +2941,7 @@ export default function QueryApp({
 		}
 	}, []);
 	useEffect(() => {
-		logForDebugging('query-app: compact UI state updated', {
-			level: compactUiState.active ? 'info' : 'debug',
-			active: compactUiState.active,
-			streamMode: compactUiState.streamMode,
-			responseLength: compactUiState.responseLength,
-			statusText: compactUiState.statusText
-		});
+
 	}, [compactUiState]);
 const getToolUseContext = useCallback(
 		(
@@ -2650,11 +2955,18 @@ const getToolUseContext = useCallback(
 		// render between turns); decouples freshness from React's render cycle for
 		// a future headless conversation loop. Same pattern refreshTools() uses.
 		const s = store.getState();
+		const computeTools = () => {
+			const state = store.getState();
+			const assembled = assembleToolPool(state.toolPermissionContext, state.mcp.tools);
+			const merged = mergeAndFilterTools(combinedInitialTools, assembled, state.toolPermissionContext.mode);
+
+			return  merged
+		};
 		return {
 			abortController,
 			options: {
 			commands,
-			tools: activeTools,
+			tools: computeTools(),
 			debug,
 			mcpClients:s.mcp.clients,
 			verbose: false,
@@ -2663,6 +2975,8 @@ const getToolUseContext = useCallback(
 			isNonInteractiveSession: false,
 			customSystemPrompt,
 			appendSystemPrompt,
+			refreshTools:computeTools,
+
 			},
 			getAppState: () => store.getState(),
 			resume,
@@ -2756,11 +3070,12 @@ const getToolUseContext = useCallback(
 				abortController,
 				mainLoopModelParam,
       		);
-			const { tools: freshTools } = toolUseContext.options;
+			const { tools: freshTools , mcpClients: freshMcpClients} = toolUseContext.options;
 			const [defaultSystemPrompt, baseUserContext,systemContext] = await Promise.all([
-				getSystemPrompt(freshTools, mainLoopModelParam, [
-					// 'F:\\pythonProject'
-				]),
+				getSystemPrompt(freshTools, mainLoopModelParam,       
+					[],
+					freshMcpClients,
+			),
 				getUserContext()
 				,getSystemContext(),
 			]); 
@@ -3200,7 +3515,10 @@ const getToolUseContext = useCallback(
 			scrollRef.current?.scrollToBottom();
 		}
 	}, [activeToolUseConfirm]);
-	const renderTools = activeTools;
+	// Rendering must use the same merged pool as execution. Dynamic MCP tools
+	// inherit MCPTool's renderers; using only activeTools makes lookup fail and
+	// falls back to dumping the raw tool_result JSON into the main transcript.
+	const renderTools = mergedTools;
 	const baseViewportMessages = useMemo(
 		() => buildViewportMessages(
 			messages,
@@ -3264,16 +3582,30 @@ const getToolUseContext = useCallback(
 			streamingAssistant.pendingToolCalls.length > 0);
 
 	const { model: modelLabel, effort: effortLabel } = useTranscriptHeaderInfo();
+	// The welcome card becomes terminal scrollback once a conversation grows.
+	// Keep its identity fixed for the session: updating the model text in an
+	// already-scrolled card forces Ink to repaint rows it can no longer reach,
+	// which interleaves the /model picker with conversation output.
+	const initialWelcomeHeaderRef = useRef({
+		cwd: cwd(),
+		model: modelLabel,
+		effort: effortLabel,
+	});
+	if (messages.length === 0) {
+		initialWelcomeHeaderRef.current = {
+			...initialWelcomeHeaderRef.current,
+			model: modelLabel,
+			effort: effortLabel,
+		};
+	}
 	const welcomeHeader = useMemo(
 		() => ({
 			brand: APP_BRAND,
 			version: APP_VERSION,
-			cwd:cwd(),
-			model: modelLabel,
-			effort: effortLabel,
+			...initialWelcomeHeaderRef.current,
 			width: messageWidth
 		}),
-		[cwd(), modelLabel, effortLabel, messageWidth]
+		[messageWidth]
 	);
 	const highlightInputChrome =
 		isTerminalFocused && loading && !activeToolUseConfirm;
@@ -3300,7 +3632,11 @@ const getToolUseContext = useCallback(
 				: 'default'
 		: null;
 	const statusKind =
-		compactUiState.active && !apiRetryUiState.active ? 'compact' : 'default';
+		apiRetryUiState.active
+			? 'retry'
+			: compactUiState.active
+				? 'compact'
+				: 'default';
 
 
 	const commandSelectorQuery = getSlashCommandQuery(inputValue.trim());
@@ -3308,6 +3644,13 @@ const getToolUseContext = useCallback(
 		filteredCommands,
 		selectedCommandIndex,
 		COMMAND_SELECTOR_VISIBLE_COUNT
+	);
+	// Keep the autocomplete region at a fixed height while the query changes
+	// from `/` to `/m` (or any other filter). Blank rows must contain spaces so
+	// Ink overwrites old rows instead of leaving them in terminal scrollback.
+	const commandSelectorRows = Array.from(
+		{ length: COMMAND_SELECTOR_VISIBLE_COUNT },
+		(_, index) => visibleCommandWindow.items[index] ?? null
 	);
 	const commandSelectorWidth = Math.max(20, terminalColumns - 6);
 	const commandNameWidth = Math.max(
@@ -3399,6 +3742,7 @@ const getToolUseContext = useCallback(
 					statusKind={statusKind}
 					startedAtMs={loadingStartTimeRef.current}
 					toolCount={streamingAssistant.pendingToolCalls.length}
+					retryAtMs={apiRetryUiState.retryAtMs}
 				/>
 			) : null}
 
@@ -3465,15 +3809,24 @@ const getToolUseContext = useCallback(
 							<Box
 								paddingX={1}
 								paddingY={0}
-								marginTop={1}
 								flexDirection="column"
 							>
-								<Text dimColor>
-									{filteredCommands.length > COMMAND_SELECTOR_VISIBLE_COUNT
-										? ` (${visibleCommandWindow.startIndex + 1}-${visibleCommandWindow.startIndex + visibleCommandWindow.items.length}/${filteredCommands.length})`
-										: ''}
-								</Text>
-								{visibleCommandWindow.items.map((command, index) => {
+								{commandSelectorRows.map((command, index) => {
+									if (!command) {
+										return (
+											<Box
+												key={`empty-command-row-${index}`}
+												width="100%"
+												height={1}
+											>
+												<Text dimColor>
+													{filteredCommands.length === 0 && index === 0
+														? ''
+														: ' '.repeat(commandSelectorWidth)}
+												</Text>
+											</Box>
+										);
+									}
 									const actualIndex =
 										visibleCommandWindow.startIndex + index;
 									const selected = actualIndex === selectedCommandIndex;
@@ -3491,23 +3844,22 @@ const getToolUseContext = useCallback(
 											flexDirection="row"
 											width="100%"
 										>
-											<Box width={2} flexShrink={0}>
-												<Text
-													color={selected ? COMMAND_ROW_SELECTED_FG : 'gray'}
-												>
-													{selected ? '› ' : '  '}
-												</Text>
-											</Box>
-											<Box width={commandNameWidth} flexShrink={0}>
-												<Text
-													color={selected ? COMMAND_ROW_SELECTED_FG : undefined}
-												>
-													{renderHighlightedText(
-														displayName,
-														commandSelectorQuery,
-														selected
-													)}
-												</Text>
+												<Box width={2} flexShrink={0}>
+													<Text
+														color={selected ? COMMAND_ROW_SELECTED_ACCENT : COMMAND_ROW_MUTED}
+													>
+														{selected ? '› ' : '  '}
+													</Text>
+												</Box>
+												<Box width={commandNameWidth} flexShrink={0}>
+													<Text wrap="truncate-end">
+														{renderCommandDisplayName(
+															command,
+															displayName,
+															commandSelectorQuery,
+															selected
+														)}
+													</Text>
 											</Box>
 											<Box width={2} flexShrink={0}>
 												<Text dimColor={!selected}>
@@ -3515,13 +3867,9 @@ const getToolUseContext = useCallback(
 												</Text>
 											</Box>
 											<Box flexGrow={1} flexShrink={1}>
-												<Text
-													dimColor={!selected}
-													color={
-														selected
-															? COMMAND_ROW_SELECTED_DESC
-															: undefined
-													}
+														<Text
+															dimColor={!selected}
+															color={COMMAND_ROW_DESC}
 												>
 													{renderHighlightedText(
 														description,
@@ -3568,22 +3916,18 @@ const getToolUseContext = useCallback(
 	);
 
 	const scrollableContent = (
-		<Box flexDirection="column">
-			<MessageViewport
-				key={conversationId}
-				welcomeHeader={welcomeHeader}
-				messages={viewportMessages}
-				width={messageWidth}
-				alertMessage={alertMessage}
-				statusLine={null}
-				blinkOn={false}
-			/>
-			{toolJSX && !(toolJSX.isLocalJSXCommand && toolJSX.isImmediate) ? (
-				<Box flexDirection="column" width="100%">
-					{toolJSX.jsx}
-				</Box>
-			) : null}
-		</Box>
+		<MainScrollback
+			welcomeHeader={welcomeHeader}
+			messages={viewportMessages}
+			width={messageWidth}
+			alertMessage={alertMessage}
+			toolJSX={toolJSX}
+		/>
+	);
+
+	const transcriptStats = useMemo(
+		() => computeTranscriptStats(viewportMessages),
+		[viewportMessages]
 	);
 
 	const transcriptScrollableContent = (
@@ -3594,7 +3938,10 @@ const getToolUseContext = useCallback(
 						Transcript
 					</Text>
 					<Text color="#6b7280">
-						{process.cwd()} · {modelLabel} · {effortLabel}
+						{process.cwd()}
+					</Text>
+					<Text color="#4b5563">
+						{modelLabel} · {transcriptStats.steps} steps · {transcriptStats.tools} tools{transcriptStats.slashCommands > 0 ? ` · ${transcriptStats.slashCommands} slash` : ''}{transcriptStats.bashCommands > 0 ? ` · ${transcriptStats.bashCommands} bash` : ''}
 					</Text>
 					<Text color="#374151">
 						{'─'.repeat(Math.max(24, transcriptColumnWidth))}
@@ -3603,15 +3950,10 @@ const getToolUseContext = useCallback(
 			</Box>
 			<Box paddingX={2} width="100%">
 				<Box width={transcriptColumnWidth}>
-					<MessageViewport
+					<TranscriptViewport
 						key={conversationId}
-						headerLines={[]}
 						messages={viewportMessages}
 						width={transcriptColumnWidth}
-						alertMessage={alertMessage}
-						statusLine={null}
-						blinkOn={false}
-						variant="transcript"
 					/>
 				</Box>
 			</Box>
@@ -3628,7 +3970,7 @@ const getToolUseContext = useCallback(
 	const transcriptBottom = (
 		<Box flexDirection="column" flexShrink={0} paddingTop={1}>
 			<Text color="#4b5563">
-				Ctrl+O / Esc close · Ctrl+B/F page · Home/End jump
+				Ctrl+O / Esc close · Ctrl+B/F page · Home/End jump · j/k navigate · Tab collapse Tool
 			</Text>
 		</Box>
 	);

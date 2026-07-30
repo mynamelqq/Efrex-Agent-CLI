@@ -197,6 +197,7 @@ export async function* queryModelOpenAI(
     // 6. Build tool schemas with deferLoading flag
     const toolSchemas = await Promise.all(
       tools.map(tool =>
+
         toolToAPISchema(tool, {
           // getToolPermissionContext: options.getToolPermissionContext,
           tools,
@@ -221,7 +222,15 @@ export async function* queryModelOpenAI(
       messagesWithDeferredToolList,
       systemPrompt,
     )
+
     const openaiTools = toolsToOpenAI(toolSchemas)
+    logForDebugging('openai: tools received and converted', {
+      level: 'debug',
+      inputToolCount: tools.length,
+      inputToolNames: tools.map(tool => tool.name),
+      outputToolCount: openaiTools.length,
+      outputToolNames: openaiTools.map(tool => tool.function.name),
+    })
     const openaiToolChoice = toolChoiceToOpenAI(options.toolChoice)
     let attemptNumber = 0
     let start = Date.now()
@@ -273,6 +282,13 @@ export async function* queryModelOpenAI(
           maxTokens,
           temperatureOverride: options.temperatureOverride,
           effortLevel: getInitialEffortSetting(),
+        })
+        logForDebugging('openai: final request tool fields', {
+          level: 'debug',
+          toolCount: Array.isArray((requestBody as any).tools)
+            ? (requestBody as any).tools.length
+            : 0,
+          hasToolChoice: 'tool_choice' in (requestBody as any),
         })
         return openai.chat.completions.create(requestBody, { signal })
       },

@@ -53,7 +53,7 @@ export const GlobTool = buildTool({
     userFacingName() {
       return 'Find'
     },
-
+    isEnabled(){return true},
     get inputSchema(): InputSchema {
       return inputSchema()
     },

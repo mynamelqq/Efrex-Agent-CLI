@@ -117,6 +117,66 @@ function asRecord(value: unknown): Record<string, unknown> {
 		: {};
 }
 
+function formatInputLabel(key: string): string {
+	const normalized = key === 'includeDomains' ? 'domains' : key;
+	return normalized
+		.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+		.replace(/_/g, ' ')
+		.toLowerCase();
+}
+
+function formatInputValue(value: unknown): string {
+	if (Array.isArray(value)) {
+		return value.map(item => String(item)).join(', ');
+	}
+
+	if (value && typeof value === 'object') {
+		return stringifyPermissionInput(value);
+	}
+
+	return String(value);
+}
+
+function getCompactInputLines(input: unknown, maxLines = 3): string[] {
+	const entries = Object.entries(asRecord(input));
+	if (entries.length === 0) {
+		return [stringifyPermissionInput(input)];
+	}
+
+	const visibleEntries = entries.slice(0, maxLines);
+	const lines = visibleEntries.map(
+		([key, value]) => `${formatInputLabel(key)}: ${formatInputValue(value)}`
+	);
+
+	if (entries.length > maxLines) {
+		lines[maxLines - 1] += ` · +${entries.length - maxLines} more`;
+	}
+
+	return lines;
+}
+
+function getMcpToolIdentity(tool: Tool): {
+	toolName: string;
+	serverName?: string;
+} {
+	if (tool.mcpInfo) {
+		return {
+			toolName: tool.mcpInfo.toolName,
+			serverName: tool.mcpInfo.serverName
+		};
+	}
+
+	const parts = tool.name.split('__').filter(Boolean);
+	if (parts[0]?.toLowerCase() === 'mcp' && parts.length >= 3) {
+		return {
+			serverName: parts[1],
+			toolName: parts.slice(2).join('__')
+		};
+	}
+
+	return { toolName: tool.name };
+}
+
 function fitDisplay(text: string, width: number): string {
 	if (width <= 0) {
 		return '';
@@ -216,14 +276,6 @@ function getNaturalRisk(
 	}
 
 	return description || 'Allows this tool call to continue.';
-}
-
-function getRiskLabel(presentation: ToolPresentation): string {
-	if (presentation.isDangerous) {
-		return `High — ${presentation.risk ?? 'may make destructive changes.'}`;
-	}
-
-	return `Low — ${presentation.risk ?? 'allows this tool call to continue.'}`;
 }
 
 type PermissionInputKey = {
@@ -353,32 +405,6 @@ function getToolPresentation(
 		accent: 'ansi:yellow',
 		isDangerous: false
 	};
-}
-
-function InlineField({
-	label,
-	value,
-	width,
-	color,
-	labelColor = 'ansi:blackBright'
-}: {
-	label: string;
-	value: string;
-	width: number;
-	color?: PermissionColor;
-	labelColor?: PermissionColor;
-}): React.ReactNode {
-	const labelText = `${label}: `;
-	const labelWidth = stringWidth(labelText);
-
-	return (
-		<Box width={width} flexDirection="row">
-			<Text color={labelColor}>{labelText}</Text>
-			<Text color={color ?? 'ansi:whiteBright'}>
-				{fitDisplay(value, Math.max(4, width - labelWidth))}
-			</Text>
-		</Box>
-	);
 }
 
 type FileMutationPermissionPanelProps = {
@@ -653,13 +679,6 @@ export function PermissionRequest({
 		{ isActive: true }
 	);
 
-	const optionColumnWidth = Math.min(
-		30,
-		Math.max(24, Math.floor(contentWidth * 0.24))
-	);
-	const bodyWidth = Math.max(24, contentWidth - optionColumnWidth - 3);
-	const divider = '─'.repeat(contentWidth);
-	const verticalDivider = '│';
 	const shortcutHint = bypassAvailable ? 'A/D/B' : 'A/D';
 	const isFileMutationTool = isFileMutationToolName(toolUseConfirm.tool.name);
 
@@ -674,79 +693,70 @@ export function PermissionRequest({
 		);
 	}
 
+	const toolIdentity = getMcpToolIdentity(toolUseConfirm.tool);
+	const inputLines = getCompactInputLines(toolUseConfirm.input);
+	const defaultPanelWidth = Math.min(88, panelWidth);
+	const defaultContentWidth = Math.max(32, defaultPanelWidth - 4);
+	const borderColor = presentation.isDangerous
+		? 'ansi:redBright'
+		: 'ansi:blackBright';
+
 	const content = (
 		<Box
 			borderStyle="round"
-			borderColor={presentation.accent}
+			borderColor={borderColor}
 			flexDirection="column"
 			alignSelf="flex-start"
-			width={panelWidth}
-			paddingX={2}
+			width={defaultPanelWidth}
+			paddingX={1}
 			paddingY={0}
 			marginTop={1}
 		>
 			<Box flexDirection="row">
-				<Box width={bodyWidth} flexDirection="column" paddingRight={2}>
-					<Box flexDirection="row">
-						<Text color={presentation.accent} bold>
-							?{' '}
-						</Text>
-						<Text color="ansi:whiteBright">
-							{fitDisplay(presentation.question ?? presentation.intent, bodyWidth - 2)}
-						</Text>
-					</Box>
-					<Text color={presentation.isDangerous ? 'ansi:redBright' : 'ansi:cyan'}>
-						{fitDisplay(
-							presentation.primaryLabel === 'Command'
-								? `$ ${presentation.primary}`
-								: `${presentation.primaryLabel}: ${presentation.primary}`,
-							bodyWidth
-						)}
+				<Text color="ansi:cyan" bold>? </Text>
+				<Text color="ansi:whiteBright">
+					{fitDisplay(
+						`Allow ${toolIdentity.toolName}?`,
+						defaultContentWidth - 2
+					)}
+				</Text>
+			</Box>
+			{toolIdentity.serverName ? (
+				<Text color="ansi:blackBright">
+					{fitDisplay(
+						`  mcp · ${toolIdentity.serverName}`,
+						defaultContentWidth
+					)}
+				</Text>
+			) : null}
+			<Box flexDirection="column" marginTop={1}>
+				{inputLines.map((line, index) => (
+					<Text key={index} color="ansi:white">
+						{fitDisplay(`  ${line}`, defaultContentWidth)}
 					</Text>
-					{presentation.risk ? (
-						<Text color="ansi:white">
-							{fitDisplay(getRiskLabel(presentation), bodyWidth)}
-						</Text>
-					) : null}
-					<InlineField
-						label="Cwd"
-						value={presentation.working}
-						width={bodyWidth}
-						color="ansi:white"
-						labelColor="ansi:blackBright"
-					/>
-					<FileToolPermissionPreview
-						toolName={toolUseConfirm.tool.name}
-						input={toolUseConfirm.input}
-						width={bodyWidth}
-					/>
-				</Box>
-				<Text color="ansi:blackBright">{verticalDivider}</Text>
-				<Box width={optionColumnWidth} flexDirection="column" paddingLeft={2}>
-					{options.map((option, index) => {
-						const selected = selectedIndex === index;
+				))}
+			</Box>
+			<Box flexDirection="column" marginTop={1}>
+				{options.map((option, index) => {
+					const selected = selectedIndex === index;
 
-						return (
+					return (
+						<Box key={option.key} flexDirection="row">
+							<Text color={selected ? option.color : 'ansi:blackBright'}>
+								{selected ? '›' : ' '}{' '}
+							</Text>
 							<Text
-								key={option.key}
-								color={selected ? option.color : 'ansi:blackBright'}
+								color={selected ? 'ansi:whiteBright' : 'ansi:blackBright'}
 								bold={selected}
-								inverse={selected}
 							>
 								{fitDisplay(
-									`${selected ? '›' : ' '}[${option.hotkey}] ${option.label}`,
-									optionColumnWidth - 2
+									`[${option.hotkey}] ${option.label}`,
+									defaultContentWidth - 2
 								)}
 							</Text>
-						);
-					})}
-				</Box>
-			</Box>
-			<Text color={presentation.accent}>{divider}</Text>
-			<Box>
-				<Text color="ansi:whiteBright">
-					{fitDisplay(`Select an option (${shortcutHint}):`, contentWidth)}
-				</Text>
+						</Box>
+					);
+				})}
 			</Box>
 		</Box>
 	);

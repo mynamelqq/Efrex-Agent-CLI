@@ -7,7 +7,8 @@ import {
   getSettingsForSource,
 } from '../settings/settings.js'
 import { updateSettingsForSource } from '../settings/settings.js'
-import { addPermissionRulesToSettings } from './permissionsloader.js'
+import { addPermissionRulesToSettings } from './permissionsLoader.js'
+import { applyPermissionUpdate } from './permissions.js'
 
 import { PermissionUpdate,PermissionUpdateDestination } from 'src/types/permissions.js'
 import { permissionRuleValueToString,permissionRuleValueFromString } from './permissionRuleParser.js'

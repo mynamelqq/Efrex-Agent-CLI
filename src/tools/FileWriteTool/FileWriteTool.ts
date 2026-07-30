@@ -11,7 +11,7 @@ import {stat}from "fs/promises"
 import { getPatchForDisplay } from 'src/utils/diff'
 import { isEnvTruthy } from 'src/utils/envUtils.js'
 import { ToolUseDiff } from 'src/utils/gitDiff'
-import { mkdir } from 'fs'
+import { mkdir } from 'fs/promises'
 import { PermissionDecision } from 'src/types/permissions'
 import { getFileModificationTime } from 'src/utils/file'
 import { isENOENT } from 'src/utils/errors.js'
@@ -85,6 +85,7 @@ export const FileWriteTool = buildTool({
   get inputSchema(): InputSchema {
     return inputSchema()
   },
+  isEnabled(){return true},
   get outputSchema(): OutputSchema {
     return outputSchema()
   },
@@ -147,15 +148,15 @@ export const FileWriteTool = buildTool({
     // check and writeTextContent lets concurrent edits interleave), and BEFORE the
     // write (lazy-mkdir-on-ENOENT would fire a spurious tengu_atomic_write_error
     // inside writeFileSyncAndFlush_DEPRECATED before ENOENT propagates back).
-    await mkdir(dir,()=>{})
-    if (fileHistoryEnabled()) {//默认开启
+    await mkdir(dir, { recursive: true })
+    if (fileHistoryEnabled() && assistantMessage?.uuid) {//默认开启
       // Backup captures pre-edit content — safe to call before the staleness
       // check (idempotent v1 backup keyed on content hash; if staleness fails
       // later we just have an unused backup, not corrupt state).
       await fileHistoryTrackEdit(
         updateFileHistoryState,
         fullFilePath,
-        assistantMessage!.uuid,
+        assistantMessage.uuid,
       )
     }
 

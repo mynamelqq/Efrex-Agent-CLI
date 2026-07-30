@@ -1,5 +1,5 @@
 import { pathToFileURL } from 'url'
-import { exec } from './Shell.js'
+import { exec } from './shell.js'
 import type { ExecResult } from './ShellCommand.js'
 import type { ShellType } from './shell/shellProvider.js'
 

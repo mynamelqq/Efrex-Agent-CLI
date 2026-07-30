@@ -9,6 +9,8 @@ import { onChangeAppState } from './state/onChangeAppState.js';
 import { isSynchronizedOutputSupported } from './ink/terminal.js';
 import { RenderOptions } from 'packages/@ant/ink/src/index.js';
 import { getBaseRenderOptions } from './utils/renderOptions.js';
+import { AppStateProvider } from './state/AppState.js';
+import { AlternateScreen } from './ink/components/AlternateScreen.js';
 export function completeOnboarding(): void {
   saveGlobalConfig(current => ({
     ...current,
@@ -50,15 +52,22 @@ export async function showSetupScreens(
     await showSetupDialog(
       root,
       done => (
-        <Onboarding
-          onDone={() => {
-            try {
-              completeOnboarding();
-            } finally {
-              done();
-            }
-          }}
-        />
+        <AlternateScreen
+          mouseTracking={false}
+          preserveMainScreenOnExit
+        >
+          <AppStateProvider>
+            <Onboarding
+              onDone={() => {
+                try {
+                  completeOnboarding();
+                } finally {
+                  done();
+                }
+              }}
+            />
+          </AppStateProvider>
+        </AlternateScreen>
       ),
       { onChangeAppState }
     );

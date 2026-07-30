@@ -39,6 +39,7 @@ import { getManagedFilePath } from 'src/utils/settings/mdm/managedPath.js'
 import { isSettingSourceEnabled } from 'src/utils/settings/constants.js'
 import { readFileSync } from 'fs'
 import { expandEnvVarsInString } from './envExpansion.js'
+import { PluginError } from 'src/types/plugin.js'
 /**
  * Get the path to the managed MCP configuration file
  */
@@ -291,166 +292,100 @@ export async function addMcpConfig(
  */
 export async function getClaudeCodeMcpConfigs(
   dynamicServers: Record<string, ScopedMcpServerConfig> = {},
-  extraDedupTargets: Promise<
-    Record<string, ScopedMcpServerConfig>
-  > = Promise.resolve({}),
+
 ): Promise<{
   servers: Record<string, ScopedMcpServerConfig>
   errors: PluginError[]
 }> {
-  // If an enterprise mcp config exists, do not use any others; this has exclusive control over all MCP servers
-  // (enterprise customers often do not want their users to be able to add their own MCP servers).
-  if (doesEnterpriseMcpConfigExist()) {
-    // Apply policy filtering to enterprise servers
-    const filtered: Record<string, ScopedMcpServerConfig> = {}
-
-    for (const [name, serverConfig] of Object.entries(enterpriseServers)) {
-      if (!isMcpServerAllowedByPolicy(name, serverConfig)) {
-        continue
-      }
-      filtered[name] = serverConfig
-    }
-
-    return { servers: filtered, errors: [] }
-  }
-
   // Load other scopes — unless the managed policy locks MCP to plugin-only.
   // Unlike the enterprise-exclusive block above, this keeps plugin servers.
-  const mcpLocked = isRestrictedToPluginOnly('mcp')
+  // const mcpLocked = isRestrictedToPluginOnly('mcp')
   const noServers: { servers: Record<string, ScopedMcpServerConfig> } = {
     servers: {},
   }
-  const { servers: userServers } = mcpLocked
-    ? noServers
-    : getMcpConfigsByScope('user')
-  const { servers: projectServers } = mcpLocked
-    ? noServers
-    : getMcpConfigsByScope('project')
-  const { servers: localServers } = mcpLocked
-    ? noServers
-    : getMcpConfigsByScope('local')
+  const { servers: userServers } =getMcpConfigsByScope('user')
+  const { servers: projectServers } =  getMcpConfigsByScope('project')
+  const { servers: localServers } =  getMcpConfigsByScope('local')
 
   // Load plugin MCP servers
-  const pluginMcpServers: Record<string, ScopedMcpServerConfig> = {}
+  const pluginMcpServers: Record<string, ScopedMcpServerConfig> = {}//加载插件mcp服务器
 
-  const pluginResult = await loadAllPluginsCacheOnly()
+  // const pluginResult = await loadAllPluginsCacheOnly()
 
   // Collect MCP-specific errors during server loading
   const mcpErrors: PluginError[] = []
 
   // Log any plugin loading errors - NEVER silently fail in production
-  if (pluginResult.errors.length > 0) {
-    for (const error of pluginResult.errors) {
-      // Only log as MCP error if it's actually MCP-related
-      // Otherwise just log as debug since the plugin might not have MCP servers
-      if (
-        error.type === 'mcp-config-invalid' ||
-        error.type === 'mcpb-download-failed' ||
-        error.type === 'mcpb-extract-failed' ||
-        error.type === 'mcpb-invalid-manifest'
-      ) {
-        const errorMessage = `Plugin MCP loading error - ${error.type}: ${getPluginErrorMessage(error)}`
-        logError(new Error(errorMessage))
-      } else {
-        // Plugin doesn't exist or isn't available - this is common and not necessarily an error
-        // The plugin system will handle installing it if possible
-        const errorType = error.type
-        logForDebugging(
-          `Plugin not available for MCP: ${error.source} - error type: ${errorType}`,
-        )
-      }
-    }
-  }
+  // if (pluginResult.errors.length > 0) {
+  //   for (const error of pluginResult.errors) {
+  //     // Only log as MCP error if it's actually MCP-related
+  //     // Otherwise just log as debug since the plugin might not have MCP servers
+  //     if (
+  //       error.type === 'mcp-config-invalid' ||
+  //       error.type === 'mcpb-download-failed' ||
+  //       error.type === 'mcpb-extract-failed' ||
+  //       error.type === 'mcpb-invalid-manifest'
+  //     ) {
+  //       const errorMessage = `Plugin MCP loading error - ${error.type}: ${getPluginErrorMessage(error)}`
+  //       logError(new Error(errorMessage))
+  //     } else {
+  //       // Plugin doesn't exist or isn't available - this is common and not necessarily an error
+  //       // The plugin system will handle installing it if possible
+  //       const errorType = error.type
+  //       logForDebugging(
+  //         `Plugin not available for MCP: ${error.source} - error type: ${errorType}`,
+  //       )
+  //     }
+  //   }
+  // }
 
   // Process enabled plugins for MCP servers in parallel
-  const pluginServerResults = await Promise.all(
-    pluginResult.enabled.map(plugin => getPluginMcpServers(plugin, mcpErrors)),
-  )
-  for (const servers of pluginServerResults) {
-    if (servers) {
-      Object.assign(pluginMcpServers, servers)
-    }
-  }
+  // const pluginServerResults = await Promise.all(
+  //   pluginResult.enabled.map(plugin => getPluginMcpServers(plugin, mcpErrors)),
+  // )
+  // for (const servers of pluginServerResults) {
+  //   if (servers) {
+  //     Object.assign(pluginMcpServers, servers)
+  //   }
+  // }
 
   // Add any MCP-specific errors from server loading to plugin errors
-  if (mcpErrors.length > 0) {
-    for (const error of mcpErrors) {
-      const errorMessage = `Plugin MCP server error - ${error.type}: ${getPluginErrorMessage(error)}`
-      logError(new Error(errorMessage))
-    }
-  }
+  // if (mcpErrors.length > 0) {
+  //   for (const error of mcpErrors) {
+  //     const errorMessage = `Plugin MCP server error - ${error.type}: ${getPluginErrorMessage(error)}`
+  //     logError(new Error(errorMessage))
+  //   }
+  // }
 
   // Filter project servers to only include approved ones
   const approvedProjectServers: Record<string, ScopedMcpServerConfig> = {}
   for (const [name, config] of Object.entries(projectServers)) {
-    if (getProjectMcpServerStatus(name) === 'approved') {
       approvedProjectServers[name] = config
-    }
   }
-
-  // Dedup plugin servers against manually-configured ones (and each other).
-  // Plugin server keys are namespaced `plugin:x:y` so they never collide with
-  // manual keys in the merge below — this content-based filter catches the case
-  // where both would launch the same underlying process/connection.
-  // Only servers that will actually connect are valid dedup targets — a
-  // disabled manual server mustn't suppress a plugin server, or neither runs
-  // (manual is skipped by name at connection time; plugin was removed here).
-  const extraTargets = await extraDedupTargets
-  const enabledManualServers: Record<string, ScopedMcpServerConfig> = {}
+ 
+  // 针对手动配置的插件服务器（以及彼此之间）进行重复数据删除插件服务器。
+  // 插件服务器密钥的命名空间为“plugin:x:y”，因此它们永远不会与
+  // 下面合并中的手动键 -这个基于内容的过滤器捕获这种情况
+  // 两者都会启动相同的底层进程/连接。
+  // 只有实际连接的服务器才是有效的重复数据删除目标 —
+  // 禁用的手动服务器不得抑制插件服务器，或者两者都不运行
+  // （连接时按名称跳过手册；此处删除了插件）。
+  // const extraTargets = await extraDedupTargets
+  const enabledManualServers: Record<string, ScopedMcpServerConfig> = {}//手动配置的服务器
   for (const [name, config] of Object.entries({
     ...userServers,
     ...approvedProjectServers,
     ...localServers,
     ...dynamicServers,
-    ...extraTargets,
+    // ...extraTargets,
   })) {
-    if (
-      !isMcpServerDisabled(name) &&
-      isMcpServerAllowedByPolicy(name, config)
-    ) {
-      enabledManualServers[name] = config
-    }
-  }
-  // Split off disabled/policy-blocked plugin servers so they don't win the
-  // first-plugin-wins race against an enabled duplicate — same invariant as
-  // above. They're merged back after dedup so they still appear in /mcp
-  // (policy filtering at the end of this function drops blocked ones).
-  const enabledPluginServers: Record<string, ScopedMcpServerConfig> = {}
-  const disabledPluginServers: Record<string, ScopedMcpServerConfig> = {}
-  for (const [name, config] of Object.entries(pluginMcpServers)) {
-    if (
-      isMcpServerDisabled(name) ||
-      !isMcpServerAllowedByPolicy(name, config)
-    ) {
-      disabledPluginServers[name] = config
-    } else {
-      enabledPluginServers[name] = config
-    }
-  }
-  const { servers: dedupedPluginServers, suppressed } = dedupPluginMcpServers(
-    enabledPluginServers,
-    enabledManualServers,
-  )
-  Object.assign(dedupedPluginServers, disabledPluginServers)
-  // Surface suppressions in /plugin UI. Pushed AFTER the logError loop above
-  // so these don't go to the error log — they're informational, not errors.
-  for (const { name, duplicateOf } of suppressed) {
-    // name is "plugin:${pluginName}:${serverName}" from addPluginScopeToServers
-    const parts = name.split(':')
-    if (parts[0] !== 'plugin' || parts.length < 3) continue
-    mcpErrors.push({
-      type: 'mcp-server-suppressed-duplicate',
-      source: name,
-      plugin: parts[1]!,
-      serverName: parts.slice(2).join(':'),
-      duplicateOf,
-    })
+    enabledManualServers[name] = config
   }
 
-  // Merge in order of precedence: plugin < user < project < local
+
+  // 按优先顺序合并：插件 < 用户 < 项目 < 本地
   const configs = Object.assign(
     {},
-    dedupedPluginServers,
     userServers,
     approvedProjectServers,
     localServers,
@@ -460,9 +395,9 @@ export async function getClaudeCodeMcpConfigs(
   const filtered: Record<string, ScopedMcpServerConfig> = {}
 
   for (const [name, serverConfig] of Object.entries(configs)) {
-    if (!isMcpServerAllowedByPolicy(name, serverConfig as McpServerConfig)) {
-      continue
-    }
+    // if (!isMcpServerAllowedByPolicy(name, serverConfig as McpServerConfig)) {
+    //   continue
+    // }
     filtered[name] = serverConfig as ScopedMcpServerConfig
   }
 
@@ -477,28 +412,17 @@ export async function getAllMcpConfigs(): Promise<{
   servers: Record<string, ScopedMcpServerConfig>
   errors: PluginError[]
 }> {
-  // Kick off the claude.ai fetch before getClaudeCodeMcpConfigs so it overlaps
-  // with loadAllPluginsCacheOnly() inside. Memoized — the awaited call below is a cache hit.
-  const claudeaiPromise = fetchClaudeAIMcpConfigsIfEligible()
+  // 在 getClaudeCodeMcpConfigs 之前启动 claude.ai 获取，以便它重叠
+  // 里面有 loadAllPluginsCacheOnly() 。已记忆 -下面等待的调用是缓存命中。
+
   const { servers: claudeCodeServers, errors } = await getClaudeCodeMcpConfigs(
     {},
-    claudeaiPromise,
   )
-  const { allowed: claudeaiMcpServers } = filterMcpServersByPolicy(
-    await claudeaiPromise,
-  )
-
-  // Suppress claude.ai connectors that duplicate an enabled manual server.
-  // Keys never collide (`slack` vs `claude.ai Slack`) so the merge below
-  // won't catch this — need content-based dedup by URL signature.
-  const { servers: dedupedClaudeAi } = dedupClaudeAiMcpServers(
-    claudeaiMcpServers as Record<string, ScopedMcpServerConfig>,
-    claudeCodeServers,
-  )
-
+  // 禁止复制已启用的手动服务器的 claude.ai 连接器。
+  // 键永远不会碰撞（“slack”与“claude.ai Slack”），因此下面的合并
+  // 不会明白这一点 — 需要通过 URL 签名进行基于内容的重复数据删除。
   // Merge with claude.ai having lowest precedence
-  const servers = Object.assign({}, dedupedClaudeAi, claudeCodeServers)
-
+  const servers = Object.assign({},claudeCodeServers)
   return { servers, errors }
 }
 /**
@@ -840,3 +764,13 @@ export function parseMcpConfigFromFilePath(params: {//解析并验证MCP配置�
 }
 
 
+/**
+ * Check if an MCP server is disabled
+ * @param name The name of the server
+ * @returns true if the server is disabled
+ */
+export function isMcpServerDisabled(name: string): boolean {
+  const projectConfig = getCurrentProjectConfig()
+  const disabledServers = projectConfig.disabledMcpServers || []
+  return disabledServers.includes(name)
+}

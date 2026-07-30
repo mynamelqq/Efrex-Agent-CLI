@@ -538,6 +538,14 @@ function fullResetSequence_CAUSES_FLICKER(
   stylePool: StylePool,
   debug?: { triggerY: number; prevLine: string; nextLine: string },
 ): Diff {
+  logForDebugging('[REPAINT] main-screen full reset', {
+    reason,
+    screenHeight: frame.screen.height,
+    viewportHeight: frame.viewport.height,
+    triggerY: debug?.triggerY,
+    previousLine: debug?.prevLine,
+    nextLine: debug?.nextLine,
+  })
   // After clearTerminal, cursor is at (0, 0)
   const screen = new VirtualScreen({ x: 0, y: 0 }, frame.viewport.width)
   // On the main screen, rows above the viewport are already in terminal

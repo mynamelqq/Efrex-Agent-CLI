@@ -22,6 +22,7 @@ type Props = {
 const USER_MESSAGE_BG = '#2e2f30';
 const USER_MESSAGE_FG = '#f0f0ea';
 const ASSISTANT_BRAND = '#23d3b6';
+const API_ERROR_COLOR = 'rgb(255,107,128)';
 
 export default React.memo(function MessagesScrollback({
 	headerLines,
@@ -145,7 +146,14 @@ function renderMessageRow(
 		return (
 			<Box flexDirection="row" flexWrap="nowrap" width={width}>
 				<Box flexShrink={0} width={3}>
-					<Text bold color={ASSISTANT_BRAND}>
+					<Text
+						bold
+						color={
+							message.tone === 'error'
+								? API_ERROR_COLOR
+								: ASSISTANT_BRAND
+						}
+					>
 						{prefix}
 					</Text>
 				</Box>
@@ -166,21 +174,33 @@ function renderMessageRow(
 	}
 
 	const { toolPrefix, prefixColor } = getToolPrefix(message, blinkOn);
+	const hasNestedResultPrefix =
+		Boolean(message.content) && message.toolDisplayStyle !== 'use';
+	const toolPrefixWidth = hasNestedResultPrefix
+		? 1
+		: message.toolDisplayStyle === 'use'
+			? 3
+			: 6;
 	return (
 		<Box flexDirection="row" flexWrap="nowrap" width={width}>
-			<Box flexShrink={0} width={3}>
-				<Text color={prefixColor}>{toolPrefix}</Text>
+			<Box flexShrink={0} width={toolPrefixWidth}>
+				<Text color={prefixColor}>
+					{hasNestedResultPrefix ? ' ' : toolPrefix}
+				</Text>
 			</Box>
 			<Box
 				flexDirection="column"
 				flexGrow={1}
 				flexShrink={1}
-				width={Math.max(1, width - 3)}
+				width={Math.max(1, width - toolPrefixWidth)}
 			>
 				{message.content ? (
 					message.content
 				) : (
-					<MarkdownText text={message.text || ' '} width={Math.max(8, width - 3)} />
+					<MarkdownText
+						text={message.text || ' '}
+						width={Math.max(8, width - toolPrefixWidth)}
+					/>
 				)}
 			</Box>
 		</Box>
@@ -245,7 +265,7 @@ function getToolPrefix(
 	}
 
 	return {
-		toolPrefix: chalk.gray('↳  '),
+		toolPrefix: chalk.gray('   ↳  '),
 		prefixColor
 	};
 }

@@ -1,9 +1,11 @@
+import { getClaudeAIOAuthTokens } from "src/cli/auth";
 import { Text } from "src/ink";
 import { removeApiKey } from "src/utils/auth";
 import { saveGlobalConfig } from "src/utils/config";
 import { gracefulShutdownSync } from "src/utils/gracefulShutdown";
 import { getSecureStorage } from "src/utils/secureStorage";
 import { clearToolSchemaCache } from "src/utils/toolSchemaCache";
+import { resetUserCache } from "src/utils/user";
 
 
 export async function performLogout({ clearOnboarding = false }): Promise<void> {
@@ -35,11 +37,11 @@ export async function performLogout({ clearOnboarding = false }): Promise<void> 
 // clearing anything memoized that must be invalidated when user/session/auth changes
 export async function clearAuthRelatedCaches(): Promise<void> {//清楚与登录认证相关的缓存
   // Clear the OAuth token cache
-//   getClaudeAIOAuthTokens.cache?.clear?.();
+  getClaudeAIOAuthTokens.cache?.clear?.();
 //   clearTrustedDeviceTokenCache();
 //   clearBetasCaches();
   clearToolSchemaCache();
-
+  resetUserCache();
   // Clear user data cache BEFORE GrowthBook refresh so it picks up fresh credentials
 //   resetUserCache();
 

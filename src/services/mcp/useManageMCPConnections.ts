@@ -2,22 +2,74 @@ import { useCallback, useEffect, useRef } from 'react'
 import type { Command } from 'src/types/command.js'
 import type { Tool } from '../../Tool.js'
 import { getSessionId } from '../../bootstrap/state.js'
+import reject from 'lodash/reject.js'
+import omit from 'lodash/omit.js'
+import {
+  isMcpServerDisabled,
+} from 'src/services/mcp/config.js'
 import {
   clearServerCache,
   connectToServer,
+  getMcpToolsCommandsAndResources,
 } from './client.js'
 import type {
   MCPServerConnection,
   ScopedMcpServerConfig,
   ServerResource,
 } from './types.js'
-import { useAppStateStore, useSetAppState } from '../../state/AppState.js'
+import { AppState, useAppStateStore, useSetAppState } from '../../state/AppState.js'
 import { errorMessage } from '../../utils/errors.js'
 import { logMCPDebug, logMCPError } from '../../utils/log.js'
+import { PluginError } from 'src/types/plugin.js'
+import { getMcpPrefix } from 'src/utils/mcpStringUtils.js'
+import { commandBelongsToServer } from './utils.js'
+import { getClaudeCodeMcpConfigs } from './config.js'
+import { logForDebugging } from '../../utils/debug.js'
 
 const MAX_RECONNECT_ATTEMPTS = 5
 const INITIAL_BACKOFF_MS = 1000
 const MAX_BACKOFF_MS = 30000
+/**
+ * Create a unique key for a plugin error to enable deduplication
+ */
+function getErrorKey(error: PluginError): string {
+  const plugin = 'plugin' in error ? error.plugin : 'no-plugin'
+  return `${error.type}:${error.source}:${plugin}`
+}
+
+/**
+ * 向 AppState 添加错误，消除重复以避免多次显示相同的错误
+ */
+function addErrorsToAppState(
+  setAppState: (updater: (prev: AppState) => AppState) => void,
+  newErrors: PluginError[],
+): void {
+  if (newErrors.length === 0) return
+
+  setAppState(prevState => {
+    // Build set of existing error keys
+    const existingKeys = new Set(
+      prevState.plugins.errors.map(e => getErrorKey(e)),
+    )
+
+    // Only add errors that don't already exist
+    const uniqueNewErrors = newErrors.filter(
+      error => !existingKeys.has(getErrorKey(error)),
+    )
+
+    if (uniqueNewErrors.length === 0) {
+      return prevState
+    }
+
+    return {
+      ...prevState,
+      plugins: {
+        ...prevState.plugins,
+        errors: [...prevState.plugins.errors, ...uniqueNewErrors],
+      },
+    }
+  })
+}
 
 type PendingUpdate = MCPServerConnection & {
   tools?: Tool[]
@@ -50,37 +102,115 @@ export function useManageMCPConnections(
   const store = useAppStateStore()
   const setAppState = useSetAppState()
   const reconnectTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
+  const MCP_BATCH_FLUSH_MS = 16
+  const pendingUpdatesRef = useRef<PendingUpdate[]>([])
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const flushPendingUpdates = useCallback(() => {
+    flushTimerRef.current = null
+    const updates = pendingUpdatesRef.current
+    if (updates.length === 0) return
+    pendingUpdatesRef.current = []
 
+    setAppState(prevState => {
+      let mcp = prevState.mcp
+
+      for (const update of updates) {
+        const {
+          tools: rawTools,
+          commands: rawCmds,
+          resources: rawRes,
+          ...client
+        } = update
+        const tools =
+          client.type === 'disabled' || client.type === 'failed'
+            ? (rawTools ?? [])
+            : rawTools
+        const commands =
+          client.type === 'disabled' || client.type === 'failed'
+            ? (rawCmds ?? [])
+            : rawCmds
+        const resources =
+          client.type === 'disabled' || client.type === 'failed'
+            ? (rawRes ?? [])
+            : rawRes
+
+        logForDebugging('mcp: applying connection update', {
+          level: 'debug',
+          server: client.name,
+          status: client.type,
+          toolCount: tools?.length ?? 0,
+          toolNames: tools?.map(tool => tool.name) ?? [],
+          previousToolCount: mcp.tools.length,
+        })
+
+        const prefix = getMcpPrefix(client.name)
+        const existingClientIndex = mcp.clients.findIndex(
+          c => c.name === client.name,
+        )
+
+        const updatedClients =
+          existingClientIndex === -1
+            ? [...mcp.clients, client]
+            : mcp.clients.map(c => (c.name === client.name ? client : c))
+
+        const updatedTools =
+          tools === undefined
+            ? mcp.tools
+            : [...reject(mcp.tools, t => t.name?.startsWith(prefix)), ...tools]
+
+        const updatedCommands =
+          commands === undefined
+            ? mcp.commands
+            : [
+                ...reject(mcp.commands, c =>
+                  commandBelongsToServer(c, client.name),
+                ),
+                ...commands,
+              ]
+
+        const updatedResources =
+          resources === undefined
+            ? mcp.resources
+            : {
+                ...mcp.resources,
+                ...(resources.length > 0
+                  ? { [client.name]: resources }
+                  : omit(mcp.resources, client.name)),
+              }
+
+        mcp = {
+          ...mcp,
+          clients: updatedClients,
+          tools: updatedTools,
+          commands: updatedCommands,
+          resources: updatedResources,
+        }
+      }
+
+      logForDebugging('mcp: state tools after connection updates', {
+        level: 'debug',
+        toolCount: mcp.tools.length,
+        toolNames: mcp.tools.map(tool => tool.name),
+      })
+
+      return { ...prevState, mcp }
+    })
+  }, [setAppState])
+    // 更新服务器状态、工具、命令和资源。
+  // 当工具、命令或资源未定义时，现有值将被保留。
+  // 当类型为“禁用”或“失败”时，工具/命令/资源将自动清除。
+  // 通过 setTimeout 对更新进行批处理，以合并在 MCP_BATCH_FLUSH_MS 内到达的更新。
   const updateServer = useCallback(
     (update: PendingUpdate) => {
-      setAppState(prevState => {
-        const { tools: rawTools, commands: rawCommands, resources, ...client } =//拿出工具命令资源
-          update
-
-        const nextClients = [//把剩下的字段都放进 client。就是MCPServerConnection状态
-          ...prevState.mcp.clients.filter(existing => existing.name !== client.name),
-          client,
-        ]
-
-        return {
-          ...prevState,
-          mcp: {
-            ...prevState.mcp,
-            clients: nextClients,
-            tools: rawTools ?? prevState.mcp.tools,
-            commands: rawCommands ?? prevState.mcp.commands,
-            resources:
-              resources === undefined
-                ? prevState.mcp.resources
-                : {
-                    ...prevState.mcp.resources,
-                    [client.name]: resources,
-                  },
-          },
-        }
-      })
+      pendingUpdatesRef.current.push(update)
+      if (flushTimerRef.current === null) {
+        flushTimerRef.current = setTimeout(
+          flushPendingUpdates,
+          MCP_BATCH_FLUSH_MS,
+        )
+      }
     },
-    [setAppState],
+    [flushPendingUpdates],
   )
 
   const onConnectionAttempt = useCallback(
@@ -184,57 +314,82 @@ export function useManageMCPConnections(
   const sessionId = getSessionId()
 
   useEffect(() => {
-    let cancelled = false
+    async function initializeServersAsPending() {
+      const { servers: existingConfigs, errors: mcpErrors } =
+        await getClaudeCodeMcpConfigs(dynamicMcpConfig)
+      const configs = { ...existingConfigs, ...dynamicMcpConfig }
 
-    async function initializeAndConnectServers() {//初始化连接
-      const configs: Record<string, ScopedMcpServerConfig> = dynamicMcpConfig ?? {}
+      // Add MCP errors to plugin errors for UI visibility (deduplicated)
+      addErrorsToAppState(setAppState, mcpErrors)
 
-      const nextClients = Object.entries(configs).map(([name, config]) => ({//把所有 server 先标记为 pending
-        name,
-        type: 'pending' as const,
-        config,
-      }))
+      setAppState(prevState => {
+        const existingServerNames = new Set(
+          prevState.mcp.clients.map(c => c.name),
+        )
+        const newClients = Object.entries(configs)
+          .filter(([name]) => !existingServerNames.has(name))
+          .map(([name, config]) => ({
+            name,
+            type: isMcpServerDisabled(name)
+              ? ('disabled' as const)
+              : ('pending' as const),
+            config,
+          }))
 
-      setAppState(prevState => ({//更新状态
-        ...prevState,
-        mcp: {
-          ...prevState.mcp,
-        
-          clients: nextClients,
-        },
-      }))
-
-      for (const [name, config] of Object.entries(configs)) {//对每一个MCP server config
-        if (cancelled) {//如果取消了 就全部不要
-          continue
+        if (newClients.length === 0) {
+          return prevState
         }
 
-        try {
-          const result = await connectServer(name, config)//连接服务器
-          if (!cancelled) {//如果没有取消尝试重连
-            onConnectionAttempt(result)
-          }
-        } catch (error) {
-          if (!cancelled) {
-            updateServer({
-              name,
-              type: 'failed',//失败
-              config,
-              error: errorMessage(error),
-              tools: [],
-              commands: [],
-            })
-          }
+        return {
+          ...prevState,
+          mcp: {
+            ...prevState.mcp,
+            clients: [...prevState.mcp.clients, ...newClients],
+          },
         }
-      }
+      })
     }
 
-    void initializeAndConnectServers().catch(error => {
+    void initializeServersAsPending().catch(error => {
       logMCPError(
         'useManageMCPConnections',
-        `Failed to initialize MCP servers: ${errorMessage(error)}`,
+        `Failed to initialize servers as pending: ${errorMessage(error)}`,
       )
     })
+  }, [
+    dynamicMcpConfig,
+    setAppState,
+    sessionId,
+  ])
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadAndConnectMcpConfigs() {
+      const { servers: claudeCodeConfigs, errors: mcpErrors } =
+        await getClaudeCodeMcpConfigs(dynamicMcpConfig)
+      if (cancelled) return
+
+      // Add MCP errors to plugin errors for UI visibility (deduplicated)
+      addErrorsToAppState(setAppState, mcpErrors)
+
+      const configs = { ...claudeCodeConfigs, ...dynamicMcpConfig }
+
+      const enabledConfigs = Object.fromEntries(
+        Object.entries(configs).filter(([name]) => !isMcpServerDisabled(name)),
+      )
+      getMcpToolsCommandsAndResources(
+        onConnectionAttempt,
+        enabledConfigs,
+      ).catch(error => {
+        logMCPError(
+          'useManageMcpConnections',
+          `Failed to get MCP resources: ${errorMessage(error)}`,
+        )
+      })
+
+    }
+
+    void loadAndConnectMcpConfigs()
 
     return () => {
       cancelled = true
@@ -245,7 +400,6 @@ export function useManageMCPConnections(
     setAppState,
     sessionId,
   ])
-
   useEffect(() => {
     const timers = reconnectTimersRef.current
     return () => {
@@ -253,8 +407,13 @@ export function useManageMCPConnections(
         clearTimeout(timer)
       }
       timers.clear()
+      if (flushTimerRef.current !== null) {
+        clearTimeout(flushTimerRef.current)
+        flushTimerRef.current = null
+        flushPendingUpdates()
+      }
     }
-  }, [])
+  }, [flushPendingUpdates])
 
   const reconnectMcpServer = useCallback(
     async (serverName: string) => {

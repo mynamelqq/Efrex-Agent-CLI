@@ -91,7 +91,7 @@ function WelcomeHeader({
 					rightWidth={rightWidth}
 				/>
 				<WelcomeRow
-					left="╭ ────── ╮"
+					left="╭────────╮"
 					right="✦  Tips"
 					leftWidth={leftWidth}
 					rightWidth={rightWidth}
@@ -108,7 +108,7 @@ function WelcomeHeader({
 					highlightArrow
 				/>
 				<WelcomeRow
-					left="╰─┬──┬─╯"
+					left="╰──┬──┬──╯"
 					right="→  Generate or refactor code"
 					leftWidth={leftWidth}
 					rightWidth={rightWidth}

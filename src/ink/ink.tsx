@@ -503,6 +503,14 @@ export default class Ink {
     // (screen-local) so only anchor shifts — selection grows toward the
     // mouse as the anchor walks up. After release, both ends are text-
     // anchored and move as a block.
+    //
+    // Extended to handle BOTH scroll directions: positive delta (content
+    // scrolls up, e.g. streaming auto-follow or wheel-down) captures rows
+    // leaving from the TOP and shifts selection up; negative delta (content
+    // scrolls down, e.g. wheel-up or PgUp) captures rows leaving from the
+    // BOTTOM and shifts selection down. Previously only positive delta was
+    // emitted, so upward scrolling left the highlight at the same screen
+    // rows while the underlying text changed — misleading for copy.
     const follow = consumeFollowScroll();
     if (follow && this.selection.anchor &&
     // Only translate if the selection is ON scrollbox content. Selections
@@ -526,7 +534,11 @@ export default class Ink {
       // each shift branch so the pairing can't be broken by a new guard.
       if (this.selection.isDragging) {
         if (hasSelection(this.selection)) {
-          captureScrolledRows(this.selection, this.frontFrame.screen, viewportTop, viewportTop + delta - 1, 'above');
+          if (delta > 0) {
+            captureScrolledRows(this.selection, this.frontFrame.screen, viewportTop, viewportTop + delta - 1, 'above');
+          } else {
+            captureScrolledRows(this.selection, this.frontFrame.screen, viewportBottom + delta + 1, viewportBottom, 'below');
+          }
         }
         shiftAnchor(this.selection, -delta, viewportTop, viewportBottom);
       } else if (
@@ -544,10 +556,14 @@ export default class Ink {
       // is correct there even when focus is in the footer).
       !this.selection.focus || this.selection.focus.row >= viewportTop && this.selection.focus.row <= viewportBottom) {
         if (hasSelection(this.selection)) {
-          captureScrolledRows(this.selection, this.frontFrame.screen, viewportTop, viewportTop + delta - 1, 'above');
+          if (delta > 0) {
+            captureScrolledRows(this.selection, this.frontFrame.screen, viewportTop, viewportTop + delta - 1, 'above');
+          } else {
+            captureScrolledRows(this.selection, this.frontFrame.screen, viewportBottom + delta + 1, viewportBottom, 'below');
+          }
         }
         const cleared = shiftSelectionForFollow(this.selection, -delta, viewportTop, viewportBottom);
-        // Auto-clear (both ends overshot minRow) must notify React-land
+        // Auto-clear (both ends overshot minRow/maxRow) must notify React-land
         // so useHasSelection re-renders and the footer copy/escape hint
         // disappears. notifySelectionChange() would recurse into onRender;
         // fire the listeners directly — they schedule a React update for

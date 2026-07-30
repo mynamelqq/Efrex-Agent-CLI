@@ -14,12 +14,18 @@ import login from './commands/login/index.js';
 import { isUsing3PServices } from './utils/auth.js';
 import logout from './commands/logout/index.js';
 import exit from './commands/exit/index.js';
+import status from './commands/status/index.js';
+import theme from './commands/theme/index.js';
+import mcp from './commands/mcp/index.js';
 export const COMMANDS = memoize((): Command[] => [
   model,
   effort,
+  theme,
   clear,
   resume,
-  exit,
+  exit,status,
+  mcp,
+
   ...(!isUsing3PServices() ? [logout, login()] : []),
 ].filter(Boolean))
 /**
