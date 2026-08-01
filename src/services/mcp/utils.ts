@@ -31,7 +31,17 @@ export function isMcpTool(tool: Tool): boolean {
   return tool.name?.startsWith('mcp__') || tool.isMcp === true
 }
 
-
+/**
+ * Filters tools by MCP server name
+ *
+ * @param tools Array of tools to filter
+ * @param serverName Name of the MCP server
+ * @returns Tools belonging to the specified server
+ */
+export function filterToolsByServer(tools: Tool[], serverName: string): Tool[] {
+  const prefix = `mcp__${serverName}__`
+  return tools.filter(tool => tool.name?.startsWith(prefix))
+}
 export function ensureConfigScope(scope?: string): ConfigScope {
   if (!scope) return 'local'
 

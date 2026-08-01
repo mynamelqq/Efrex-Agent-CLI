@@ -48,11 +48,7 @@ export function roughTokenCountEstimationForFileType(
 }
 // 遍历所有 messages，把每条消息的估算 token 加起来。
 export function roughTokenCountEstimationForMessages(
-  messages: readonly {
-    type: string
-    message?: { content?: unknown }
-    attachment?: Attachment
-  }[],
+  messages: Message[],
 ): number {
   let totalTokens = 0
   for (const message of messages) {
@@ -62,11 +58,7 @@ export function roughTokenCountEstimationForMessages(
 }
 
 
-export function roughTokenCountEstimationForMessage(message: {//roughTokenCountEstimationForBlock(block)
-  type: string
-  message?: { content?: unknown }
-  attachment?: Attachment
-}): number {
+export function roughTokenCountEstimationForMessage(message: Message): number {
   if (
     (message.type === 'assistant' || message.type === 'user') &&
     message.message?.content

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Box, Text, useInput, useWindowSize } from '../../ink.js';
+import { Text, useInput, useWindowSize } from '../../ink.js';
 import { stringWidth } from '../../ink/stringWidth.js';
 import type { PermissionUpdate } from 'src/types/permissions.js';
 import type { PermissionRequestProps } from './PermissionRequest.js';
@@ -39,7 +39,10 @@ type PermissionInputKey = {
 	ctrl?: boolean;
 };
 
-function isScrollNavigationKey(input: string, key: PermissionInputKey): boolean {
+function isScrollNavigationKey(
+	input: string,
+	key: PermissionInputKey
+): boolean {
 	return (
 		key.wheelUp ||
 		key.wheelDown ||
@@ -49,32 +52,6 @@ function isScrollNavigationKey(input: string, key: PermissionInputKey): boolean 
 		key.end ||
 		(key.ctrl && ['b', 'f', 'u', 'd'].includes(input))
 	);
-}
-
-function wrapDisplay(text: string, width: number): string[] {
-	const safeWidth = Math.max(1, width);
-	const result: string[] = [];
-
-	for (const logicalLine of text.split('\n')) {
-		if (logicalLine.length === 0) {
-			result.push('');
-			continue;
-		}
-
-		let current = '';
-		for (const char of Array.from(logicalLine)) {
-			const next = current + char;
-			if (stringWidth(next) > safeWidth) {
-				result.push(current);
-				current = char;
-			} else {
-				current = next;
-			}
-		}
-		result.push(current);
-	}
-
-	return result;
 }
 
 function fitDisplay(text: string, width: number): string {
@@ -97,18 +74,40 @@ function fitDisplay(text: string, width: number): string {
 	return `${next}...`;
 }
 
-function isDangerousCommand(command: string): boolean {
-	return /\brm\s+(-[^\s]*r[^\s]*f|-[^\s]*f[^\s]*r)\b|\b(shred|mkfs|dd)\b|\bchmod\s+-R\b|\bchown\s+-R\b|\bgit\s+reset\s+--hard\b/i.test(
-		command
-	);
-}
+function getNetworkHosts(command: string): string[] {
+	const hosts = new Set<string>();
+	const urlPattern = /https?:\/\/[^\s"']+/gi;
 
-function getRiskLabel(command: string, description: string): string {
-	if (isDangerousCommand(command)) {
-		return 'High — may delete, overwrite, or recursively change files.';
+	for (const match of command.matchAll(urlPattern)) {
+		try {
+			hosts.add(new URL(match[0]).hostname);
+		} catch {
+			// Ignore malformed URLs; the tool call above the card contains the
+			// complete command for inspection.
+		}
 	}
 
-	return description || 'Runs a Bash command in the current workspace.';
+	return [...hosts];
+}
+
+export function getBashPermissionSummary(
+	command: string,
+	description: string
+): {
+	title: string;
+	request: string;
+	purpose: string;
+} {
+	const hosts = getNetworkHosts(command);
+
+	return {
+		title: '需要你的允许',
+		request:
+			hosts.length > 0
+				? 'efrex 想要访问互联网'
+				: 'efrex 想要运行 shell 命令',
+		purpose: `用途：${description || '执行请求的操作'}`
+	};
 }
 
 export function BashPermissionRequest({
@@ -121,8 +120,7 @@ export function BashPermissionRequest({
 	void currentMessageCount;
 
 	const { columns } = useWindowSize();
-	const panelWidth = Math.min(118, Math.max(58, columns - 4));
-	const contentWidth = Math.max(32, panelWidth - 6);
+	const contentWidth = Math.max(32, columns - 8);
 	const command = String(
 		(toolUseConfirm.input as Record<string, unknown>).command ?? ''
 	);
@@ -131,9 +129,7 @@ export function BashPermissionRequest({
 			toolUseConfirm.description ??
 			''
 	);
-	const [selectedIndex, setSelectedIndex] = React.useState(
-		isDangerousCommand(command) ? 1 : 0
-	);
+	const [selectedIndex, setSelectedIndex] = React.useState(0);
 	const didResolveRef = React.useRef(false);
 	const startResolution = React.useCallback(
 		(action: () => void | Promise<void>) => {
@@ -183,28 +179,28 @@ export function BashPermissionRequest({
 			{
 				key: 'a',
 				hotkey: 'A',
-				label: 'Allow once',
-				color: 'ansi:greenBright',
+				label: '允许这一次',
+				color: 'ansi:whiteBright',
 				action: () => allow()
-			},
-			{
-				key: 'd',
-				hotkey: 'D',
-				label: 'Deny this time',
-				color: 'ansi:redBright',
-				action: reject
 			},
 			...(bypassAvailable
 				? [
-					{
-						key: 'b',
-						hotkey: 'B',
-						label: 'Trust this session',
-						color: 'ansi:yellowBright' as const,
-						action: allowAllCommands
-					}
-				]
-				: [])
+						{
+							key: 'b',
+							hotkey: 'B',
+							label: '信任本次会话',
+							color: 'ansi:whiteBright' as const,
+							action: allowAllCommands
+						}
+					]
+				: []),
+			{
+				key: 'd',
+				hotkey: 'D',
+				label: '不允许',
+				color: 'ansi:whiteBright',
+				action: reject
+			}
 		],
 		[allow, allowAllCommands, bypassAvailable, reject]
 	);
@@ -249,7 +245,9 @@ export function BashPermissionRequest({
 				return;
 			}
 
-			const option = options.find(item => item.key === input.toLowerCase());
+			const option = options.find(
+				item => item.key === input.toLowerCase()
+			);
 			if (option) {
 				option.action();
 			}
@@ -257,82 +255,34 @@ export function BashPermissionRequest({
 		{ isActive: true }
 	);
 
-	const optionColumnWidth = Math.min(
-		28,
-		Math.max(22, Math.floor(contentWidth * 0.25))
-	);
-	const bodyWidth = Math.max(24, contentWidth - optionColumnWidth - 3);
 	const divider = '─'.repeat(contentWidth);
-	const shortcutHint = bypassAvailable ? 'A/D/B' : 'A/D';
-	const dangerous = isDangerousCommand(command);
+	const summary = getBashPermissionSummary(command, description);
 
 	return (
-		<Box
-			borderStyle="round"
-			borderColor={dangerous ? 'ansi:redBright' : 'ansi:cyan'}
-			flexDirection="column"
-			alignSelf="flex-start"
-			width={panelWidth}
-			paddingX={2}
-			paddingY={0}
-			marginTop={1}
-		>
-			<Box flexDirection="row">
-				<Box width={bodyWidth} flexDirection="column" paddingRight={2}>
-					<Box flexDirection="row">
-						<Text color={dangerous ? 'ansi:redBright' : 'ansi:cyan'} bold>
-							$ {' '}
-						</Text>
-						<Text color="ansi:whiteBright">
-							{fitDisplay(
-								'efrex code wants to run the following shell command:',
-								bodyWidth - 2
-							)}
-						</Text>
-					</Box>
-					<Box flexDirection="column">
-						{wrapDisplay(command, Math.max(1, bodyWidth - 2)).map(
-							(line, index) => (
-								<Text
-									key={`command-${index}`}
-									color={dangerous ? 'ansi:redBright' : 'ansi:greenBright'}
-								>
-									{line.length > 0 ? `$ ${line}` : ' '}
-								</Text>
-							)
+		<React.Fragment>
+			<Text> </Text>
+			<Text color="ansi:cyan" bold>
+				{fitDisplay('Efrex 想要调用 Bash', contentWidth)}
+			</Text>
+			<Text color="ansi:blackBright">
+				{divider}
+			</Text>
+			<Text>{fitDisplay(`意图：${description || summary.request}`, contentWidth)}</Text>
+			{options.map((option, index) => {
+				const selected = selectedIndex === index;
+				return (
+					<Text
+						key={option.key}
+						color={selected ? option.color : 'ansi:blackBright'}
+						bold={selected}
+					>
+						{fitDisplay(
+							`${selected ? '›' : ' '}[${option.hotkey}] ${option.label}`,
+							contentWidth
 						)}
-					</Box>
-					<Text color={dangerous ? 'ansi:redBright' : 'ansi:white'}>
-						{fitDisplay(getRiskLabel(command, description), bodyWidth)}
 					</Text>
-				</Box>
-				<Text color="ansi:blackBright">│</Text>
-				<Box width={optionColumnWidth} flexDirection="column" paddingLeft={2}>
-					{options.map((option, index) => {
-						const selected = selectedIndex === index;
-
-						return (
-							<Text
-								key={option.key}
-								color={selected ? option.color : 'ansi:blackBright'}
-								bold={selected}
-								inverse={selected}
-							>
-								{fitDisplay(
-									`${selected ? '›' : ' '}[${option.hotkey}] ${option.label}`,
-									optionColumnWidth - 2
-								)}
-							</Text>
-						);
-					})}
-				</Box>
-			</Box>
-			<Text color={dangerous ? 'ansi:redBright' : 'ansi:cyan'}>{divider}</Text>
-			<Box>
-				<Text color="ansi:whiteBright">
-					{fitDisplay(`Select an option (${shortcutHint}):`, contentWidth)}
-				</Text>
-			</Box>
-		</Box>
+				);
+			})}
+		</React.Fragment>
 	);
 }

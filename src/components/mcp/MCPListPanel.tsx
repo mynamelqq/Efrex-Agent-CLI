@@ -1,5 +1,5 @@
 import figures from 'figures';
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import type { CommandResultDisplay } from '../../commands.js';
 import { Box, Link, Text, useInput } from '../../ink.js';
 import type { ConfigScope } from '../../services/mcp/types.js';
@@ -9,11 +9,10 @@ import type { ServerInfo } from './types.js';
 
 type Props = {
   servers: ServerInfo[];
-  onComplete: (
-    result?: string,
-    options?: { display?: CommandResultDisplay },
-  ) => void;
+  onSelectServer: (server: ServerInfo) => void;
+  onComplete: (result?: string, options?: { display?: CommandResultDisplay }) => void;
 };
+
 
 type StatusPresentation = {
   icon: string;
@@ -144,8 +143,25 @@ function getTransportLabel(transport: string): string {
 
 export function MCPListPanel({
   servers,
+  onSelectServer,
   onComplete,
 }: Props): React.ReactNode {
+  const [selectedIndex, setSelectedIndex] = useState(0);
+
+  const selectableServers = React.useMemo(() => {
+    const grouped = groupServersByScope(servers);
+    return [
+      ...SCOPE_ORDER.flatMap(scope => grouped.get(scope) ?? []),
+      ...(grouped.get('dynamic') ?? []),
+    ];
+  }, [servers]);
+
+  useEffect(() => {
+    setSelectedIndex(index =>
+      Math.min(index, Math.max(0, selectableServers.length - 1)),
+    );
+  }, [selectableServers.length]);
+
   const handleClose = useCallback((): void => {
     onComplete('MCP dialog dismissed', {
       display: 'system',
@@ -153,7 +169,18 @@ export function MCPListPanel({
   }, [onComplete]);
 
   useInput((input, key) => {
-    if (key.escape || key.return || (key.ctrl && input === 'c')) {
+    if (key.upArrow || input === 'k') {
+      setSelectedIndex(index =>
+        index === 0 ? selectableServers.length - 1 : index - 1,
+      );
+    } else if (key.downArrow || input === 'j') {
+      setSelectedIndex(index =>
+        index === selectableServers.length - 1 ? 0 : index + 1,
+      );
+    } else if (key.return) {
+      const server = selectableServers[selectedIndex];
+      if (server) onSelectServer(server);
+    } else if (key.escape || (key.ctrl && input === 'c')) {
       handleClose();
     }
   });
@@ -187,11 +214,19 @@ export function MCPListPanel({
 
   const renderServerItem = (server: ServerInfo): React.ReactNode => {
     const status = getStatusPresentation(server);
+    const index = selectableServers.indexOf(server);
+    const isSelected = index === selectedIndex;
 
     return (
-      <Box key={server.name} paddingLeft={2}>
+      <Box key={server.name}>
+        <Text color={isSelected ? 'suggestion' : undefined}>
+          {isSelected ? `${figures.pointer} ` : '  '}
+        </Text>
         <Text color={status.color}>{status.icon}</Text>
-        <Text> {server.name}</Text>
+        <Text color={isSelected ? 'suggestion' : undefined}>
+          {' '}
+          {server.name}
+        </Text>
         <Text color="ansi:blackBright">
           {' '}
           · {getTransportLabel(server.transport)}
@@ -301,7 +336,10 @@ export function MCPListPanel({
           <Link url="https://code.claude.com/docs/en/mcp">
             MCP documentation
           </Link>
-          <Text color="ansi:blackBright"> · Enter/Esc close</Text>
+          <Text color="ansi:blackBright">
+            {' '}
+            · ↑↓ navigate · Enter details · Esc close
+          </Text>
         </Box>
       </Box>
     </Box>

@@ -14,16 +14,28 @@ import { MCPServerConnection } from "packages/mcp-client/src"
 import { isSupportedTerminal, toIDEDisplayName } from "./ide"
 import { envDynamic } from "./envDynamic"
 import { getCwd } from "./cwd"
+import { countCharInString } from "./stringUtils"
 
-
+import {
+  FileReadTool,
+  MaxFileReadTokenExceededError,
+  type Output as FileReadToolOutput,
+  readImageWithTokenBudget,
+} from 'src/tools/FileReadTool/FileReadTool.js'
+import { isFileWithinReadSizeLimit } from "./file"
+import { getDefaultFileReadingLimits } from "src/tools/FileReadTool/limits"
+import { isPDFExtension } from "./pdfUtils"
+import { stat } from "fs/promises"
+import { MAX_LINES_TO_READ } from "src/tools/FileReadTool/prompt"
+import { FileTooLargeError } from "./readFileInRange"
 export type Attachment =
   /**
    * User at-mentioned the file
    */
-  // | FileAttachment
-  // | CompactFileReferenceAttachment
-  // | PDFReferenceAttachment
-  // | AlreadyReadFileAttachment
+  | FileAttachment
+  | CompactFileReferenceAttachment
+  | PDFReferenceAttachment
+  | AlreadyReadFileAttachment
   /**
    * An at-mentioned file was edited
    */
@@ -310,6 +322,52 @@ export type Attachment =
       warningCount: number
       sample: string
     }
+export type FileAttachment = {
+  type: 'file'
+  filename: string
+  content: FileReadToolOutput
+  /**
+   * Whether the file was truncated due to size limits
+   */
+  truncated?: boolean
+  /** Path relative to CWD at creation time, for stable display */
+  displayPath: string
+}
+
+export type CompactFileReferenceAttachment = {
+  type: 'compact_file_reference'
+  filename: string
+  /** Path relative to CWD at creation time, for stable display */
+  displayPath: string
+}
+
+export type PDFReferenceAttachment = {
+  type: 'pdf_reference'
+  filename: string
+  pageCount: number
+  fileSize: number
+  /** Path relative to CWD at creation time, for stable display */
+  displayPath: string
+}
+
+export type AlreadyReadFileAttachment = {
+  type: 'already_read_file'
+  filename: string
+  content: FileReadToolOutput
+  /**
+   * Whether the file was truncated due to size limits
+   */
+  truncated?: boolean
+  /** Path relative to CWD at creation time, for stable display */
+  displayPath: string
+}
+
+export type AgentMentionAttachment = {
+  type: 'agent_mention'
+  agentType: string
+}
+
+
 /**
  * This is janky
  * TODO: Generate attachments when we create messages
@@ -405,6 +463,183 @@ async function maybe<A>(label: string, f: () => Promise<A[]>): Promise<A[]> {//å
     return []
   }
 }
+export async function generateFileAttachment(
+  filename: string,
+  toolUseContext: ToolUseContext,
+  successEventName: string,
+  errorEventName: string,
+  mode: 'compact' | 'at-mention',
+  options?: {
+    offset?: number
+    limit?: number
+  },
+): Promise<
+  | FileAttachment
+  | CompactFileReferenceAttachment
+  | PDFReferenceAttachment
+  | AlreadyReadFileAttachment
+  | null
+> {
+  const { offset, limit } = options ?? {}
+
+  // Check if file has a deny rule configured
+  const appState = toolUseContext.getAppState()
+  // if (isFileReadDenied(filename, appState.toolPermissionContext)) {
+  //   return null
+  // }
+
+  // Check file size before attempting to read (skip for PDFs â€” they have their own size/page handling below)
+  if (
+    mode === 'at-mention' &&
+    !isFileWithinReadSizeLimit(
+      filename,
+      getDefaultFileReadingLimits().maxSizeBytes,
+    )
+  ) {
+    const ext = parse(filename).ext.toLowerCase()
+    if (!isPDFExtension(ext)) {
+      try {
+        const stats = await stat(filename)
+        return null
+      } catch {
+        // If we can't stat the file, proceed with normal reading (will fail later if file doesn't exist)
+      }
+    }
+  }
+
+  // For large PDFs on @ mention, return a lightweight reference instead of inlining
+  // if (mode === 'at-mention') {
+  //   const pdfRef = await tryGetPDFReference(filename)
+  //   if (pdfRef) {
+  //     return pdfRef
+  //   }
+  // }
+
+  // // Check if file is already in context with latest version
+  // const existingFileState = toolUseContext.readFileState.get(filename)
+  // if (existingFileState && mode === 'at-mention') {
+  //   try {
+  //     // Check if the file has been modified since we last read it
+  //     const mtimeMs = await getFileModificationTimeAsync(filename)
+
+  //     // Handle timestamp format inconsistency:
+  //     // - FileReadTool stores Date.now() (current time when read)
+  //     // - FileEdit/WriteTools store mtimeMs (file modification time)
+  //     //
+  //     // If timestamp > mtimeMs, it was stored by FileReadTool using Date.now()
+  //     // In this case, we should not use the optimization since we can't reliably
+  //     // compare modification times. Only use optimization when timestamp <= mtimeMs,
+  //     // indicating it was stored by FileEdit/WriteTool with actual mtimeMs.
+
+  //     if (
+  //       existingFileState.timestamp <= mtimeMs &&
+  //       mtimeMs === existingFileState.timestamp
+  //     ) {
+  //       // File hasn't been modified, return already_read_file attachment
+  //       // This tells the system the file is already in context and doesn't need to be sent to API
+  //       return {
+  //         type: 'already_read_file',
+  //         filename,
+  //         displayPath: relative(getCwd(), filename),
+  //         content: {
+  //           type: 'text',
+  //           file: {
+  //             filePath: filename,
+  //             content: existingFileState.content,
+  //             numLines: countCharInString(existingFileState.content, '\n') + 1,
+  //             startLine: offset ?? 1,
+  //             totalLines:
+  //               countCharInString(existingFileState.content, '\n') + 1,
+  //           },
+  //         },
+  //       }
+  //     }
+  //   } catch {
+  //     // If we can't stat the file, proceed with normal reading
+  //   }
+  // }
+
+  try {
+    const fileInput = {
+      file_path: filename,
+      offset,
+      limit,
+    }
+
+    async function readTruncatedFile(): Promise<
+      | FileAttachment
+      | CompactFileReferenceAttachment
+      | AlreadyReadFileAttachment
+      | null
+    > {
+      if (mode === 'compact') {
+        return {
+          type: 'compact_file_reference',
+          filename,
+          displayPath: relative(getCwd(), filename),
+        }
+      }
+
+      // Check deny rules before reading truncated file
+      const appState = toolUseContext.getAppState()
+      // if (isFileReadDenied(filename, appState.toolPermissionContext)) {
+      //   return null
+      // }
+
+      try {
+        // Read only the first MAX_LINES_TO_READ lines for files that are too large
+        const truncatedInput = {
+          file_path: filename,
+          offset: offset ?? 1,
+          limit: MAX_LINES_TO_READ,
+        }
+        const result = await FileReadTool.call(truncatedInput, toolUseContext)
+
+        return {
+          type: 'file' as const,
+          filename,
+          content: result.data,
+          truncated: true,
+          displayPath: relative(getCwd(), filename),
+        }
+      } catch {
+        return null
+      }
+    }
+
+    // Validate file path is valid
+    const validateInput = FileReadTool.validateInput
+    if (!validateInput) {
+      return null
+    }
+
+    const isValid = await validateInput(fileInput, toolUseContext)
+    if (!isValid.result) {
+      return null
+    }
+
+    try {
+      const result = await FileReadTool.call(fileInput, toolUseContext)
+      return {
+        type: 'file',
+        filename,
+        content: result.data,
+        displayPath: relative(getCwd(), filename),
+      }
+    } catch (error) {
+      if (
+        error instanceof MaxFileReadTokenExceededError ||
+        error instanceof FileTooLargeError
+      ) {
+        return await readTruncatedFile()
+      }
+      throw error
+    }
+  } catch {
+    return null
+  }
+}
+
 export async function* getAttachmentMessages(
   input: string | null,
   toolUseContext: ToolUseContext,

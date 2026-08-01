@@ -62,10 +62,8 @@ export async function shouldAutoCompact(
   // Recursion guards. session_memory and compact are forked agents that
   // would deadlock.思索
   if (querySource === 'session_memory' || querySource === 'compact') {
-
     return false
   }
-
   if (!isAutoCompactEnabled()) {
     return false
   }
@@ -79,9 +77,6 @@ export async function shouldAutoCompact(
     tokenCount,
     model,
   )
-
- 
-
   return isAboveAutoCompactThreshold
 }
 export async function autoCompactIfNeeded(

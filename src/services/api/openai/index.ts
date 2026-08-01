@@ -224,13 +224,6 @@ export async function* queryModelOpenAI(
     )
 
     const openaiTools = toolsToOpenAI(toolSchemas)
-    logForDebugging('openai: tools received and converted', {
-      level: 'debug',
-      inputToolCount: tools.length,
-      inputToolNames: tools.map(tool => tool.name),
-      outputToolCount: openaiTools.length,
-      outputToolNames: openaiTools.map(tool => tool.function.name),
-    })
     const openaiToolChoice = toolChoiceToOpenAI(options.toolChoice)
     let attemptNumber = 0
     let start = Date.now()
@@ -283,13 +276,7 @@ export async function* queryModelOpenAI(
           temperatureOverride: options.temperatureOverride,
           effortLevel: getInitialEffortSetting(),
         })
-        logForDebugging('openai: final request tool fields', {
-          level: 'debug',
-          toolCount: Array.isArray((requestBody as any).tools)
-            ? (requestBody as any).tools.length
-            : 0,
-          hasToolChoice: 'tool_choice' in (requestBody as any),
-        })
+
         return openai.chat.completions.create(requestBody, { signal })
       },
       {

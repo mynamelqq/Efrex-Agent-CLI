@@ -17,6 +17,7 @@ import exit from './commands/exit/index.js';
 import status from './commands/status/index.js';
 import theme from './commands/theme/index.js';
 import mcp from './commands/mcp/index.js';
+import compact from './commands/compact/index.js';
 export const COMMANDS = memoize((): Command[] => [
   model,
   effort,
@@ -24,7 +25,7 @@ export const COMMANDS = memoize((): Command[] => [
   clear,
   resume,
   exit,status,
-  mcp,
+  mcp,compact,
 
   ...(!isUsing3PServices() ? [logout, login()] : []),
 ].filter(Boolean))

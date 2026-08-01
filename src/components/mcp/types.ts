@@ -11,3 +11,9 @@ export type ServerInfo = {
   transport: string;
   config: ScopedMcpServerConfig;
 };
+
+export type MCPViewState =
+  | { type: 'list' }
+  | { type: 'server-detail'; server: ServerInfo }
+  | { type: 'server-tools'; server: ServerInfo }
+  | { type: 'tool-detail'; server: ServerInfo; toolIndex: number };

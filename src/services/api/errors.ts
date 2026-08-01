@@ -65,6 +65,8 @@ export function isPromptTooLongMessage(msg: AssistantMessage): boolean {
  * message like "prompt is too long: 137500 tokens > 135000 maximum".
  * The raw string may be wrapped in SDK prefixes or JSON envelopes, or
  * have different casing (Vertex), so this is intentionally lenient.
+ * 从原始接口报错字符串里，正则提取两个数字：
+当前实际token数量 / 模型最大token上限
  */
 export function parsePromptTooLongTokenCounts(rawMessage: string): {
   actualTokens: number | undefined
@@ -86,12 +88,12 @@ export function getTokenRevokedErrorMessage(): string {
 }
 
 /**
- * Returns how many tokens over the limit a prompt-too-long error reports,
- * or undefined if the message isn't PTL or its errorDetails are unparseable.
- * Reactive compact uses this gap to jump past multiple groups in one retry
- * instead of peeling one-at-a-time.
+ * 返回提示太长错误报告的超出限制的令牌数，
+ * 如果消息不是 PTL 或者其 errorDetails 不可解析，则为未定义。
+ * 反应式紧凑型利用此间隙在一次重试中跳过多个组
+ * 而不是一次剥一个皮。
  */
-export function getPromptTooLongTokenGap(
+export function getPromptTooLongTokenGap(// 判断这条消息是不是【Prompt 过长错误】
   msg: AssistantMessage,
 ): number | undefined {
   if (!isPromptTooLongMessage(msg) || !msg.errorDetails) {

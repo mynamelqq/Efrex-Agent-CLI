@@ -69,13 +69,13 @@ export const getTools = (permissionContext: ToolPermissionContext): Tools => {
 //     // SYNTHETIC_OUTPUT_TOOL_NAME,
 //   ])
 
-  const tools = getAllBaseTools()
+  const tools = getAllBaseTools().filter(()=>{return true})
 
   // Filter out tools that are denied by the deny rules
-//   let allowedTools = filterToolsByDenyRules(tools, permissionContext)
+  let allowedTools = filterToolsByDenyRules(tools, permissionContext)
 
-  const isEnabled =tools.map(_ => _.isEnabled())
-  return tools.filter((_, i) => isEnabled[i])
+  const isEnabled =allowedTools.map(_ => _.isEnabled())
+  return allowedTools.filter((_, i) => isEnabled[i])
 }
 
 /**

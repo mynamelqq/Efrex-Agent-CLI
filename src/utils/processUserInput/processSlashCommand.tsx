@@ -50,6 +50,7 @@ import { hasPermissionsToUseTool } from '../permissions/permissions.js';
 import { parseSlashCommand } from '../slashCommandParsing.js';
 import type { ProcessUserInputBaseResult, ProcessUserInputContext } from './processUserInput.js';
 import type { SetToolJSXFn } from 'src/Tool.js';
+import { buildPostCompactMessages } from '../../services/compact/compact.js';
 export const NO_CONTENT_MESSAGE = '(no content)'
 
 
@@ -381,6 +382,35 @@ async function getMessagesForSlashCommand(
               messages: [],
               shouldQuery: false,
               command,
+            };
+          }
+
+          if (result.type === 'compact') {
+            const slashCommandMessages = [
+              syntheticCaveatMessage,
+              userMessage,
+              ...(result.displayText
+                ? [
+                    createUserMessage({
+                      content: `<local-command-stdout>${result.displayText}</local-command-stdout>`,
+                      timestamp: new Date(Date.now() + 100).toISOString(),
+                    }),
+                  ]
+                : []),
+            ];
+            const compacted = {
+              ...result.compactionResult,
+              messagesToKeep: [
+                ...(result.compactionResult.messagesToKeep ?? []),
+                ...slashCommandMessages,
+              ],
+            };
+
+            return {
+              messages: buildPostCompactMessages(compacted),
+              shouldQuery: false,
+              command,
+              resultText: result.displayText,
             };
           }
 

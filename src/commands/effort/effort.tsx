@@ -36,13 +36,13 @@ const EFFORT_OPTIONS = [
 
 type EffortOption = (typeof EFFORT_OPTIONS)[number];
 
-const EFFORT_ACCENTS: Record<EffortOption, string> = {
-	auto: 'gray',
-	low: 'greenBright',
-	medium: 'cyanBright',
-	high: 'yellowBright',
-	xhigh: 'magentaBright',
-};
+const EFFORT_ACCENTS = {
+	auto: 'ansi:blackBright',
+	low: 'ansi:greenBright',
+	medium: 'ansi:cyanBright',
+	high: 'ansi:yellowBright',
+	xhigh: 'ansi:magentaBright',
+} as const;
 
 function setEffortValue(effortValue: EffortValue): EffortCommandResult {
   const persistable = toPersistableEffort(effortValue);
@@ -191,13 +191,15 @@ function ApplySelectedEffortAndClose({
 }
 
 function renderOptionLabel(option: EffortOption): string {
-	return option === 'auto' ? 'AUTO' : option.toUpperCase();
-}
+	const labels: Record<EffortOption, string> = {
+		auto: 'Auto',
+		low: 'Low',
+		medium: 'Medium',
+		high: 'High',
+		xhigh: 'Extra high',
+	};
 
-function getOptionSummary(option: EffortOption): string {
-	return option === 'auto'
-		? 'Use the model default effort level'
-		: getEffortValueDescription(option);
+	return labels[option];
 }
 
 function EffortPicker({
@@ -257,14 +259,6 @@ function EffortPicker({
 		}
 	});
 
-	const selectedValue = EFFORT_OPTIONS[selectedIndex] ?? 'auto';
-	const selectedDescription = getOptionSummary(selectedValue);
-	const envOverride = getEffortEnvOverride();
-	const envNote =
-		envOverride !== undefined
-			? `Env override: ${envOverride === null ? 'auto' : envOverride}`
-			: null;
-
 	if (submittedValue !== null) {
 		return (
 			<ApplySelectedEffortAndClose
@@ -277,8 +271,8 @@ function EffortPicker({
 	return (
 		<Box paddingX={1} flexDirection="column" marginTop={1}>
 			<Box flexDirection="row">
-				<Text color="cyanBright">◉ </Text>
-				<Text bold color="cyanBright">
+				<Text color="ansi:cyanBright">◉ </Text>
+				<Text bold color="ansi:cyanBright">
 					Select effort
 				</Text>
 			</Box>
@@ -292,15 +286,22 @@ function EffortPicker({
 					const accent = EFFORT_ACCENTS[option];
 					return (
 						<Box key={option} marginRight={2}>
-							<Text color={isSelected ? accent : 'gray'}>
+							<Text
+								color={isSelected ? accent : 'ansi:blackBright'}
+							>
 								{isSelected ? '› ' : '  '}
 							</Text>
 							<Text color={accent}>● </Text>
-							<Text color={isSelected ? accent : undefined} bold={isSelected}>
+							<Text color={accent} bold={isSelected}>
 								{renderOptionLabel(option)}
 							</Text>
+							{option === 'low' ? (
+								<Text color="ansi:green"> (default)</Text>
+							) : null}
 							{isCurrent ? (
-								<Text color="gray">{isSelected ? ' current' : ' · current'}</Text>
+								<Text color="ansi:whiteBright">
+									{' · current'}
+								</Text>
 							) : null}
 						</Box>
 					);

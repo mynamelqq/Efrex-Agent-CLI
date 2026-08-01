@@ -774,3 +774,28 @@ export function isMcpServerDisabled(name: string): boolean {
   const disabledServers = projectConfig.disabledMcpServers || []
   return disabledServers.includes(name)
 }
+function toggleMembership(
+  list: string[],
+  name: string,
+  shouldContain: boolean,
+): string[] {
+  const contains = list.includes(name)
+  if (contains === shouldContain) return list
+  return shouldContain ? [...list, name] : list.filter(s => s !== name)
+}
+
+/**
+ * Enable or disable an MCP server
+ * @param name The name of the server
+ * @param enabled Whether the server should be enabled
+ */
+export function setMcpServerEnabled(name: string, enabled: boolean): void {
+
+  saveCurrentProjectConfig(current => {
+    const prev = current.disabledMcpServers || []
+    const next = toggleMembership(prev, name, !enabled)
+    if (next === prev) return current
+    return { ...current, disabledMcpServers: next }
+  })
+
+}

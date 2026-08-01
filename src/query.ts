@@ -378,7 +378,7 @@ async function* queryLoop(
             }
           }
         }
-    
+
       }//循环
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
@@ -390,7 +390,10 @@ async function* queryLoop(
       return { reason: 'model_error', error }
     }
     if (toolUseContext.abortController.signal.aborted) {
-      if (toolUseContext.abortController.signal.reason !== 'interrupt') {
+      if (
+        toolUseContext.abortController.signal.reason !== 'interrupt' &&
+        toolResults.length === 0
+      ) {
           yield createUserInterruptionMessage({
             toolUse: true,
           })
@@ -541,6 +544,26 @@ async function* queryLoop(
         }
       }
     }
+	// Permission rejection happens while draining tool updates. Check the
+	// controller here, before constructing the next-turn state, so a cancelled
+	// main-agent tool call cannot be sent back to the model.
+	if (toolUseContext.abortController.signal.aborted) {
+		if (
+			toolUseContext.abortController.signal.reason !== 'interrupt' &&
+			toolResults.length === 0
+		) {
+			yield createUserInterruptionMessage({ toolUse: true })
+		}
+		const nextTurnCountOnAbort = turnCount + 1
+		if (maxTurns && nextTurnCountOnAbort > maxTurns) {
+			yield createAttachmentMessage({
+				type: 'max_turns_reached',
+				maxTurns,
+				turnCount: nextTurnCountOnAbort,
+			})
+		}
+		return { reason: 'aborted_tools' }
+	}
     // 在轮次之间刷新工具，以便新连接的 MCP 服务器可用
     if (updatedToolUseContext.options.refreshTools) {//如果在此期间mcp服务器连接上了，工具有百脑汇
       const refreshedTools = updatedToolUseContext.options.refreshTools()

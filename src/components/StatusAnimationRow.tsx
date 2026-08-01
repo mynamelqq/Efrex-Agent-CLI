@@ -11,6 +11,8 @@ type Props = {
 	startedAtMs: number | null;
 	toolCount?: number;
 	retryAtMs?: number;
+	isThinking?: boolean;
+	thinkingEffort?: string;
 };
 
 const GLIMMER_PAD_COLUMNS = 10;
@@ -86,7 +88,9 @@ export function StatusAnimationRow({
 	statusKind = 'default',
 	startedAtMs,
 	toolCount,
-	retryAtMs
+	retryAtMs,
+	isThinking = false,
+	thinkingEffort
 }: Props): React.ReactNode {
 	const isRetry = statusKind === 'retry';
 	const [viewportRef, time] = useAnimationFrame(
@@ -104,7 +108,6 @@ export function StatusAnimationRow({
 	const prefixBold = breathingStrength > 0.7;
 
 	// Glimmer/shimmer animation for the status text
-	const statusMessageWidth = stringWidth(statusText);
 	const glimmerSpeed = isRetry
 		? 100
 		: statusMode === 'requesting'
@@ -137,15 +140,19 @@ export function StatusAnimationRow({
 			: statusMode === 'requesting'
 				? 'ansi:blueBright'
 				: 'gray';
+	// Elapsed time display
+	const elapsedText = formatDuration(elapsedMs, { hideTrailingZeros: true });
+	const visibleStatusText = isThinking
+		? `${statusText}(${elapsedText} ~ thinking with ${thinkingEffort ?? 'medium'} effort)`
+		: statusText;
+	const statusMessageWidth = stringWidth(visibleStatusText);
 	const glimmerCycleLength = statusMessageWidth + GLIMMER_PAD_COLUMNS * 2;
 	const cyclePosition =
 		glimmerCycleLength > 0 ? Math.floor(elapsedMs / glimmerSpeed) : 0;
 	const glimmerIndex =
 		(cyclePosition % glimmerCycleLength) - GLIMMER_PAD_COLUMNS;
-	const segments = getShimmerSegments(statusText, glimmerIndex);
+	const segments = getShimmerSegments(visibleStatusText, glimmerIndex);
 
-	// Elapsed time display
-	const elapsedText = formatDuration(elapsedMs, { hideTrailingZeros: true });
 	const toolCountText =
 		toolCount && toolCount > 0
 			? `${formatNumber(toolCount)} ${toolCount === 1 ? 'tool' : 'tools'}`
@@ -220,7 +227,7 @@ export function StatusAnimationRow({
 							</Text>
 						) : null}
 						<Text color={textColor}>{segments.after}</Text>
-						<Text color="ansi:blackBright">{' ('}</Text>
+						{!isThinking && <Text color="ansi:blackBright">{' ('}</Text>}
 						<Text
 							color={
 								veryLongRunning
@@ -230,7 +237,7 @@ export function StatusAnimationRow({
 										: 'ansi:blackBright'
 							}
 						>
-							{elapsedText}
+							{!isThinking && elapsedText}
 						</Text>
 						{toolCountText ? (
 							<>
@@ -238,7 +245,7 @@ export function StatusAnimationRow({
 								<Text color="magentaBright">{toolCountText}</Text>
 							</>
 						) : null}
-						<Text color="ansi:blackBright">{')'}</Text>
+						{!isThinking && <Text color="ansi:blackBright">{')'}</Text>}
 					</Box>
 				</>
 			)}

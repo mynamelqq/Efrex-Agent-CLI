@@ -72,6 +72,7 @@ export async function getOpenAIClient(options?: {
     ...(process.env.OPENAI_PROJECT_ID && {
       project: process.env.OPENAI_PROJECT_ID,
     }),
+  
     // fetchOptions: getProxyFetchOptions({ forAnthropicAPI: false }),
     fetch: wrappedFetch,
     

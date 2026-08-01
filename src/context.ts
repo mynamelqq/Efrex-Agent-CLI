@@ -13,6 +13,7 @@ import { getLocalISODate } from './constants/common'
 import { setCachedEfrexMdContent } from './bootstrap/state.js'
 import { logForDebugging } from './utils/debug.js'
 import { has1mContext, strip1mContextSuffix } from './utils/model/modelName.js'
+import { getOauthAccountInfo } from './utils/auth.js'
 // Default max output tokens
 const MAX_OUTPUT_TOKENS_DEFAULT = 32_000
 // Maximum output tokens for compact operations
@@ -226,7 +227,7 @@ function modelMatchesFamily(model: string, family: string): boolean {
   const escapedFamily = family.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   return new RegExp(`(^|[./-])${escapedFamily}([./-]|$)`, 'i').test(model)
 }
-export const MODEL_CONTEXT_WINDOW_DEFAULT = 800_000
+export const MODEL_CONTEXT_WINDOW_DEFAULT = 300_000
 
 export function getContextWindowForModel(
   model: string,
@@ -235,6 +236,29 @@ export function getContextWindowForModel(
   if (has1mContext(model)) return 1_000_000
 
   const m = normalizeModelName(model)
+
+  // Logged-in users use the provider's model catalog limits. Keep this
+  // explicit because these models do not necessarily follow public model
+  // family naming conventions.
+  if (getOauthAccountInfo()) {
+    const loggedInModelWindows: Record<string, number> = {
+      'gpt-5.4-mini': 32_000,
+      'codex-auto-review': 128_000,
+      'gpt-5.4': 128_000,
+      'gpt-5.6-luna': 128_000,
+      'gpt-5.6-terra': 128_000,
+      'claude-sonnet-4.6': 200_000,
+      'gpt-5.5': 200_000,
+      'gpt-5.6-sol': 200_000,
+      'gpt-5.3-codex-spark': 200_000,
+      'claude-opus-4.8': 200_000,
+      'claude-opus-4.7': 200_000,
+      'claude-opus-4.6': 200_000,
+      'claude-fable-5': 200_000,
+    }
+    const loggedInWindow = loggedInModelWindows[m]
+    if (loggedInWindow !== undefined) return loggedInWindow
+  }
 
   // ── OpenAI ────────────────────────────────────────────────────────
   if (m.includes('gpt-5')) return 400_000
@@ -270,7 +294,7 @@ export function getContextWindowForModel(
   if (m.includes('deepseek')) return 1_000_000
 
   // ── Chinese model families ───────────────────────────────────────
-  if (modelMatchesFamily(m, 'qwen')) return 1_000_000
+  if (modelMatchesFamily(m, 'qwen')) return 500_000
   if (modelMatchesFamily(m, 'glm')) return 128_000
   if (modelMatchesFamily(m, 'doubao')) return 128_000
   if (modelMatchesFamily(m, 'moonshot') || modelMatchesFamily(m, 'kimi')) return 128_000
@@ -322,21 +346,6 @@ export function getModelMaxOutputTokens(model: string): {
   } else if (m.includes('opus-4-1') || m.includes('opus-4')) {
     defaultTokens = 32_000
     upperLimit = 32_000
-  } else if (m.includes('Efrex-3-opus')) {
-    defaultTokens = 4_096
-    upperLimit = 4_096
-  } else if (m.includes('Efrex-3-sonnet')) {
-    defaultTokens = 8_192
-    upperLimit = 8_192
-  } else if (m.includes('Efrex-3-haiku')) {
-    defaultTokens = 4_096
-    upperLimit = 4_096
-  } else if (m.includes('3-5-sonnet') || m.includes('3-5-haiku')) {
-    defaultTokens = 8_192
-    upperLimit = 8_192
-  } else if (m.includes('3-7-sonnet')) {
-    defaultTokens = 32_000
-    upperLimit = 64_000
   } else {
     defaultTokens = MAX_OUTPUT_TOKENS_DEFAULT
     upperLimit = MAX_OUTPUT_TOKENS_UPPER_LIMIT

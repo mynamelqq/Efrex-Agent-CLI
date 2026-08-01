@@ -1669,7 +1669,7 @@ export const fetchToolsForClient = memoizeWithLRU(//客户端抓取工具
               parentMessage,
               onProgress?: ToolCallProgress<MCPProgress>,
             ) {
-              const toolUseId = extractToolUseId(parentMessage)
+              const toolUseId = extractToolUseId(parentMessage!)
               const meta = toolUseId
                 ? { 'claudecode/toolUseId': toolUseId }
                 : {}
@@ -2141,6 +2141,73 @@ export async function callMCPToolWithUrlElicitationRetry({//处理MCP（Model Co
       }
 
       // Loop back to retry the tool call
+    }
+  }
+}
+/**
+ * Note: This should not be called by UI components directly, they should use the reconnectMcpServer
+ * function from useManageMcpConnections.
+ * @param name Server name
+ * @param config Server configuration
+ * @returns Object containing the client connection and its resources
+ */
+export async function reconnectMcpServerImpl(
+  name: string,
+  config: ScopedMcpServerConfig,
+): Promise<{
+  client: MCPServerConnection
+  tools: Tool[]
+  commands: Command[]
+  resources?: ServerResource[]
+}> {
+  try {
+    // Invalidate the keychain cache so we read fresh credentials from disk.
+    // This is necessary when another process (e.g. the VS Code extension host)
+    // has modified stored tokens (cleared auth, saved new OAuth tokens) and then
+    // asks the CLI subprocess to reconnect.  Without this, the subprocess would
+    // use stale cached data and never notice the tokens were removed.
+    // clearKeychainCache()
+
+    await clearServerCache(name, config)
+    const client = await connectToServer(name, config)
+
+    if (client.type !== 'connected') {
+      return {
+        client,
+        tools: [],
+        commands: [],
+      }
+    }
+
+
+
+    const supportsResources = !!client.capabilities?.resources
+
+    const [tools, mcpCommands,  resources] = await Promise.all([
+      fetchToolsForClient(client),
+      fetchCommandsForClient(client),
+      supportsResources ? fetchResourcesForClient(client) : Promise.resolve([]),
+    ])
+    const commands = [...mcpCommands]
+
+    // Check if we need to add resource tools
+    const resourceTools: Tool[] = []
+
+    return {
+      client,
+      tools: [...tools, ...resourceTools],
+      commands,
+      resources: resources.length > 0 ? resources : undefined,
+    }
+  } catch (error) {
+    // Handle errors gracefully - connection might have closed during fetch
+    logMCPError(name, `Error during reconnection: ${errorMessage(error)}`)
+
+    // Return with failed status
+    return {
+      client: { name, type: 'failed' as const, config },
+      tools: [],
+      commands: [],
     }
   }
 }

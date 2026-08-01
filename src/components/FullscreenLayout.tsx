@@ -29,8 +29,8 @@ export function FullscreenLayout({
 			<>
 				{top}
 				{scrollable}
-				{bottom}
 				{overlay}
+				{bottom}
 			</>
 		);
 	}

@@ -6,11 +6,13 @@ import reject from 'lodash/reject.js'
 import omit from 'lodash/omit.js'
 import {
   isMcpServerDisabled,
+  setMcpServerEnabled,
 } from 'src/services/mcp/config.js'
 import {
   clearServerCache,
   connectToServer,
   getMcpToolsCommandsAndResources,
+  reconnectMcpServerImpl,
 } from './client.js'
 import type {
   MCPServerConnection,
@@ -456,30 +458,36 @@ export function useManageMCPConnections(
           clearTimeout(existingTimer)
           reconnectTimersRef.current.delete(serverName)
         }
-
+        // Persist disabled state to disk FIRST before clearing cache
+        // This is important because the onclose handler checks disk state
+        setMcpServerEnabled(serverName, false)
         if (client.type === 'connected') {
           await clearServerCache(serverName, client.config)
         }
-
+        // Update to disabled state (tools/commands/resources auto-cleared)
         updateServer({
           name: serverName,
           type: 'disabled',
           config: client.config,
-          tools: [],
-          commands: [],
-          resources: [],
         })
         return
       }
+      else{
+        // Enabling: persist enabled state to disk first
+        setMcpServerEnabled(serverName, true)
 
-      updateServer({
-        name: serverName,
-        type: 'pending',
-        config: client.config,
-      })
+        // Mark as pending and reconnect
+        updateServer({
+          name: serverName,
+          type: 'pending',
+          config: client.config,
+        })
 
-      const result = await connectServer(serverName, client.config)
-      onConnectionAttempt(result)
+        // Reconnect the server
+        const result = await reconnectMcpServerImpl(serverName, client.config)
+
+        onConnectionAttempt(result)
+      }
     },
     [store, updateServer, onConnectionAttempt],
   )

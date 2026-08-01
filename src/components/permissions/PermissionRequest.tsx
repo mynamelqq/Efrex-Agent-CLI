@@ -290,13 +290,13 @@ type PermissionInputKey = {
 
 function isScrollNavigationKey(input: string, key: PermissionInputKey): boolean {
 	return (
-		key.wheelUp ||
-		key.wheelDown ||
-		key.pageUp ||
-		key.pageDown ||
-		key.home ||
-		key.end ||
-		(key.ctrl && ['b', 'f', 'u', 'd'].includes(input))
+		!!key.wheelUp ||
+		!!key.wheelDown ||
+		!!key.pageUp ||
+		!!key.pageDown ||
+		!!key.home ||
+		!!key.end ||
+		!!(key.ctrl && ['b', 'f', 'u', 'd'].includes(input))
 	);
 }
 
@@ -411,7 +411,6 @@ type FileMutationPermissionPanelProps = {
 	toolUseConfirm: ToolUseConfirm;
 	selectedIndex?: number;
 	options?: PermissionOption[];
-	shortcutHint?: string;
 	statusText?: string;
 	maxPreviewLines?: number | null;
 };
@@ -420,7 +419,6 @@ export function FileMutationPermissionPanel({
 	toolUseConfirm,
 	selectedIndex,
 	options,
-	shortcutHint,
 	statusText,
 	maxPreviewLines = null
 }: FileMutationPermissionPanelProps): React.ReactNode {
@@ -494,7 +492,7 @@ export function FileMutationPermissionPanel({
 				{statusText ? null : (
 					<Text color="ansi:blackBright">
 						{fitDisplay(
-							`Enter confirm · Esc cancel · ${shortcutHint ?? 'A/D'}`,
+							'Enter confirm · Esc cancel',
 							contentWidth
 						)}
 					</Text>
@@ -604,29 +602,29 @@ export function PermissionRequest({
 			{
 				key: 'a',
 				hotkey: 'A',
-				label: 'Allow once',
+				label: '允许这一次',
 				color: 'ansi:green',
 				action: () => allow()
-			},
-			{
-				key: 'd',
-				hotkey: 'D',
-				label: 'Deny this time',
-				color: 'ansi:redBright',
-				action: reject
 			},
 			...(bypassAvailable
 				? [
 					{
 						key: 'b',
 						hotkey: 'B',
-						label: 'Trust this session',
+						label: '信任本次会话',
 						help: 'Allows later commands in this session without prompting.',
 						color: 'ansi:yellow' as const,
 						action: allowAllCommands
 					}
 				]
-				: [])
+				: []),
+			{
+				key: 'd',
+				hotkey: 'D',
+				label: '不允许',
+				color: 'ansi:whiteBright',
+				action: reject
+			}
 		],
 		[allow, allowAllCommands, bypassAvailable, reject]
 	);
@@ -679,7 +677,6 @@ export function PermissionRequest({
 		{ isActive: true }
 	);
 
-	const shortcutHint = bypassAvailable ? 'A/D/B' : 'A/D';
 	const isFileMutationTool = isFileMutationToolName(toolUseConfirm.tool.name);
 
 	if (isFileMutationTool) {
@@ -688,77 +685,53 @@ export function PermissionRequest({
 				toolUseConfirm={toolUseConfirm}
 				selectedIndex={selectedIndex}
 				options={options}
-				shortcutHint={shortcutHint}
 			/>
 		);
 	}
 
 	const toolIdentity = getMcpToolIdentity(toolUseConfirm.tool);
-	const inputLines = getCompactInputLines(toolUseConfirm.input);
-	const defaultPanelWidth = Math.min(88, panelWidth);
-	const defaultContentWidth = Math.max(32, defaultPanelWidth - 4);
-	const borderColor = presentation.isDangerous
-		? 'ansi:redBright'
-		: 'ansi:blackBright';
+	const inputLines = getCompactInputLines(toolUseConfirm.input, 1);
+	const defaultContentWidth = Math.max(32, columns - 8);
+	const divider = '─'.repeat(defaultContentWidth);
 
 	const content = (
-		<Box
-			borderStyle="round"
-			borderColor={borderColor}
-			flexDirection="column"
-			alignSelf="flex-start"
-			width={defaultPanelWidth}
-			paddingX={1}
-			paddingY={0}
-			marginTop={1}
-		>
-			<Box flexDirection="row">
-				<Text color="ansi:cyan" bold>? </Text>
-				<Text color="ansi:whiteBright">
-					{fitDisplay(
-						`Allow ${toolIdentity.toolName}?`,
-						defaultContentWidth - 2
-					)}
-				</Text>
-			</Box>
-			{toolIdentity.serverName ? (
-				<Text color="ansi:blackBright">
-					{fitDisplay(
-						`  mcp · ${toolIdentity.serverName}`,
-						defaultContentWidth
-					)}
-				</Text>
-			) : null}
-			<Box flexDirection="column" marginTop={1}>
-				{inputLines.map((line, index) => (
-					<Text key={index} color="ansi:white">
-						{fitDisplay(`  ${line}`, defaultContentWidth)}
+		<React.Fragment>
+			<Text> </Text>
+			<Text color="ansi:cyan" bold>
+				{fitDisplay(
+					`Efrex 想要调用 ${toolIdentity.toolName}`,
+					defaultContentWidth
+				)}
+			</Text>
+			<Text color="ansi:blackBright">{divider}</Text>
+			<Text>
+				{fitDisplay(
+					`意图：${toolUseConfirm.description || presentation.intent}`,
+					defaultContentWidth
+				)}
+			</Text>
+			<Text color="ansi:blackBright">
+				{fitDisplay(
+					`${toolIdentity.serverName ? `${toolIdentity.serverName} · ` : ''}${inputLines[0] ?? ''}`,
+					defaultContentWidth
+				)}
+			</Text>
+			{options.map((option, index) => {
+				const selected = selectedIndex === index;
+				return (
+					<Text
+						key={option.key}
+						color={selected ? option.color : 'ansi:blackBright'}
+						bold={selected}
+					>
+						{fitDisplay(
+							`${selected ? '›' : ' '}[${option.hotkey}] ${option.label}`,
+							defaultContentWidth
+						)}
 					</Text>
-				))}
-			</Box>
-			<Box flexDirection="column" marginTop={1}>
-				{options.map((option, index) => {
-					const selected = selectedIndex === index;
-
-					return (
-						<Box key={option.key} flexDirection="row">
-							<Text color={selected ? option.color : 'ansi:blackBright'}>
-								{selected ? '›' : ' '}{' '}
-							</Text>
-							<Text
-								color={selected ? 'ansi:whiteBright' : 'ansi:blackBright'}
-								bold={selected}
-							>
-								{fitDisplay(
-									`[${option.hotkey}] ${option.label}`,
-									defaultContentWidth - 2
-								)}
-							</Text>
-						</Box>
-					);
-				})}
-			</Box>
-		</Box>
+				);
+			})}
+		</React.Fragment>
 	);
 
 	return content;

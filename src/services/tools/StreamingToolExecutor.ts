@@ -177,6 +177,24 @@ export class StreamingToolExecutor {
       const toolAbortController = createChildAbortController(
         this.siblingAbortController,//创建一个新的AbortController，用于控制工具执行的取消
       )
+	  // Permission rejection aborts the per-tool controller. Bubble that abort
+	  // up to the query controller so the main agent stops after tool cleanup
+	  // instead of sending the rejected result into another model turn.
+	  toolAbortController.signal.addEventListener(
+		'abort',
+		() => {
+		  if (
+			toolAbortController.signal.reason !== 'sibling_error' &&
+			!this.toolUseContext.abortController.signal.aborted &&
+			!this.discarded
+		  ) {
+			this.toolUseContext.abortController.abort(
+			  toolAbortController.signal.reason,
+			)
+		  }
+		},
+		{ once: true },
+	  )
 
       const generator = runToolUse(tool.block, tool.assistantMessage, 
         {

@@ -8,6 +8,8 @@ import { getCwd } from '../../utils/cwd.js';
 import { getCurrentSessionTitle } from '../../utils/sessionStorage.js';
 import { getOauthAccountInfo } from '../../utils/auth.js';
 import { getPlanPresentation } from './usage.js';
+import { getContextWindowForModel } from '../../context.js';
+import { roughTokenCountEstimationForMessages } from '../../services/tokenEstimation.js';
 export type Diagnostic = React.ReactNode;
 
 export type Property = {
@@ -82,6 +84,9 @@ function PropertyValue({ value }: { value: Property['value'] }): React.ReactNode
 export function Status({ context, diagnosticsPromise, profileRefresh }: Props): React.ReactNode {
   const mainLoopModel = useAppState(s => s.mainLoopModel);
   const [account, setAccount] = useState(() => getOauthAccountInfo());
+	const contextWindow = getContextWindowForModel(mainLoopModel);
+	const currentContextTokens = roughTokenCountEstimationForMessages(context.messages);
+	const contextWindowText = `${(currentContextTokens / 1000).toFixed(1)}k / ${(contextWindow / 1000).toFixed(1)}k tokens`;
 
   useEffect(() => {
     void profileRefresh.then(refreshed => {
@@ -95,10 +100,16 @@ export function Status({ context, diagnosticsPromise, profileRefresh }: Props): 
   // unmounts children when not selected, which was causing the flash).
   const sections = React.useMemo(
     () => [
-      { title: 'Session', properties: buildPrimarySection(mainLoopModel) },
+      {
+        title: 'Session',
+        properties: [
+          ...buildPrimarySection(mainLoopModel),
+          { label: 'Context window', value: contextWindowText },
+        ],
+      },
       { title: 'Account & usage', properties: buildAccountSection(account) },
     ],
-    [mainLoopModel, account],
+    [mainLoopModel, account, contextWindowText],
   );
 
   // flexGrow so the "Esc to cancel" footer pins to the bottom of the

@@ -539,8 +539,27 @@ export function readFileSyncCached(filePath: string): string {
   const { content } = fileReadCache.readFile(filePath)
   return content
 }
-
-
+export const MAX_OUTPUT_SIZE = 0.25 * 1024 * 1024 // 0.25MB in bytes
+/**
+ * Validates that a file size is within the specified limit.
+ * Returns true if the file is within the limit, false otherwise.
+ *
+ * @param filePath The path to the file to validate
+ * @param maxSizeBytes The maximum allowed file size in bytes
+ * @returns true if file size is within limit, false otherwise
+ */
+export function isFileWithinReadSizeLimit(
+  filePath: string,
+  maxSizeBytes: number = MAX_OUTPUT_SIZE,
+): boolean {
+  try {
+    const stats = statSync(filePath)
+    return stats.size <= maxSizeBytes
+  } catch {
+    // If we can't stat the file, return false to indicate validation failure
+    return false
+  }
+}
 /**
  * Async generator that yields lines from a file in reverse order.
  * Reads the file backwards in chunks to avoid loading the entire file into memory.

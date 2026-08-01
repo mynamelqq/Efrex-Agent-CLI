@@ -5,6 +5,7 @@ type QueryEvent = Message | StreamEvent | { type: string; [key: string]: unknown
 type StreamCallbacks = {
   onMessageStart?: () => void
   onTextBlockStart?: () => void
+  onThinkingBlockStart?: () => void
   onToolUseBlockStart?: (toolName: string) => void
   onTextDelta?: (text: string) => void
   onMessageStop?: () => void
@@ -36,6 +37,9 @@ export function handleMessageFromStream(
         const contentBlock = asRecord(streamEvent.content_block)
         if (contentBlock?.type === 'text') {
           callbacks.onTextBlockStart?.()
+        }
+        if (contentBlock?.type === 'thinking') {
+          callbacks.onThinkingBlockStart?.()
         }
         if (contentBlock?.type === 'tool_use') {
           callbacks.onToolUseBlockStart?.(

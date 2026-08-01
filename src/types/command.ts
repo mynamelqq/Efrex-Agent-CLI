@@ -17,10 +17,11 @@ export type ResumeEntrypoint =
 
 export type LocalCommandResult =
   | { type: 'text'; value: string }
-  // | {
-  //     type: 'compact'
-  //     displayText?: string
-  //   }
+  | {
+      type: 'compact'
+      compactionResult: import('../services/compact/compact.js').CompactionResult
+      displayText: string
+    }
   | { type: 'skip' } // Skip messages
 
 export type PromptCommand = {

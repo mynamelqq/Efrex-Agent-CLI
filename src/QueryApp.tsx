@@ -67,7 +67,7 @@ import { expandPastedTextRefs } from './history.js';
 import { assembleToolPool, getAllBaseTools, getTools } from './tools.js';
 import { query } from './query.js';
 import { handlePromptSubmit } from './utils/handlePromptSubmit.js';
-import { getAnthropicModel } from './utils/anthropicConfig.js';
+import { getAnthropicModel, getEffortLevel } from './utils/anthropicConfig.js';
 import { getInitialSettings } from './utils/settings/settings.js';
 import { FileStateCache } from './utils/fileStateCache.js';
 import { getSystemPrompt } from './constants/prompts.js';
@@ -219,6 +219,7 @@ type ApiRetrySummary = {
 
 type StreamingAssistantState = {
 	active: boolean;
+	streamMode: 'requesting' | 'thinking' | 'responding';
 	placeholderId: number | null;
 	text: string;
 	pendingToolCalls: string[];
@@ -2293,6 +2294,7 @@ export default function QueryApp({
 	const [streamingAssistant, setStreamingAssistant] =
 		useState<StreamingAssistantState>({
 			active: false,
+			streamMode: 'requesting',
 			placeholderId: null,
 			text: '',
 			pendingToolCalls: []
@@ -2808,15 +2810,23 @@ export default function QueryApp({
 					});
 					setStreamingAssistant(prev => ({
 						active: true,
+						streamMode: 'requesting',
 						placeholderId: prev.placeholderId,
 						text: '',
 						pendingToolCalls: []
 					}));
 				},
-				onTextBlockStart: () => {
+					onTextBlockStart: () => {
 					setStreamingAssistant(prev => ({
 						...prev,
 						active: true
+					}));
+				},
+				onThinkingBlockStart: () => {
+					setStreamingAssistant(prev => ({
+						...prev,
+						active: true,
+						streamMode: 'thinking'
 					}));
 				},
 				onToolUseBlockStart: toolName => {
@@ -2824,6 +2834,7 @@ export default function QueryApp({
 					setStreamingAssistant(prev => ({
 						...prev,
 						active: true,
+						streamMode: 'requesting',
 						pendingToolCalls: appendUnique(
 							prev.pendingToolCalls,
 							toolLabel
@@ -2834,6 +2845,7 @@ export default function QueryApp({
 					setStreamingAssistant(prev => ({
 						...prev,
 						active: true,
+						streamMode: 'responding',
 						text: prev.text + text
 					}));
 				},
@@ -2901,6 +2913,7 @@ export default function QueryApp({
 						});
 						setStreamingAssistant({
 							active: false,
+							streamMode: 'requesting',
 							placeholderId: null,
 							text: '',
 							pendingToolCalls: []
@@ -3142,6 +3155,7 @@ const getToolUseContext = useCallback(
 			setInputValue('');
 			setStreamingAssistant({
 				active: false,
+				streamMode: 'requesting',
 				placeholderId: nextPlaceholderIdRef.current++,
 				text: '',
 				pendingToolCalls: []
@@ -3183,6 +3197,7 @@ const getToolUseContext = useCallback(
 					]);
 					setStreamingAssistant({
 						active: false,
+						streamMode: 'requesting',
 						placeholderId: null,
 						text: '',
 						pendingToolCalls: []
@@ -3524,7 +3539,7 @@ const getToolUseContext = useCallback(
 			messages,
 			renderTools,
 			completedTurnFooters,
-			isTranscriptMode,
+			false,
 			Date.now()
 		),
 		[
@@ -3609,6 +3624,8 @@ const getToolUseContext = useCallback(
 	);
 	const highlightInputChrome =
 		isTerminalFocused && loading && !activeToolUseConfirm;
+	const thinkingStatusText =
+		'Efrex 正在思考';
 	const statusText = showSpinner && !hasInlineLoadingPlaceholder
 		? apiRetryUiState.active
 			? apiRetryUiState.statusText
@@ -3618,7 +3635,9 @@ const getToolUseContext = useCallback(
 				? 'Efrex 正在生成回复...'
 				: streamingAssistant.pendingToolCalls.length > 0
 					? 'Efrex 正在请求工具...'
-					: 'Efrex 正在思考...'
+					: streamingAssistant.streamMode === 'thinking'
+						? thinkingStatusText
+						: 'Efrex 正在思考...'
 		: null;
 	const statusMode = showSpinner
 		? apiRetryUiState.active
@@ -3741,6 +3760,10 @@ const getToolUseContext = useCallback(
 					statusMode={statusMode}
 					statusKind={statusKind}
 					startedAtMs={loadingStartTimeRef.current}
+					isThinking={streamingAssistant.streamMode === 'thinking'}
+					thinkingEffort={
+						String(appState.effortValue ?? getEffortLevel())
+					}
 					toolCount={streamingAssistant.pendingToolCalls.length}
 					retryAtMs={apiRetryUiState.retryAtMs}
 				/>
